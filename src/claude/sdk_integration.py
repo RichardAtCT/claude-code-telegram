@@ -167,6 +167,7 @@ class ClaudeSDKManager:
             working_directory=str(working_directory),
             session_id=session_id,
             continue_session=continue_session,
+            session_continuation_mode="continue" if continue_session else "new",
         )
 
         try:

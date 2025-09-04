@@ -188,6 +188,7 @@ class ClaudeProcessManager:
         elif session_id and prompt and continue_session:
             # Follow-up message in existing session - use resume with new prompt
             cmd.extend(["--resume", session_id, "-p", prompt])
+            logger.info("Using --resume for continuing session", session_id=session_id)
         elif prompt:
             # New session with prompt (including new sessions with session_id)
             cmd.extend(["-p", prompt])

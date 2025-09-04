@@ -174,22 +174,58 @@ class SessionManager:
             session_id=session_id,
         )
 
-        # Check for existing session
-        if session_id and session_id in self.active_sessions:
-            session = self.active_sessions[session_id]
-            if not session.is_expired(self.config.session_timeout_hours):
-                logger.debug("Using active session", session_id=session_id)
-                return session
+        # If session_id is provided, try to resume existing session
+        if session_id and not session_id.startswith("temp_"):
+            logger.debug("Attempting to resume existing session", session_id=session_id)
 
-        # Try to load from storage
-        if session_id:
+            # Check active sessions first
+            if session_id in self.active_sessions:
+                session = self.active_sessions[session_id]
+                if not session.is_expired(self.config.session_timeout_hours):
+                    logger.debug("Using active session", session_id=session_id)
+                    return session
+                else:
+                    logger.info(
+                        "Active session expired, will try storage",
+                        session_id=session_id,
+                    )
+
+            # Try to load from storage
             session = await self.storage.load_session(session_id)
             if session and not session.is_expired(self.config.session_timeout_hours):
+                # This is an existing Claude session, NOT a new session
+                session.is_new_session = False
                 self.active_sessions[session_id] = session
-                logger.info("Loaded session from storage", session_id=session_id)
+                logger.info(
+                    "Successfully loaded existing session from storage",
+                    session_id=session_id,
+                )
+                return session
+            elif session:
+                logger.info(
+                    "Session found in storage but expired",
+                    session_id=session_id,
+                    age_hours=(datetime.utcnow() - session.last_used).total_seconds()
+                    / 3600,
+                )
+            else:
+                logger.warning(
+                    "Session not found in storage, will create new session",
+                    session_id=session_id,
+                )
+
+        # Check for existing temporary session in active memory
+        if (
+            session_id
+            and session_id.startswith("temp_")
+            and session_id in self.active_sessions
+        ):
+            session = self.active_sessions[session_id]
+            if not session.is_expired(self.config.session_timeout_hours):
+                logger.debug("Using active temporary session", session_id=session_id)
                 return session
 
-        # Check user session limit
+        # Check user session limit before creating new session
         user_sessions = await self._get_user_sessions(user_id)
         if len(user_sessions) >= self.config.max_sessions_per_user:
             # Remove oldest session

@@ -70,6 +70,15 @@ class ClaudeIntegration:
             user_id, working_directory, session_id
         )
 
+        # Log session details for debugging
+        logger.info(
+            "Session retrieved for command",
+            session_id=session.session_id,
+            is_new_session=getattr(session, "is_new_session", False),
+            provided_session_id=session_id,
+            user_id=user_id,
+        )
+
         # Track streaming updates and validate tool calls
         tools_validated = True
         validation_errors = []
@@ -143,6 +152,15 @@ class ClaudeIntegration:
                 else session.session_id
             )
 
+            logger.info(
+                "Claude command execution parameters",
+                should_continue_session=should_continue,
+                claude_session_id=claude_session_id,
+                original_session_id=session_id,
+                is_new_session=getattr(session, "is_new_session", False),
+                user_id=user_id,
+            )
+
             response = await self._execute_with_fallback(
                 prompt=prompt,
                 working_directory=working_directory,
@@ -197,9 +215,20 @@ class ClaudeIntegration:
             if hasattr(session, "is_new_session") and response.session_id:
                 # The session_id has been updated to Claude's session_id
                 final_session_id = response.session_id
+                logger.info(
+                    "Session ID updated from temporary to Claude session ID",
+                    old_session_id=old_session_id,
+                    new_session_id=response.session_id,
+                    user_id=user_id,
+                )
             else:
                 # Use the original session_id for continuing sessions
                 final_session_id = old_session_id
+                logger.debug(
+                    "Using existing session ID",
+                    session_id=final_session_id,
+                    user_id=user_id,
+                )
 
             # Ensure response has the correct session_id
             response.session_id = final_session_id
