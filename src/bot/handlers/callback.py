@@ -1004,8 +1004,10 @@ async def handle_git_callback(
             else:
                 # Clean up diff output for Telegram
                 # Remove emoji symbols that interfere with markdown parsing
-                clean_diff = diff_output.replace("➕", "+").replace("➖", "-").replace("📍", "@")
-                
+                clean_diff = (
+                    diff_output.replace("➕", "+").replace("➖", "-").replace("📍", "@")
+                )
+
                 # Limit diff output
                 max_length = 2000
                 if len(clean_diff) > max_length:
