@@ -131,25 +131,30 @@ class ClaudeIntegration:
 
         # Execute command
         try:
-            # Only continue session if it's not a new session
-            should_continue = bool(session_id) and not getattr(
-                session, "is_new_session", False
+            # Only continue session if we have a real (non-temporary) session
+            # Temporary sessions start with "temp_" prefix
+            should_continue = bool(session_id) and not session.session_id.startswith(
+                "temp_"
             )
 
-            # For new sessions, don't pass the temporary session_id to Claude Code
+            # For new sessions (temp_ prefix), don't pass the temporary session_id to Claude Code
             claude_session_id = (
-                None
-                if getattr(session, "is_new_session", False)
-                else session.session_id
+                None if session.session_id.startswith("temp_") else session.session_id
             )
 
-            response = await self._execute_with_fallback(
+            response, backend_used = await self._execute_with_fallback(
                 prompt=prompt,
                 working_directory=working_directory,
                 session_id=claude_session_id,
                 continue_session=should_continue,
                 stream_callback=stream_handler,
+                session_backend=session.backend,
             )
+
+            # Track which backend was used for this session
+            if not session.backend:
+                session.backend = backend_used
+                logger.info(f"Session backend set to: {backend_used}")
 
             # Check if tool validation failed
             if not tools_validated:
@@ -193,8 +198,8 @@ class ClaudeIntegration:
             old_session_id = session.session_id
             await self.session_manager.update_session(session.session_id, response)
 
-            # For new sessions, get the updated session_id from the session manager
-            if hasattr(session, "is_new_session") and response.session_id:
+            # For new sessions (temp_ prefix), get the updated session_id from the session manager
+            if old_session_id.startswith("temp_") and response.session_id:
                 # The session_id has been updated to Claude's session_id
                 final_session_id = response.session_id
             else:
@@ -231,9 +236,35 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
-    ) -> ClaudeResponse:
-        """Execute command with SDK->subprocess fallback on JSON decode errors."""
-        # Try SDK first if configured
+        session_backend: Optional[str] = None,
+    ) -> tuple[ClaudeResponse, str]:
+        """Execute command with SDK->subprocess fallback on JSON decode errors.
+
+        Returns: (response, backend_used) where backend_used is 'sdk' or 'subprocess'
+        """
+        # If session has a backend preference, use it exclusively
+        if session_backend:
+            logger.debug(f"Using session's preferred backend: {session_backend}")
+            if session_backend == "subprocess":
+                response = await self.process_manager.execute_command(
+                    prompt=prompt,
+                    working_directory=working_directory,
+                    session_id=session_id,
+                    continue_session=continue_session,
+                    stream_callback=stream_callback,
+                )
+                return response, "subprocess"
+            elif session_backend == "sdk" and self.sdk_manager:
+                response = await self.sdk_manager.execute_command(
+                    prompt=prompt,
+                    working_directory=working_directory,
+                    session_id=session_id,
+                    continue_session=continue_session,
+                    stream_callback=stream_callback,
+                )
+                return response, "sdk"
+
+        # Try SDK first if configured (for new sessions)
         if self.config.use_sdk and self.sdk_manager:
             try:
                 logger.debug("Attempting Claude SDK execution")
@@ -246,7 +277,7 @@ class ClaudeIntegration:
                 )
                 # Reset failure count on success
                 self._sdk_failed_count = 0
-                return response
+                return response, "sdk"
 
             except Exception as e:
                 error_str = str(e)
@@ -268,6 +299,7 @@ class ClaudeIntegration:
                     # Use subprocess fallback
                     try:
                         logger.info("Executing with subprocess fallback")
+                        # Pass session info to subprocess to maintain continuity
                         response = await self.process_manager.execute_command(
                             prompt=prompt,
                             working_directory=working_directory,
@@ -276,7 +308,7 @@ class ClaudeIntegration:
                             stream_callback=stream_callback,
                         )
                         logger.info("Subprocess fallback succeeded")
-                        return response
+                        return response, "subprocess"
 
                     except Exception as fallback_error:
                         logger.error(
@@ -295,13 +327,14 @@ class ClaudeIntegration:
         else:
             # Use subprocess directly if SDK not configured
             logger.debug("Using subprocess execution (SDK disabled)")
-            return await self.process_manager.execute_command(
+            response = await self.process_manager.execute_command(
                 prompt=prompt,
                 working_directory=working_directory,
                 session_id=session_id,
                 continue_session=continue_session,
                 stream_callback=stream_callback,
             )
+            return response, "subprocess"
 
     async def continue_session(
         self,
