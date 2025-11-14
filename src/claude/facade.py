@@ -268,11 +268,13 @@ class ClaudeIntegration:
                     # Use subprocess fallback
                     try:
                         logger.info("Executing with subprocess fallback")
+                        # Don't pass SDK session_id to subprocess - start fresh
+                        # SDK and subprocess have separate session management
                         response = await self.process_manager.execute_command(
                             prompt=prompt,
                             working_directory=working_directory,
-                            session_id=session_id,
-                            continue_session=continue_session,
+                            session_id=None,  # Start new session in subprocess
+                            continue_session=False,  # Fresh start
                             stream_callback=stream_callback,
                         )
                         logger.info("Subprocess fallback succeeded")
@@ -336,9 +338,10 @@ class ClaudeIntegration:
         # Get most recent
         latest_session = max(matching_sessions, key=lambda s: s.last_used)
 
-        # Continue session
+        # Continue session with default prompt if none provided
+        # Claude CLI requires a prompt, so we use a placeholder
         return await self.run_command(
-            prompt=prompt or "",
+            prompt=prompt or "Please continue where we left off",
             working_directory=working_directory,
             user_id=user_id,
             session_id=latest_session.session_id,

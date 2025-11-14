@@ -157,7 +157,9 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     audit_logger: AuditLogger = context.bot_data.get("audit_logger")
 
     # Parse optional prompt from command arguments
+    # If no prompt provided, use a default to continue the conversation
     prompt = " ".join(context.args) if context.args else None
+    default_prompt = "Please continue where we left off"
 
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
@@ -185,8 +187,9 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
 
             # Continue with the existing session
+            # Use default prompt if none provided (Claude CLI requires a prompt)
             claude_response = await claude_integration.run_command(
-                prompt=prompt or "",
+                prompt=prompt or default_prompt,
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=claude_session_id,
@@ -199,10 +202,11 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 parse_mode="Markdown",
             )
 
+            # Use default prompt if none provided
             claude_response = await claude_integration.continue_session(
                 user_id=user_id,
                 working_directory=current_dir,
-                prompt=prompt,
+                prompt=prompt or default_prompt,
             )
 
         if claude_response:
@@ -215,13 +219,13 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             # Format and send Claude's response
             from ..utils.formatting import ResponseFormatter
 
-            formatter = ResponseFormatter()
-            formatted_messages = formatter.format_claude_response(claude_response)
+            formatter = ResponseFormatter(settings)
+            formatted_messages = formatter.format_claude_response(claude_response.content)
 
             for msg in formatted_messages:
                 await update.message.reply_text(
-                    msg.content,
-                    parse_mode="Markdown",
+                    msg.text,
+                    parse_mode=msg.parse_mode,
                     reply_markup=msg.reply_markup,
                 )
 
