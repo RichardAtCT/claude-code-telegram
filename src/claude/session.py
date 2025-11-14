@@ -41,6 +41,7 @@ class ClaudeSession:
     message_count: int = 0
     tools_used: List[str] = field(default_factory=list)
     is_new_session: bool = False  # True if session hasn't been sent to Claude Code yet
+    backend: Optional[str] = None  # Track which backend created this session ('sdk' or 'subprocess')
 
     def is_expired(self, timeout_hours: int) -> bool:
         """Check if session has expired."""
