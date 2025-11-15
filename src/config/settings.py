@@ -151,6 +151,30 @@ class Settings(BaseSettings):
         description="Codeium API key for Windsurf provider (get from https://codeium.com/)"
     )
 
+    # OpenAI settings
+    openai_api_key: Optional[SecretStr] = Field(
+        None,
+        description="OpenAI API key (get from https://platform.openai.com/api-keys)"
+    )
+    openai_model: str = Field(
+        "gpt-4-turbo-preview",
+        description="OpenAI model to use (gpt-4-turbo-preview, gpt-4, gpt-3.5-turbo)"
+    )
+    openai_org_id: Optional[str] = Field(
+        None,
+        description="OpenAI organization ID (optional)"
+    )
+
+    # Ollama settings (local models)
+    ollama_host: str = Field(
+        "http://localhost:11434",
+        description="Ollama server host URL"
+    )
+    ollama_model: str = Field(
+        "codellama",
+        description="Ollama model to use (codellama, llama2, mistral, deepseek-coder, etc.)"
+    )
+
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
