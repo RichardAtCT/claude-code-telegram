@@ -2,19 +2,30 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Multi-AI](https://img.shields.io/badge/Multi--AI-Claude%20%7C%20Gemini-blue)](MULTI_AI_STATUS.md)
+[![Test Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)](htmlcov/index.html)
 
-A powerful Telegram bot that provides remote access to [Claude Code](https://claude.ai/code), enabling developers to interact with their projects from anywhere. Transform your phone into a development terminal with full Claude AI assistance, project navigation, and session persistence.
+A powerful Telegram bot that provides remote access to **multiple AI coding assistants** (Claude, Gemini, and more!), enabling developers to interact with their projects from anywhere. Transform your phone into a development terminal with AI assistance, project navigation, and session persistence.
+
+> **🚀 NEW:** Multi-AI support! Now works with both **Claude** and **Google Gemini** (free tier). Choose the best AI for each task!
+> [**See Multi-AI Status →**](MULTI_AI_STATUS.md)
 
 ## ✨ What is this?
 
-This bot bridges Telegram and Claude Code, allowing you to:
-- 💬 **Chat with Claude** about your code projects through Telegram
-- 📁 **Navigate directories** and manage files remotely  
+This bot bridges Telegram and multiple AI coding assistants, allowing you to:
+- 💬 **Chat with AI assistants** (Claude, Gemini) about your code projects through Telegram
+- 🔀 **Switch between AIs** - choose the best tool for each task
+- 📁 **Navigate directories** and manage files remotely
 - 🔄 **Maintain context** across conversations with session persistence
 - 📱 **Code on the go** from any device with Telegram
 - 🛡️ **Stay secure** with built-in authentication and sandboxing
+- 💰 **Save money** - use Gemini's free tier for simple tasks
 
 Perfect for code reviews on mobile, quick fixes while traveling, or getting AI assistance when away from your development machine.
+
+**Choose Your AI:**
+- **Claude** - Best for complex code generation and reasoning
+- **Gemini** - FREE tier, 1M token context (5x larger!), fast responses
 
 ## 🚀 Quick Start
 
