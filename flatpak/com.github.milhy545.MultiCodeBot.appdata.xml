@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="console-application">
+  <id>com.github.milhy545.MultiCodeBot</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>MultiCode AI Bot</name>
+  <summary>Multi-AI Telegram Bot with 8 AI Providers</summary>
+
+  <description>
+    <p>
+      MultiCode AI Bot is a powerful Telegram bot that provides remote access to 8 different AI coding assistants,
+      enabling developers to interact with their projects from anywhere with the perfect AI for each task.
+    </p>
+    <p>
+      Supported AI Providers:
+    </p>
+    <ul>
+      <li>Claude - Premium quality, exceptional reasoning</li>
+      <li>Gemini - FREE tier, 1M context window</li>
+      <li>OpenAI GPT-4 - Industry standard</li>
+      <li>DeepSeek - Ultra-cheap code specialist ($0.14/1M tokens)</li>
+      <li>Groq - Ultra-fast LPU inference (FREE)</li>
+      <li>Ollama - 100% local, privacy-focused (FREE)</li>
+      <li>Blackbox - Code-focused web API (FREE)</li>
+      <li>Windsurf - Codeium cascade (FREE)</li>
+    </ul>
+  </description>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>MultiCode AI Bot in action</caption>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/milhy545/claude-code-telegram</url>
+  <url type="bugtracker">https://github.com/milhy545/claude-code-telegram/issues</url>
+
+  <developer_name>MultiCode Contributors</developer_name>
+
+  <provides>
+    <binary>multicode-bot</binary>
+  </provides>
+
+  <releases>
+    <release version="1.0.0" date="2025-11-15">
+      <description>
+        <p>Initial stable release with 8 AI providers</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1" />
+</component>

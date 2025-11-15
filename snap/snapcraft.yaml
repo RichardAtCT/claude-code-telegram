@@ -1,0 +1,72 @@
+name: multicode-bot
+base: core22
+version: '1.0.0'
+summary: Multi-AI Telegram Bot with 8 AI Providers
+description: |
+  MultiCode AI Bot provides access to 8 different AI coding assistants through Telegram:
+
+  - Claude (Premium quality)
+  - Gemini (FREE, 1M context)
+  - OpenAI GPT-4 (Industry standard)
+  - DeepSeek (Ultra-cheap at $0.14/1M)
+  - Groq (Ultra-fast, FREE)
+  - Ollama (Local, FREE)
+  - Blackbox (Code-focused, FREE)
+  - Windsurf (Codeium, FREE)
+
+  Transform your phone into a development terminal with AI assistance!
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+apps:
+  multicode-bot:
+    command: bin/multicode-bot
+    daemon: simple
+    restart-condition: always
+    plugs:
+      - network
+      - network-bind
+      - home
+
+parts:
+  multicode-bot:
+    plugin: python
+    source: .
+    source-type: git
+
+    build-packages:
+      - python3-pip
+      - python3-dev
+      - build-essential
+
+    stage-packages:
+      - python3
+
+    override-build: |
+      # Install Poetry
+      pip3 install poetry
+
+      # Install dependencies
+      poetry config virtualenvs.create false
+      poetry install --no-dev --no-interaction
+
+      # Copy application
+      craftctl default
+
+      # Create launcher
+      mkdir -p $CRAFT_PART_INSTALL/bin
+      cat > $CRAFT_PART_INSTALL/bin/multicode-bot << 'EOF'
+      #!/bin/sh
+      cd $SNAP
+      exec python3 -m src.main "$@"
+      EOF
+      chmod +x $CRAFT_PART_INSTALL/bin/multicode-bot
+
+layout:
+  /usr/lib/python3/dist-packages:
+    symlink: $SNAP/usr/lib/python3/dist-packages

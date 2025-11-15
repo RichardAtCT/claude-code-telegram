@@ -1,0 +1,57 @@
+app-id: com.github.milhy545.MultiCodeBot
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: multicode-bot
+
+finish-args:
+  # Network access (required for Telegram and AI providers)
+  - --share=network
+
+  # Filesystem access (for your projects)
+  - --filesystem=home
+
+  # D-Bus access
+  - --socket=session-bus
+
+  # For notifications
+  - --talk-name=org.freedesktop.Notifications
+
+modules:
+  # Python 3.11
+  - name: python3
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=/app poetry
+
+  # MultiCode Bot
+  - name: multicode-bot
+    buildsystem: simple
+    sources:
+      - type: git
+        url: https://github.com/milhy545/claude-code-telegram.git
+        tag: v1.0.0
+    build-commands:
+      # Install dependencies with Poetry
+      - poetry config virtualenvs.create false
+      - poetry install --no-dev --no-interaction
+
+      # Copy application
+      - cp -r src /app/
+      - cp -r pyproject.toml poetry.lock /app/
+
+      # Create launcher script
+      - |
+        cat > /app/bin/multicode-bot << 'EOF'
+        #!/bin/sh
+        cd /app
+        exec python3 -m src.main "$@"
+        EOF
+      - chmod +x /app/bin/multicode-bot
+
+      # Desktop entry
+      - install -Dm644 flatpak/com.github.milhy545.MultiCodeBot.desktop /app/share/applications/com.github.milhy545.MultiCodeBot.desktop
+      - install -Dm644 flatpak/com.github.milhy545.MultiCodeBot.svg /app/share/icons/hicolor/scalable/apps/com.github.milhy545.MultiCodeBot.svg
+
+      # AppData
+      - install -Dm644 flatpak/com.github.milhy545.MultiCodeBot.appdata.xml /app/share/metainfo/com.github.milhy545.MultiCodeBot.appdata.xml

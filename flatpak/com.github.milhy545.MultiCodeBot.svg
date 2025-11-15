@@ -1,0 +1,14 @@
+<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="256" height="256" fill="#007ACC" rx="20"/>
+
+  <!-- Main text -->
+  <text x="128" y="140" font-size="100" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-weight="bold">MC</text>
+
+  <!-- Subtitle -->
+  <text x="128" y="190" font-size="24" text-anchor="middle" fill="#E0E0E0" font-family="Arial, sans-serif">AI Bot</text>
+
+  <!-- 8 providers indicator -->
+  <circle cx="220" cy="36" r="28" fill="#FF6B6B"/>
+  <text x="220" y="44" font-size="24" text-anchor="middle" fill="white" font-family="Arial, sans-serif" font-weight="bold">8</text>
+</svg>

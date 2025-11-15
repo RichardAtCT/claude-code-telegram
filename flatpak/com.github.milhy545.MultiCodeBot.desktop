@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=MultiCode AI Bot
+GenericName=Multi-AI Telegram Bot
+Comment=Access 8 AI coding assistants through Telegram
+Exec=multicode-bot
+Icon=com.github.milhy545.MultiCodeBot
+Terminal=true
+Type=Application
+Categories=Development;Utility;
+Keywords=ai;telegram;bot;claude;gemini;openai;coding;
+StartupNotify=false

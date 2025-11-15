@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  multicode-bot:
+    build: .
+    container_name: multicode-ai-bot
+    restart: unless-stopped
+
+    # Environment variables from .env file
+    env_file:
+      - .env
+
+    # Override specific settings for Docker
+    environment:
+      - APPROVED_DIRECTORY=/projects
+      - DATABASE_URL=sqlite:///app/data/bot.db
+      - LOG_LEVEL=INFO
+
+    # Mount volumes
+    volumes:
+      # Persistent database
+      - ./data:/app/data
+
+      # Your projects directory (CHANGE THIS to your actual projects path!)
+      - ${PROJECTS_DIR:-./projects}:/projects
+
+      # Optional: Mount .env for easy updates
+      - ./.env:/app/.env:ro
+
+    # Resource limits (adjust based on your server)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/app/data/bot.db').close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Optional: Ollama service for local AI models
+  # Uncomment if you want to use Ollama
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: multicode-ollama
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   ports:
+  #     - "11434:11434"
+
+volumes:
+  # Uncomment if using Ollama
+  # ollama-data:
