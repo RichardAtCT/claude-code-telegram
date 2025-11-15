@@ -6,6 +6,8 @@ from .blackbox import BlackboxProvider
 from .windsurf import WindsurfProvider
 from .openai import OpenAIProvider
 from .ollama import OllamaProvider
+from .deepseek import DeepSeekProvider
+from .groq import GroqProvider
 
 __all__ = [
     "ClaudeProvider",
@@ -14,4 +16,6 @@ __all__ = [
     "WindsurfProvider",
     "OpenAIProvider",
     "OllamaProvider",
+    "DeepSeekProvider",
+    "GroqProvider",
 ]

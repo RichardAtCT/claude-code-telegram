@@ -175,6 +175,26 @@ class Settings(BaseSettings):
         description="Ollama model to use (codellama, llama2, mistral, deepseek-coder, etc.)"
     )
 
+    # DeepSeek settings
+    deepseek_api_key: Optional[SecretStr] = Field(
+        None,
+        description="DeepSeek API key (get from https://platform.deepseek.com/)"
+    )
+    deepseek_model: str = Field(
+        "deepseek-coder",
+        description="DeepSeek model to use (deepseek-coder, deepseek-chat)"
+    )
+
+    # Groq settings
+    groq_api_key: Optional[SecretStr] = Field(
+        None,
+        description="Groq API key (get from https://console.groq.com/)"
+    )
+    groq_model: str = Field(
+        "llama3-70b-8192",
+        description="Groq model to use (llama3-70b-8192, mixtral-8x7b-32768, gemma-7b-it)"
+    )
+
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
