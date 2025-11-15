@@ -145,6 +145,12 @@ class Settings(BaseSettings):
         description="Gemini model to use"
     )
 
+    # Codeium/Windsurf settings
+    codeium_api_key: Optional[SecretStr] = Field(
+        None,
+        description="Codeium API key for Windsurf provider (get from https://codeium.com/)"
+    )
+
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
