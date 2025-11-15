@@ -1,31 +1,49 @@
-# Claude Code Telegram Bot 🤖
+# MultiCode AI Bot 🤖✨
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Multi-AI](https://img.shields.io/badge/Multi--AI-Claude%20%7C%20Gemini-blue)](MULTI_AI_STATUS.md)
+[![Multi-AI](https://img.shields.io/badge/Multi--AI-8%20Providers-blue)](MULTI_AI_STATUS.md)
 [![Test Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)](htmlcov/index.html)
 
-A powerful Telegram bot that provides remote access to **multiple AI coding assistants** (Claude, Gemini, and more!), enabling developers to interact with their projects from anywhere. Transform your phone into a development terminal with AI assistance, project navigation, and session persistence.
+A powerful Telegram bot that provides remote access to **8 different AI coding assistants**, enabling developers to interact with their projects from anywhere with the perfect AI for each task. Transform your phone into a development terminal with multi-AI assistance, project navigation, and session persistence.
 
-> **🚀 NEW:** Multi-AI support! Now works with both **Claude** and **Google Gemini** (free tier). Choose the best AI for each task!
-> [**See Multi-AI Status →**](MULTI_AI_STATUS.md)
+> **🎉 COMPLETE:** 8 AI Providers! Choose from **Claude, Gemini, OpenAI, DeepSeek, Groq, Ollama, Blackbox, and Windsurf**
+>
+> **6 FREE options** | **Ultra-cheap DeepSeek** ($0.14/1M) | **Ultra-fast Groq** | **Local Ollama**
+>
+> [**See Full Multi-AI Documentation →**](MULTI_AI_STATUS.md)
 
 ## ✨ What is this?
 
-This bot bridges Telegram and multiple AI coding assistants, allowing you to:
-- 💬 **Chat with AI assistants** (Claude, Gemini) about your code projects through Telegram
-- 🔀 **Switch between AIs** - choose the best tool for each task
+This bot bridges Telegram and **8 different AI coding assistants**, allowing you to:
+- 💬 **Chat with 8 AI assistants** about your code projects through Telegram
+- 🔀 **Switch between AIs** - choose the perfect tool for each task
 - 📁 **Navigate directories** and manage files remotely
 - 🔄 **Maintain context** across conversations with session persistence
 - 📱 **Code on the go** from any device with Telegram
 - 🛡️ **Stay secure** with built-in authentication and sandboxing
-- 💰 **Save money** - use Gemini's free tier for simple tasks
+- 💰 **Save money** - 6 FREE options including Gemini, Groq, and Ollama
+- ⚡ **Ultra-fast responses** with Groq's LPU technology
+- 🏠 **100% privacy** with local Ollama models
+- 💸 **Ultra-cheap** with DeepSeek at $0.14/1M tokens
 
 Perfect for code reviews on mobile, quick fixes while traveling, or getting AI assistance when away from your development machine.
 
-**Choose Your AI:**
-- **Claude** - Best for complex code generation and reasoning
-- **Gemini** - FREE tier, 1M token context (5x larger!), fast responses
+## 🤖 Choose Your AI (8 Options!)
+
+### Premium Quality
+- **Claude** ($3-15/1M) - Exceptional quality, full tools, complex reasoning 🏆
+- **OpenAI GPT-4** ($10-60/1M) - Industry standard, vision support
+
+### Budget/Free Options
+- **DeepSeek** ($0.14-0.28/1M) - Code specialist, **10-20x cheaper than GPT-4!** 💰
+- **Gemini** (FREE) - 1M token context, vision, no credit card needed 🆓
+- **Groq** (FREE) - Ultra-fast LPU inference, Llama 3/Mixtral ⚡
+- **Ollama** (FREE) - Local models, complete privacy, offline 🏠
+- **Blackbox** (FREE) - Code-focused web API 🆓
+- **Windsurf** (FREE) - Codeium cascade architecture 🆓
+
+[**Full provider comparison →**](MULTI_AI_STATUS.md)
 
 ## 🚀 Quick Start
 
@@ -85,12 +103,15 @@ This project is actively being developed. Here's the current status of features:
 - Multi-language code execution
 - Webhook support for CI/CD integration
 
-### 🤖 Claude AI Integration
-- **Full Claude Code Access**: Complete integration with Claude's powerful coding assistant
+### 🤖 Multi-AI Integration (8 Providers!)
+- **8 AI Providers**: Claude, Gemini, OpenAI, DeepSeek, Groq, Ollama, Blackbox, Windsurf
+- **Flexible Switching**: Choose the best AI for each task or conversation
+- **Unified Interface**: All providers work through the same clean API
 - **Session Persistence**: Maintain conversation context with SQLite database storage
-- **SDK & CLI Support**: Works with both Anthropic Python SDK and Claude CLI
-- **Error Recovery**: Intelligent error handling with helpful suggestions and retry logic
-- **Tool Support**: Access to Claude's full toolkit including file operations, code analysis, and more
+- **Smart Fallbacks**: Automatically handle provider failures with graceful degradation
+- **Cost Optimization**: Mix FREE and paid providers based on your budget
+- **Privacy Options**: Local models (Ollama) for sensitive projects
+- **Speed Options**: Ultra-fast Groq LPU for real-time interactions
 
 ### 📱 Terminal-like Interface  
 - **Directory Navigation**: `cd`, `ls`, `pwd` commands just like a real terminal
@@ -129,28 +150,57 @@ This project is actively being developed. Here's the current status of features:
 3. Save your bot token (it looks like `1234567890:ABC...`)
 4. Note your bot username (e.g., `my_claude_bot`)
 
-### 2. Set Up Claude Authentication
+### 2. Set Up AI Providers
 
-Choose one of these authentication methods:
+You can use one or multiple AI providers! Here's how to set up each:
 
-**Option 1: Use existing Claude CLI login (Recommended)**
+**FREE Providers (No API key needed):**
+
 ```bash
-# Install Claude CLI
-# Follow instructions at https://claude.ai/code
+# Blackbox - No setup required, works immediately!
+DEFAULT_AI_PROVIDER=blackbox
 
-# Authenticate with Claude
-claude
-
-# follow the prompts to authenticate
-
-# The bot will automatically use your CLI credentials
+# Ollama - Install locally for 100% privacy
+brew install ollama  # or download from ollama.ai
+ollama pull codellama
+DEFAULT_AI_PROVIDER=ollama
 ```
 
-**Option 2: Use API key directly**
+**FREE Providers (API key required but free tier):**
+
 ```bash
-# Get your API key from https://console.anthropic.com/
-# You'll add this to your .env file in the next step
+# Gemini - Get free API key from https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your_key_here
+DEFAULT_AI_PROVIDER=gemini
+
+# Groq - Ultra-fast, get free key from https://console.groq.com/
+GROQ_API_KEY=your_key_here
+DEFAULT_AI_PROVIDER=groq
+
+# Windsurf - Free for individuals, get key from https://codeium.com/
+CODEIUM_API_KEY=your_key_here
+DEFAULT_AI_PROVIDER=windsurf
 ```
+
+**Paid Providers:**
+
+```bash
+# Claude - Best quality (Option 1: CLI auth or Option 2: API key)
+# Option 1: Install Claude CLI and run `claude auth login`
+# Option 2: Get API key from https://console.anthropic.com/
+ANTHROPIC_API_KEY=your_key_here
+DEFAULT_AI_PROVIDER=claude
+
+# OpenAI - Industry standard, get key from https://platform.openai.com/
+OPENAI_API_KEY=your_key_here
+DEFAULT_AI_PROVIDER=openai
+
+# DeepSeek - Ultra-cheap ($0.14/1M!), get key from https://platform.deepseek.com/
+DEEPSEEK_API_KEY=your_key_here
+DEFAULT_AI_PROVIDER=deepseek
+```
+
+**Recommendation:** Start with **Blackbox** (instant, no setup) or **Gemini** (FREE, 1M context)!
 
 ### 3. Install the Bot
 
