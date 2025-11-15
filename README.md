@@ -47,6 +47,31 @@ Perfect for code reviews on mobile, quick fixes while traveling, or getting AI a
 
 ## 🚀 Quick Start
 
+**Choose Your Installation Method:**
+
+| Method | Best For | Install Command |
+|--------|----------|-----------------|
+| 🚀 **curl\|bash** | Fastest setup | `curl -fsSL https://raw.githubusercontent.com/milhy545/claude-code-telegram/main/install.sh \| bash` |
+| 🐳 **Docker** | Production servers | `docker-compose up -d` |
+| 📦 **PyPI** | Python projects | `pip install multicode-ai-bot` |
+| 📱 **Flatpak** | Linux desktop | `flatpak install multicode-bot` |
+| 💿 **AppImage** | Portable Linux | Download & run |
+
+**[📖 Full Installation Guide →](INSTALLATION.md)** | **[🐳 Docker Guide →](DOCKER.md)**
+
+### One-Line Install (Recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/milhy545/claude-code-telegram/main/install.sh | bash
+```
+
+Then configure `.env` and run:
+```bash
+cd ~/.multicode-bot
+nano .env
+./multicode-bot
+```
+
 ### Demo
 ```
 You: cd my-project
