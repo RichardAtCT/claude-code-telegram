@@ -125,6 +125,26 @@ class Settings(BaseSettings):
         DEFAULT_MAX_SESSIONS_PER_USER, description="Max concurrent sessions"
     )
 
+    # Multi-AI Provider Settings
+    default_ai_provider: str = Field(
+        "claude",
+        description="Default AI provider (claude, gemini, copilot, etc.)"
+    )
+    enabled_ai_providers: List[str] = Field(
+        default=["claude"],
+        description="List of enabled AI providers"
+    )
+
+    # Gemini settings
+    gemini_api_key: Optional[SecretStr] = Field(
+        None,
+        description="Google Gemini API key (get from https://aistudio.google.com/)"
+    )
+    gemini_model: str = Field(
+        "gemini-1.5-pro-latest",
+        description="Gemini model to use"
+    )
+
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
