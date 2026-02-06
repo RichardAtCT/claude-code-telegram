@@ -65,6 +65,21 @@ class ClaudeIntegration:
             prompt_length=len(prompt),
         )
 
+        # If no session_id provided, try to find an existing session for this
+        # user+directory combination (auto-resume)
+        if not session_id:
+            existing_session = await self._find_resumable_session(
+                user_id, working_directory
+            )
+            if existing_session:
+                session_id = existing_session.session_id
+                logger.info(
+                    "Auto-resuming existing session for project",
+                    session_id=session_id,
+                    project_path=str(working_directory),
+                    user_id=user_id,
+                )
+
         # Get or create session
         session = await self.session_manager.get_or_create_session(
             user_id, working_directory, session_id
@@ -131,25 +146,51 @@ class ClaudeIntegration:
 
         # Execute command
         try:
-            # Only continue session if it's not a new session
-            should_continue = bool(session_id) and not getattr(
-                session, "is_new_session", False
+            # Continue session if we have a real (non-temporary) session ID
+            is_new = getattr(session, "is_new_session", False)
+            has_real_session = (
+                not is_new and not session.session_id.startswith("temp_")
             )
+            should_continue = has_real_session
 
             # For new sessions, don't pass the temporary session_id to Claude Code
-            claude_session_id = (
-                None
-                if getattr(session, "is_new_session", False)
-                else session.session_id
-            )
+            claude_session_id = session.session_id if has_real_session else None
 
-            response = await self._execute_with_fallback(
-                prompt=prompt,
-                working_directory=working_directory,
-                session_id=claude_session_id,
-                continue_session=should_continue,
-                stream_callback=stream_handler,
-            )
+            try:
+                response = await self._execute_with_fallback(
+                    prompt=prompt,
+                    working_directory=working_directory,
+                    session_id=claude_session_id,
+                    continue_session=should_continue,
+                    stream_callback=stream_handler,
+                )
+            except Exception as resume_error:
+                # If resume failed (e.g., session expired on Claude's side),
+                # retry as a fresh session
+                if should_continue and "no conversation found" in str(
+                    resume_error
+                ).lower():
+                    logger.warning(
+                        "Session resume failed, starting fresh session",
+                        failed_session_id=claude_session_id,
+                        error=str(resume_error),
+                    )
+                    # Clean up the stale session
+                    await self.session_manager.remove_session(session.session_id)
+
+                    # Create a fresh session and retry
+                    session = await self.session_manager.get_or_create_session(
+                        user_id, working_directory
+                    )
+                    response = await self._execute_with_fallback(
+                        prompt=prompt,
+                        working_directory=working_directory,
+                        session_id=None,
+                        continue_session=False,
+                        stream_callback=stream_handler,
+                    )
+                else:
+                    raise
 
             # Check if tool validation failed
             if not tools_validated:
@@ -302,6 +343,33 @@ class ClaudeIntegration:
                 continue_session=continue_session,
                 stream_callback=stream_callback,
             )
+
+    async def _find_resumable_session(
+        self,
+        user_id: int,
+        working_directory: Path,
+    ) -> Optional["ClaudeSession"]:
+        """Find the most recent resumable session for a user in a directory.
+
+        Returns the session if one exists that is non-expired and has a real
+        (non-temporary) session ID from Claude. Returns None otherwise.
+        """
+        from .session import ClaudeSession
+
+        sessions = await self.session_manager._get_user_sessions(user_id)
+
+        matching_sessions = [
+            s
+            for s in sessions
+            if s.project_path == working_directory
+            and not s.session_id.startswith("temp_")
+            and not s.is_expired(self.config.session_timeout_hours)
+        ]
+
+        if not matching_sessions:
+            return None
+
+        return max(matching_sessions, key=lambda s: s.last_used)
 
     async def continue_session(
         self,
