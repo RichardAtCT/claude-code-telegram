@@ -76,7 +76,7 @@ This project is actively being developed. Here's the current status of features:
 
 ### 🤖 Claude AI Integration
 - **Full Claude Code Access**: Complete integration with Claude's powerful coding assistant
-- **Session Persistence**: Maintain conversation context with SQLite database storage
+- **Session Persistence**: Maintain conversation context with automatic session resumption per project directory
 - **SDK & CLI Support**: Works with both Anthropic Python SDK and Claude CLI
 - **Error Recovery**: Intelligent error handling with helpful suggestions and retry logic
 - **Tool Support**: Access to Claude's full toolkit including file operations, code analysis, and more
@@ -203,12 +203,17 @@ Once your bot is running, you can use these commands in Telegram:
 
 #### Session Management
 ```
-/new                  # Start a new Claude session
-/continue [message]   # Continue previous session (optionally with message)
-/end                  # End current session
+/new                  # Clear context and start a fresh Claude session
+/continue [message]   # Explicitly continue previous session
+/end                  # End current session and clear context
 /status               # Show session status and usage
 /export               # Export session (choose format: Markdown, HTML, JSON)
 ```
+
+> **Session behavior:** Sessions are automatically maintained per project
+> directory. Switching directories with `/cd` resumes the session for that
+> project. Use `/new` or `/end` to explicitly clear context. Sessions persist
+> across bot restarts.
 
 #### Advanced Features
 ```
@@ -249,11 +254,13 @@ You: "Explain what this code does"
 
 ```
 1. You: /cd my-web-app
-   Bot: 📂 Changed to: my-web-app/
+   Bot: ✅ Directory Changed
+        📂 Current directory: my-web-app/
+        🆕 No existing session. Send a message to start a new one.
 
 2. You: /ls
    Bot: 📁 src/
-        📁 components/  
+        📁 components/
         📄 package.json
         📄 README.md
 
@@ -261,11 +268,16 @@ You: "Explain what this code does"
    Bot: 🤖 I'll help you migrate to TypeScript! Let me analyze your project structure...
         [Claude provides detailed migration steps]
 
-4. You: /status
-   Bot: 📊 Session Status
-        📂 Directory: my-web-app/
-        🤖 Claude Session: ✅ Active  
-        💰 Usage: $0.15 / $10.00 (2%)
+4. You: /cd another-project
+   Bot: ✅ Directory Changed
+        📂 Current directory: another-project/
+        🔄 Resumed session abc12345... (3 messages)
+
+5. You: /cd my-web-app
+   Bot: ✅ Directory Changed
+        📂 Current directory: my-web-app/
+        🔄 Resumed session def67890... (1 messages)
+        [Claude still remembers the TypeScript conversation!]
 ```
 
 ### Advanced Features Examples

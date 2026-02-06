@@ -177,6 +177,14 @@ class ClaudeSDKManager:
                 allowed_tools=self.config.claude_allowed_tools,
             )
 
+            # Resume previous session if we have a session_id
+            if session_id and continue_session:
+                options.resume = session_id
+                logger.info(
+                    "Resuming previous session",
+                    session_id=session_id,
+                )
+
             # Collect messages
             messages = []
             cost = 0.0
@@ -190,20 +198,29 @@ class ClaudeSDKManager:
                 timeout=self.config.claude_timeout_seconds,
             )
 
-            # Extract cost and tools from result message
+            # Extract cost, tools, and session_id from result message
             cost = 0.0
             tools_used = []
+            claude_session_id = None
             for message in messages:
                 if isinstance(message, ResultMessage):
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
+                    claude_session_id = getattr(message, "session_id", None)
                     tools_used = self._extract_tools_from_messages(messages)
                     break
 
             # Calculate duration
             duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
 
-            # Get or create session ID
-            final_session_id = session_id or str(uuid.uuid4())
+            # Use Claude's session_id if available, otherwise fall back
+            final_session_id = claude_session_id or session_id or str(uuid.uuid4())
+
+            if claude_session_id and claude_session_id != session_id:
+                logger.info(
+                    "Got session ID from Claude",
+                    claude_session_id=claude_session_id,
+                    previous_session_id=session_id,
+                )
 
             # Update session
             self._update_session(final_session_id, messages)

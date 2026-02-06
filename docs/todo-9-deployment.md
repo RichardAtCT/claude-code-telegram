@@ -330,12 +330,13 @@ docker-compose up -d
 ```
 /start - Initialize bot
 /ls - List files in current directory
-/cd <dir> - Change directory
+/cd <dir> - Change directory (resumes session for that project)
 /pwd - Show current directory
 /projects - Show all projects
-/new - Start new Claude session
-/continue - Continue last session
-/status - Show session info
+/new - Clear context and start fresh session
+/continue - Explicitly continue last session
+/end - End current session and clear context
+/status - Show session info (includes resumable sessions)
 ```
 
 ### Example Workflow

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Automatic Session Resumption**: Sessions are now automatically resumed per user+directory
+  - SDK integration now passes `resume` parameter to Claude Code for real session continuity
+  - Session IDs extracted from Claude's `ResultMessage` instead of generated locally
+  - `/cd` looks up and resumes existing sessions for the target directory
+  - Auto-resume from SQLite database survives bot restarts
+  - Graceful fallback to fresh session when resume fails (stale/expired sessions)
+  - `/new` and `/end` are the only ways to explicitly clear session context
+  - `/status` shows resumable sessions from the database
+
 ### In Progress
 - Advanced Features (TODO-7)
 - Complete Testing Suite (TODO-8)

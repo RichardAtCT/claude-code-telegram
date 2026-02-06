@@ -73,13 +73,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• `/pwd` - Show current directory\n"
         "• `/projects` - Show available projects\n\n"
         "**Session Commands:**\n"
-        "• `/new` - Start new Claude session\n"
-        "• `/continue [message]` - Continue last session (optionally with message)\n"
-        "• `/end` - End current session\n"
+        "• `/new` - Clear context and start a fresh session\n"
+        "• `/continue [message]` - Explicitly continue last session\n"
+        "• `/end` - End current session and clear context\n"
         "• `/status` - Show session and usage status\n"
         "• `/export` - Export session history\n"
         "• `/actions` - Show context-aware quick actions\n"
         "• `/git` - Git repository information\n\n"
+        "**Session Behavior:**\n"
+        "• Sessions are automatically maintained per project directory\n"
+        "• Switching directories with `/cd` resumes the session for that project\n"
+        "• Use `/new` or `/end` to explicitly clear session context\n"
+        "• Sessions persist across bot restarts\n\n"
         "**Usage Examples:**\n"
         "• `cd myproject` - Enter project directory\n"
         "• `ls` - See what's in current directory\n"
@@ -106,11 +111,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /new command."""
+    """Handle /new command - explicitly starts a fresh session, clearing previous context."""
     settings: Settings = context.bot_data["settings"]
-
-    # For now, we'll use a simple session concept
-    # This will be enhanced when we implement proper session management
 
     # Get current directory (default to approved directory)
     current_dir = context.user_data.get(
@@ -118,9 +120,16 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
     relative_path = current_dir.relative_to(settings.approved_directory)
 
-    # Clear any existing session data
+    # Track what was cleared for user feedback
+    old_session_id = context.user_data.get("claude_session_id")
+
+    # Clear existing session data - this is the explicit way to reset context
     context.user_data["claude_session_id"] = None
     context.user_data["session_started"] = True
+
+    cleared_info = ""
+    if old_session_id:
+        cleared_info = f"\n🗑️ Previous session `{old_session_id[:8]}...` cleared."
 
     keyboard = [
         [
@@ -142,8 +151,9 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await update.message.reply_text(
         f"🆕 **New Claude Code Session**\n\n"
-        f"📂 Working directory: `{relative_path}/`\n\n"
-        f"Ready to help you code! Send me a message to get started, or use the buttons below:",
+        f"📂 Working directory: `{relative_path}/`{cleared_info}\n\n"
+        f"Context has been cleared. Send a message to start fresh, "
+        f"or use the buttons below:",
         parse_mode="Markdown",
         reply_markup=reply_markup,
     )
@@ -458,15 +468,34 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Update current directory in user data
         context.user_data["current_directory"] = resolved_path
 
-        # Clear Claude session on directory change
-        context.user_data["claude_session_id"] = None
+        # Look up existing session for the new directory instead of clearing
+        claude_integration: ClaudeIntegration = context.bot_data.get(
+            "claude_integration"
+        )
+        resumed_session_info = ""
+        if claude_integration:
+            existing_session = await claude_integration._find_resumable_session(
+                user_id, resolved_path
+            )
+            if existing_session:
+                context.user_data["claude_session_id"] = existing_session.session_id
+                resumed_session_info = (
+                    f"\n🔄 Resumed session `{existing_session.session_id[:8]}...` "
+                    f"({existing_session.message_count} messages)"
+                )
+            else:
+                # No session for this directory - clear the current one
+                context.user_data["claude_session_id"] = None
+                resumed_session_info = (
+                    "\n🆕 No existing session. Send a message to start a new one."
+                )
 
         # Send confirmation
         relative_path = resolved_path.relative_to(settings.approved_directory)
         await update.message.reply_text(
             f"✅ **Directory Changed**\n\n"
-            f"📂 Current directory: `{relative_path}/`\n\n"
-            f"🔄 Claude session cleared. Send a message to start coding in this directory.",
+            f"📂 Current directory: `{relative_path}/`"
+            f"{resumed_session_info}",
             parse_mode="Markdown",
         )
 
@@ -602,6 +631,22 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             usage_info = "💰 Usage: _Unable to retrieve_\n"
 
+    # Check if there's a resumable session from the database
+    resumable_info = ""
+    if not claude_session_id:
+        claude_integration: ClaudeIntegration = context.bot_data.get(
+            "claude_integration"
+        )
+        if claude_integration:
+            existing = await claude_integration._find_resumable_session(
+                user_id, current_dir
+            )
+            if existing:
+                resumable_info = (
+                    f"🔄 Resumable: `{existing.session_id[:8]}...` "
+                    f"({existing.message_count} msgs)"
+                )
+
     # Format status message
     status_lines = [
         "📊 **Session Status**",
@@ -614,6 +659,9 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if claude_session_id:
         status_lines.append(f"🆔 Session ID: `{claude_session_id[:8]}...`")
+    elif resumable_info:
+        status_lines.append(resumable_info)
+        status_lines.append("💡 Session will auto-resume on your next message")
 
     # Add action buttons
     keyboard = []
