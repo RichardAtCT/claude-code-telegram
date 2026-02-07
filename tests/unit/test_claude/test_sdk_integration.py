@@ -6,9 +6,34 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_code_sdk import ClaudeCodeOptions
+from claude_code_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
 from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from src.config.settings import Settings
+
+
+def _make_assistant_message(text="Test response"):
+    """Create an AssistantMessage with proper structure for current SDK version."""
+    return AssistantMessage(
+        content=[TextBlock(text=text)],
+        model="claude-sonnet-4-20250514",
+    )
+
+
+def _make_result_message(**kwargs):
+    """Create a ResultMessage with sensible defaults."""
+    defaults = {
+        "subtype": "success",
+        "duration_ms": 1000,
+        "duration_api_ms": 800,
+        "is_error": False,
+        "num_turns": 1,
+        "session_id": "test-session",
+        "total_cost_usd": 0.05,
+        "result": "Success",
+    }
+    defaults.update(kwargs)
+    return ResultMessage(**defaults)
 
 
 class TestClaudeSDKManager:
@@ -84,21 +109,9 @@ class TestClaudeSDKManager:
 
     async def test_execute_command_success(self, sdk_manager):
         """Test successful command execution."""
-        from claude_code_sdk.types import AssistantMessage, ResultMessage
-
-        # Mock the claude-code-sdk query function
         async def mock_query(prompt, options):
-            yield AssistantMessage(content="Test response")
-            yield ResultMessage(
-                subtype="success",
-                duration_ms=1000,
-                duration_api_ms=800,
-                is_error=False,
-                num_turns=1,
-                session_id="test-session",
-                total_cost_usd=0.05,
-                result="Success",
-            )
+            yield _make_assistant_message("Test response")
+            yield _make_result_message(session_id="test-session", total_cost_usd=0.05)
 
         with patch("src.claude.sdk_integration.query", side_effect=mock_query):
             response = await sdk_manager.execute_command(
@@ -116,26 +129,14 @@ class TestClaudeSDKManager:
 
     async def test_execute_command_with_streaming(self, sdk_manager):
         """Test command execution with streaming callback."""
-        from claude_code_sdk.types import AssistantMessage, ResultMessage
-
         stream_updates = []
 
         async def stream_callback(update: StreamUpdate):
             stream_updates.append(update)
 
-        # Mock the claude-code-sdk query function
         async def mock_query(prompt, options):
-            yield AssistantMessage(content="Test response")
-            yield ResultMessage(
-                subtype="success",
-                duration_ms=1000,
-                duration_api_ms=800,
-                is_error=False,
-                num_turns=1,
-                session_id="test-session",
-                total_cost_usd=0.05,
-                result="Success",
-            )
+            yield _make_assistant_message("Test response")
+            yield _make_result_message()
 
         with patch("src.claude.sdk_integration.query", side_effect=mock_query):
             response = await sdk_manager.execute_command(
@@ -168,10 +169,8 @@ class TestClaudeSDKManager:
 
     async def test_session_management(self, sdk_manager):
         """Test session management."""
-        from claude_code_sdk.types import AssistantMessage
-
         session_id = "test-session"
-        messages = [AssistantMessage(content="test")]
+        messages = [_make_assistant_message("test")]
 
         # Update session
         sdk_manager._update_session(session_id, messages)
@@ -204,3 +203,117 @@ class TestClaudeSDKManager:
         sdk_manager.active_sessions["session2"] = {"test": "data2"}
 
         assert sdk_manager.get_active_process_count() == 2
+
+    async def test_execute_command_passes_mcp_config(self, tmp_path):
+        """Test that MCP config is passed to ClaudeCodeOptions when enabled."""
+        # Create a valid MCP config file
+        mcp_config_file = tmp_path / "mcp_config.json"
+        mcp_config_file.write_text(
+            '{"mcpServers": {"test-server": {"command": "echo", "args": ["hello"]}}}'
+        )
+
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            use_sdk=True,
+            claude_timeout_seconds=2,
+            enable_mcp=True,
+            mcp_config_path=str(mcp_config_file),
+        )
+
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+
+        async def mock_query(prompt, options):
+            captured_options.append(options)
+            yield _make_assistant_message("Test response")
+            yield _make_result_message(total_cost_usd=0.01)
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        # Verify MCP config was passed to options
+        assert len(captured_options) == 1
+        assert captured_options[0].mcp_servers == mcp_config_file
+
+    async def test_execute_command_no_mcp_when_disabled(self, sdk_manager):
+        """Test that MCP config is NOT passed when MCP is disabled."""
+        captured_options = []
+
+        async def mock_query(prompt, options):
+            captured_options.append(options)
+            yield _make_assistant_message("Test response")
+            yield _make_result_message(total_cost_usd=0.01)
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+            )
+
+        # Verify MCP config was NOT set (should be empty default)
+        assert len(captured_options) == 1
+        assert captured_options[0].mcp_servers == {}
+
+
+class TestClaudeMCPErrors:
+    """Test MCP-specific error handling."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        """Create test config."""
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            use_sdk=True,
+            claude_timeout_seconds=2,
+        )
+
+    @pytest.fixture
+    def sdk_manager(self, config):
+        """Create SDK manager."""
+        return ClaudeSDKManager(config)
+
+    async def test_mcp_connection_error_raises_mcp_error(self, sdk_manager):
+        """Test that MCP connection errors raise ClaudeMCPError."""
+        from claude_code_sdk import CLIConnectionError
+
+        from src.claude.exceptions import ClaudeMCPError
+
+        async def mock_query(prompt, options):
+            raise CLIConnectionError("MCP server failed to start")
+            yield  # make it an async generator
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            with pytest.raises(ClaudeMCPError) as exc_info:
+                await sdk_manager.execute_command(
+                    prompt="Test prompt",
+                    working_directory=Path("/test"),
+                )
+
+        assert "MCP server" in str(exc_info.value)
+
+    async def test_mcp_process_error_raises_mcp_error(self, sdk_manager):
+        """Test that MCP process errors raise ClaudeMCPError."""
+        from claude_code_sdk import ProcessError
+
+        from src.claude.exceptions import ClaudeMCPError
+
+        async def mock_query(prompt, options):
+            raise ProcessError("Failed to start MCP server: connection refused")
+            yield  # make it an async generator
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            with pytest.raises(ClaudeMCPError) as exc_info:
+                await sdk_manager.execute_command(
+                    prompt="Test prompt",
+                    working_directory=Path("/test"),
+                )
+
+        assert "MCP" in str(exc_info.value)

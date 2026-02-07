@@ -158,9 +158,54 @@ def test_mcp_config_validation(tmp_path, monkeypatch):
 
     assert "does not exist" in str(exc_info.value)
 
-    # Should succeed when config file exists
+    # Should fail when config file is not valid JSON
+    bad_json_file = tmp_path / "bad.json"
+    bad_json_file.write_text("not json at all")
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(test_dir),
+            enable_mcp=True,
+            mcp_config_path=str(bad_json_file),
+        )
+
+    assert "not valid JSON" in str(exc_info.value)
+
+    # Should fail when config file is missing mcpServers key
+    no_servers_file = tmp_path / "no_servers.json"
+    no_servers_file.write_text('{"test": true}')
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(test_dir),
+            enable_mcp=True,
+            mcp_config_path=str(no_servers_file),
+        )
+
+    assert "mcpServers" in str(exc_info.value)
+
+    # Should fail when mcpServers is empty
+    empty_servers_file = tmp_path / "empty_servers.json"
+    empty_servers_file.write_text('{"mcpServers": {}}')
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(test_dir),
+            enable_mcp=True,
+            mcp_config_path=str(empty_servers_file),
+        )
+
+    assert "at least one server" in str(exc_info.value)
+
+    # Should succeed with valid MCP config
     config_file = tmp_path / "mcp_config.json"
-    config_file.write_text('{"test": true}')
+    config_file.write_text('{"mcpServers": {"my-server": {"command": "npx", "args": ["-y", "my-mcp-server"]}}}')
 
     settings = Settings(
         telegram_bot_token="test_token",
@@ -234,12 +279,13 @@ def test_computed_properties(tmp_path):
 
 def test_feature_flags():
     """Test feature flag system."""
-    # Create test MCP config file before creating settings
-    Path("/tmp/test.json").write_text('{"test": true}')
+    # Create test MCP config file with valid structure before creating settings
+    mcp_config = '{"mcpServers": {"test-server": {"command": "echo", "args": ["hello"]}}}'
+    Path("/tmp/test_mcp.json").write_text(mcp_config)
 
     settings = create_test_config(
         enable_mcp=True,
-        mcp_config_path="/tmp/test.json",
+        mcp_config_path="/tmp/test_mcp.json",
         enable_git_integration=True,
         enable_file_uploads=False,
         enable_token_auth=True,
@@ -264,7 +310,7 @@ def test_feature_flags():
     assert features.is_feature_enabled("nonexistent") is False
 
     # Cleanup test file
-    Path("/tmp/test.json").unlink(missing_ok=True)
+    Path("/tmp/test_mcp.json").unlink(missing_ok=True)
 
 
 def test_environment_loading():

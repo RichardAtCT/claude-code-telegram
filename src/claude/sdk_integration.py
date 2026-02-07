@@ -35,6 +35,7 @@ from claude_code_sdk.types import (
 
 from ..config.settings import Settings
 from .exceptions import (
+    ClaudeMCPError,
     ClaudeParsingError,
     ClaudeProcessError,
     ClaudeTimeoutError,
@@ -177,6 +178,14 @@ class ClaudeSDKManager:
                 allowed_tools=self.config.claude_allowed_tools,
             )
 
+            # Pass MCP server configuration if enabled
+            if self.config.enable_mcp and self.config.mcp_config_path:
+                options.mcp_servers = self.config.mcp_config_path
+                logger.info(
+                    "MCP servers configured",
+                    mcp_config_path=str(self.config.mcp_config_path),
+                )
+
             # Resume previous session if we have a session_id
             if session_id and continue_session:
                 options.resume = session_id
@@ -262,16 +271,28 @@ class ClaudeSDKManager:
             raise ClaudeProcessError(error_msg)
 
         except ProcessError as e:
+            error_str = str(e)
             logger.error(
                 "Claude process failed",
-                error=str(e),
+                error=error_str,
                 exit_code=getattr(e, "exit_code", None),
             )
-            raise ClaudeProcessError(f"Claude process error: {str(e)}")
+            # Check if the process error is MCP-related
+            if "mcp" in error_str.lower():
+                raise ClaudeMCPError(
+                    f"MCP server error: {error_str}"
+                )
+            raise ClaudeProcessError(f"Claude process error: {error_str}")
 
         except CLIConnectionError as e:
-            logger.error("Claude connection error", error=str(e))
-            raise ClaudeProcessError(f"Failed to connect to Claude: {str(e)}")
+            error_str = str(e)
+            logger.error("Claude connection error", error=error_str)
+            # Check if the connection error is MCP-related
+            if "mcp" in error_str.lower() or "server" in error_str.lower():
+                raise ClaudeMCPError(
+                    f"MCP server connection failed: {error_str}"
+                )
+            raise ClaudeProcessError(f"Failed to connect to Claude: {error_str}")
 
         except ClaudeSDKError as e:
             logger.error("Claude SDK error", error=str(e))
