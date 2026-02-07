@@ -20,6 +20,7 @@ import structlog
 
 from ..config.settings import Settings
 from .exceptions import (
+    ClaudeMCPError,
     ClaudeParsingError,
     ClaudeProcessError,
     ClaudeTimeoutError,
@@ -211,6 +212,10 @@ class ClaudeProcessManager:
         ):
             cmd.extend(["--allowedTools", ",".join(self.config.claude_allowed_tools)])
 
+        # Add MCP server configuration if enabled
+        if self.config.enable_mcp and self.config.mcp_config_path:
+            cmd.extend(["--mcp-config", str(self.config.mcp_config_path)])
+
         logger.debug("Built Claude Code command", command=cmd)
         return cmd
 
@@ -314,6 +319,12 @@ class ClaudeProcessManager:
                 )
 
                 raise ClaudeProcessError(user_friendly_msg)
+
+            # Check for MCP-related errors
+            if "mcp" in error_msg.lower():
+                raise ClaudeMCPError(
+                    f"MCP server error: {error_msg}"
+                )
 
             # Generic error handling for other cases
             raise ClaudeProcessError(

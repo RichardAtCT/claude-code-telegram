@@ -8,6 +8,7 @@ Features:
 - Environment-specific settings
 """
 
+import json
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -178,11 +179,29 @@ class Settings(BaseSettings):
     @classmethod
     def validate_mcp_config(cls, v: Any, info: Any) -> Optional[Path]:
         """Validate MCP configuration path if MCP is enabled."""
-        # Note: In Pydantic v2, we'll need to check enable_mcp after model creation
-        if v and isinstance(v, str):
+        if not v:
+            return v  # type: ignore[no-any-return]
+        if isinstance(v, str):
             v = Path(v)
-        if v and not v.exists():
+        if not v.exists():
             raise ValueError(f"MCP config file does not exist: {v}")
+        # Validate that the file contains valid JSON with mcpServers
+        try:
+            with open(v) as f:
+                config_data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"MCP config file is not valid JSON: {e}")
+        if not isinstance(config_data, dict):
+            raise ValueError("MCP config file must contain a JSON object")
+        if "mcpServers" not in config_data:
+            raise ValueError(
+                "MCP config file must contain a 'mcpServers' key. "
+                "Expected format: {\"mcpServers\": {\"server-name\": {\"command\": \"...\", ...}}}"
+            )
+        if not isinstance(config_data["mcpServers"], dict):
+            raise ValueError("'mcpServers' must be an object mapping server names to configurations")
+        if not config_data["mcpServers"]:
+            raise ValueError("'mcpServers' must contain at least one server configuration")
         return v  # type: ignore[no-any-return]
 
     @field_validator("log_level")
