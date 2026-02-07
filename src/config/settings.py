@@ -157,8 +157,26 @@ class Settings(BaseSettings):
     @classmethod
     def parse_allowed_users(cls, v: Any) -> Optional[List[int]]:
         """Parse comma-separated user IDs."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return [v]
         if isinstance(v, str):
             return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
+        if isinstance(v, list):
+            return [int(uid) for uid in v]
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("claude_allowed_tools", mode="before")
+    @classmethod
+    def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
+        """Parse comma-separated tool names."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return [tool.strip() for tool in v.split(",") if tool.strip()]
+        if isinstance(v, list):
+            return [str(tool) for tool in v]
         return v  # type: ignore[no-any-return]
 
     @field_validator("approved_directory")
