@@ -5,8 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_code_sdk import ClaudeCodeOptions
-from claude_code_sdk.types import AssistantMessage, ResultMessage, TextBlock
+from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock
 
 from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from src.config.settings import Settings
@@ -205,7 +204,7 @@ class TestClaudeSDKManager:
         assert sdk_manager.get_active_process_count() == 2
 
     async def test_execute_command_passes_mcp_config(self, tmp_path):
-        """Test that MCP config is passed to ClaudeCodeOptions when enabled."""
+        """Test that MCP config is passed to ClaudeAgentOptions when enabled."""
         # Create a valid MCP config file
         mcp_config_file = tmp_path / "mcp_config.json"
         mcp_config_file.write_text(
@@ -237,9 +236,11 @@ class TestClaudeSDKManager:
                 working_directory=tmp_path,
             )
 
-        # Verify MCP config was passed to options
+        # Verify MCP config was parsed and passed as dict to options
         assert len(captured_options) == 1
-        assert captured_options[0].mcp_servers == mcp_config_file
+        assert captured_options[0].mcp_servers == {
+            "test-server": {"command": "echo", "args": ["hello"]}
+        }
 
     async def test_execute_command_no_mcp_when_disabled(self, sdk_manager):
         """Test that MCP config is NOT passed when MCP is disabled."""
@@ -282,7 +283,7 @@ class TestClaudeMCPErrors:
 
     async def test_mcp_connection_error_raises_mcp_error(self, sdk_manager):
         """Test that MCP connection errors raise ClaudeMCPError."""
-        from claude_code_sdk import CLIConnectionError
+        from claude_agent_sdk import CLIConnectionError
 
         from src.claude.exceptions import ClaudeMCPError
 
@@ -301,7 +302,7 @@ class TestClaudeMCPErrors:
 
     async def test_mcp_process_error_raises_mcp_error(self, sdk_manager):
         """Test that MCP process errors raise ClaudeMCPError."""
-        from claude_code_sdk import ProcessError
+        from claude_agent_sdk import ProcessError
 
         from src.claude.exceptions import ClaudeMCPError
 

@@ -57,7 +57,7 @@ Features:
 
 import asyncio
 from typing import AsyncIterator, Optional, Dict, Any
-from claude_code_sdk import query, ClaudeCodeOptions
+from claude_agent_sdk import query, ClaudeAgentOptions
 
 @dataclass
 class ClaudeResponse:
@@ -76,7 +76,7 @@ class ClaudeSDKManager:
     
     def __init__(self, config: Settings):
         self.config = config
-        self.options = ClaudeCodeOptions(
+        self.options = ClaudeAgentOptions(
             api_key=config.anthropic_api_key_str,
             timeout=config.claude_timeout_seconds,
             working_directory=config.approved_directory

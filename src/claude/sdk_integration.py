@@ -15,22 +15,21 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import structlog
-from claude_code_sdk import (
-    ClaudeCodeOptions,
-    ClaudeSDKError,
+from claude_agent_sdk import (
+    AssistantMessage,
     CLIConnectionError,
+    CLIJSONDecodeError,
     CLINotFoundError,
+    ClaudeAgentOptions,
+    ClaudeSDKError,
     Message,
     ProcessError,
-    query,
-)
-from claude_code_sdk.types import (
-    AssistantMessage,
     ResultMessage,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
+    query,
 )
 
 from ..config.settings import Settings
@@ -171,16 +170,20 @@ class ClaudeSDKManager:
         )
 
         try:
-            # Build Claude Code options
-            options = ClaudeCodeOptions(
+            # Build Claude Agent options
+            cli_path = find_claude_cli(self.config.claude_cli_path)
+            options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
+                cli_path=cli_path,
             )
 
             # Pass MCP server configuration if enabled
             if self.config.enable_mcp and self.config.mcp_config_path:
-                options.mcp_servers = self.config.mcp_config_path
+                options.mcp_servers = self._load_mcp_config(
+                    self.config.mcp_config_path
+                )
                 logger.info(
                     "MCP servers configured",
                     mcp_config_path=str(self.config.mcp_config_path),
@@ -294,6 +297,10 @@ class ClaudeSDKManager:
                 )
             raise ClaudeProcessError(f"Failed to connect to Claude: {error_str}")
 
+        except CLIJSONDecodeError as e:
+            logger.error("Claude SDK JSON decode error", error=str(e))
+            raise ClaudeParsingError(f"Failed to decode Claude response: {str(e)}")
+
         except ClaudeSDKError as e:
             logger.error("Claude SDK error", error=str(e))
             raise ClaudeProcessError(f"Claude SDK error: {str(e)}")
@@ -374,7 +381,7 @@ class ClaudeSDKManager:
     async def _handle_stream_message(
         self, message: Message, stream_callback: Callable[[StreamUpdate], None]
     ) -> None:
-        """Handle streaming message from claude-code-sdk."""
+        """Handle streaming message from claude-agent-sdk."""
         try:
             if isinstance(message, AssistantMessage):
                 # Extract content from assistant message
@@ -400,7 +407,7 @@ class ClaudeSDKManager:
                     await stream_callback(update)
 
                 # Check for tool calls (if available in the message structure)
-                # Note: This depends on the actual claude-code-sdk message structure
+                # Note: This depends on the actual claude-agent-sdk message structure
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
@@ -454,6 +461,21 @@ class ClaudeSDKManager:
                             )
 
         return tools_used
+
+    def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:
+        """Load MCP server configuration from a JSON file.
+
+        The new claude-agent-sdk expects mcp_servers as a dict, not a file path.
+        """
+        import json
+
+        try:
+            with open(config_path) as f:
+                config_data = json.load(f)
+            return config_data.get("mcpServers", {})
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error("Failed to load MCP config", path=str(config_path), error=str(e))
+            return {}
 
     def _update_session(self, session_id: str, messages: List[Message]) -> None:
         """Update session data."""
