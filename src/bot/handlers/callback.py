@@ -613,15 +613,18 @@ async def _handle_ls_action(query, context: ContextTypes.DEFAULT_TYPE) -> None:
             if item.name.startswith("."):
                 continue
 
+            # Escape markdown special characters in filenames
+            safe_name = _escape_markdown(item.name)
+
             if item.is_dir():
-                directories.append(f"📁 {item.name}/")
+                directories.append(f"📁 {safe_name}/")
             else:
                 try:
                     size = item.stat().st_size
                     size_str = _format_file_size(size)
-                    files.append(f"📄 {item.name} ({size_str})")
+                    files.append(f"📄 {safe_name} ({size_str})")
                 except OSError:
-                    files.append(f"📄 {item.name}")
+                    files.append(f"📄 {safe_name}")
 
         items = directories + files
         relative_path = current_dir.relative_to(settings.approved_directory)
@@ -1151,3 +1154,12 @@ def _format_file_size(size: int) -> str:
             return f"{size:.1f}{unit}" if unit != "B" else f"{size}B"
         size /= 1024
     return f"{size:.1f}TB"
+
+
+def _escape_markdown(text: str) -> str:
+    """Escape special markdown characters in text for Telegram."""
+    # Escape characters that have special meaning in Telegram Markdown
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
