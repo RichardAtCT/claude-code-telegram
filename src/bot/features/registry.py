@@ -54,20 +54,21 @@ class FeatureRegistry:
             except Exception as e:
                 logger.error("Failed to initialize git integration", error=str(e))
 
-        # Quick actions - conditionally enabled
-        if self.config.enable_quick_actions:
+        # Quick actions - skip in agentic mode
+        if self.config.enable_quick_actions and not self.config.agentic_mode:
             try:
                 self.features["quick_actions"] = QuickActionManager()
                 logger.info("Quick actions feature enabled")
             except Exception as e:
                 logger.error("Failed to initialize quick actions", error=str(e))
 
-        # Session export - always enabled
-        try:
-            self.features["session_export"] = SessionExporter(storage=self.storage)
-            logger.info("Session export feature enabled")
-        except Exception as e:
-            logger.error("Failed to initialize session export", error=str(e))
+        # Session export - classic mode only
+        if not self.config.agentic_mode:
+            try:
+                self.features["session_export"] = SessionExporter(storage=self.storage)
+                logger.info("Session export feature enabled")
+            except Exception as e:
+                logger.error("Failed to initialize session export", error=str(e))
 
         # Image handling - always enabled
         try:
@@ -76,12 +77,13 @@ class FeatureRegistry:
         except Exception as e:
             logger.error("Failed to initialize image handler", error=str(e))
 
-        # Conversation enhancements - always enabled
-        try:
-            self.features["conversation"] = ConversationEnhancer()
-            logger.info("Conversation enhancer feature enabled")
-        except Exception as e:
-            logger.error("Failed to initialize conversation enhancer", error=str(e))
+        # Conversation enhancements - skip in agentic mode
+        if not self.config.agentic_mode:
+            try:
+                self.features["conversation"] = ConversationEnhancer()
+                logger.info("Conversation enhancer feature enabled")
+            except Exception as e:
+                logger.error("Failed to initialize conversation enhancer", error=str(e))
 
         logger.info(
             "Feature initialization complete",

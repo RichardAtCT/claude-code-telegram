@@ -66,6 +66,11 @@ class FeatureFlags:
         """Check if the job scheduler is enabled."""
         return self.settings.enable_scheduler
 
+    @property
+    def agentic_mode_enabled(self) -> bool:
+        """Check if agentic conversational mode is enabled."""
+        return self.settings.agentic_mode
+
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""
         feature_map = {
@@ -79,6 +84,7 @@ class FeatureFlags:
             "development": self.development_features_enabled,
             "api_server": self.api_server_enabled,
             "scheduler": self.scheduler_enabled,
+            "agentic_mode": self.agentic_mode_enabled,
         }
         return feature_map.get(feature_name, False)
 

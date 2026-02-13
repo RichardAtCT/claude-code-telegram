@@ -11,11 +11,9 @@ import asyncio
 from typing import Any, Callable, Dict, Optional
 
 import structlog
-from telegram import BotCommand, Update
+from telegram import Update
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
-    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -24,6 +22,7 @@ from telegram.ext import (
 from ..config.settings import Settings
 from ..exceptions import ClaudeCodeTelegramError
 from .features.registry import FeatureRegistry
+from .orchestrator import MessageOrchestrator
 
 logger = structlog.get_logger()
 
@@ -38,6 +37,7 @@ class ClaudeCodeBot:
         self.app: Optional[Application] = None
         self.is_running = False
         self.feature_registry: Optional[FeatureRegistry] = None
+        self.orchestrator = MessageOrchestrator(settings, dependencies)
 
     async def initialize(self) -> None:
         """Initialize bot application. Idempotent — safe to call multiple times."""
@@ -83,92 +83,14 @@ class ClaudeCodeBot:
         logger.info("Bot initialization complete")
 
     async def _set_bot_commands(self) -> None:
-        """Set bot command menu."""
-        commands = [
-            BotCommand("start", "Start bot and show help"),
-            BotCommand("help", "Show available commands"),
-            BotCommand("new", "Clear context and start fresh session"),
-            BotCommand("continue", "Explicitly continue last session"),
-            BotCommand("end", "End current session and clear context"),
-            BotCommand("ls", "List files in current directory"),
-            BotCommand("cd", "Change directory (resumes project session)"),
-            BotCommand("pwd", "Show current directory"),
-            BotCommand("projects", "Show all projects"),
-            BotCommand("status", "Show session status"),
-            BotCommand("export", "Export current session"),
-            BotCommand("actions", "Show quick actions"),
-            BotCommand("git", "Git repository commands"),
-        ]
-
+        """Set bot command menu via orchestrator."""
+        commands = await self.orchestrator.get_bot_commands()
         await self.app.bot.set_my_commands(commands)
         logger.info("Bot commands set", commands=[cmd.command for cmd in commands])
 
     def _register_handlers(self) -> None:
-        """Register all command and message handlers."""
-        from .handlers import callback, command, message
-
-        # Command handlers
-        handlers = [
-            ("start", command.start_command),
-            ("help", command.help_command),
-            ("new", command.new_session),
-            ("continue", command.continue_session),
-            ("end", command.end_session),
-            ("ls", command.list_files),
-            ("cd", command.change_directory),
-            ("pwd", command.print_working_directory),
-            ("projects", command.show_projects),
-            ("status", command.session_status),
-            ("export", command.export_session),
-            ("actions", command.quick_actions),
-            ("git", command.git_command),
-        ]
-
-        for cmd, handler in handlers:
-            self.app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
-
-        # Message handlers with priority groups
-        self.app.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
-                self._inject_deps(message.handle_text_message),
-            ),
-            group=10,
-        )
-
-        self.app.add_handler(
-            MessageHandler(
-                filters.Document.ALL, self._inject_deps(message.handle_document)
-            ),
-            group=10,
-        )
-
-        self.app.add_handler(
-            MessageHandler(filters.PHOTO, self._inject_deps(message.handle_photo)),
-            group=10,
-        )
-
-        # Callback query handler
-        self.app.add_handler(
-            CallbackQueryHandler(self._inject_deps(callback.handle_callback_query))
-        )
-
-        logger.info("Bot handlers registered")
-
-    def _inject_deps(self, handler: Callable) -> Callable:
-        """Inject dependencies into handlers."""
-
-        async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            # Add dependencies to context
-            for key, value in self.deps.items():
-                context.bot_data[key] = value
-
-            # Add settings
-            context.bot_data["settings"] = self.settings
-
-            return await handler(update, context)
-
-        return wrapped
+        """Register handlers via orchestrator (mode-aware)."""
+        self.orchestrator.register_handlers(self.app)
 
     def _add_middleware(self) -> None:
         """Add middleware to application."""
