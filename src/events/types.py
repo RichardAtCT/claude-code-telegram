@@ -48,7 +48,7 @@ class AgentResponseEvent(Event):
 
     chat_id: int = 0
     text: str = ""
-    parse_mode: Optional[str] = "Markdown"
+    parse_mode: Optional[str] = "HTML"
     reply_to_message_id: Optional[int] = None
     source: str = "agent"
     originating_event_id: Optional[str] = None

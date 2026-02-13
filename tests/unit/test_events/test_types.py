@@ -49,7 +49,7 @@ class TestEventTypes:
             originating_event_id="orig-1",
         )
         assert event.source == "agent"
-        assert event.parse_mode == "Markdown"
+        assert event.parse_mode == "HTML"
         assert event.originating_event_id == "orig-1"
 
     def test_scheduled_event_with_skill(self) -> None:
