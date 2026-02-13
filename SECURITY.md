@@ -2,87 +2,60 @@
 
 ## Supported Versions
 
-This project is currently in development. Security updates will be provided for:
-
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | ✅ Current development |
+| 0.1.x   | Current development |
 
 ## Security Model
 
 The Claude Code Telegram Bot implements a defense-in-depth security model with multiple layers:
 
-### 1. Authentication & Authorization (TODO-3)
+### 1. Authentication & Authorization
 - **User Whitelist**: Only pre-approved Telegram user IDs can access the bot
 - **Token-Based Auth**: Optional token-based authentication for additional security
 - **Session Management**: Secure session handling with timeout and cleanup
 
-### 2. Directory Boundaries (TODO-3)
+### 2. Directory Boundaries
 - **Approved Directory**: All operations confined to a pre-configured directory tree
 - **Path Validation**: Prevents directory traversal attacks (../../../etc/passwd)
 - **Permission Checks**: Validates file system permissions before operations
 
-### 3. Input Validation (TODO-3)
+### 3. Input Validation
 - **Command Sanitization**: All user inputs sanitized to prevent injection attacks
 - **File Type Validation**: Only allowed file types can be uploaded
-- **Path Sanitization**: Removes dangerous characters and patterns
+- **Path Sanitization**: Removes dangerous characters and patterns (`;`, `&&`, `$()`, `..`)
+- **Secret File Protection**: Blocks access to `.env`, `.ssh`, `id_rsa`, `.pem` files
 
-### 4. Rate Limiting (TODO-3)
-- **Request Rate Limiting**: Prevents abuse with configurable request limits
+### 4. Rate Limiting
+- **Request Rate Limiting**: Token bucket algorithm prevents abuse with configurable limits
 - **Cost-Based Limiting**: Tracks and limits Claude usage costs per user
-- **Burst Protection**: Token bucket algorithm prevents burst attacks
+- **Burst Protection**: Configurable burst capacity prevents spike attacks
 
-### 5. Audit Logging (TODO-3)
+### 5. Audit Logging
 - **Authentication Events**: All login attempts and auth failures logged
 - **Command Execution**: All commands and file operations logged
-- **Security Violations**: Path traversal attempts and other violations logged
+- **Security Violations**: Path traversal attempts, injection attempts, and other violations logged
+- **Risk Assessment**: Automatic severity classification for security events
+
+### 6. Webhook Authentication
+- **GitHub HMAC-SHA256**: Webhook payloads verified against `X-Hub-Signature-256` header using a shared secret
+- **Generic Bearer Token**: Non-GitHub providers authenticated via `Authorization: Bearer <token>` header
+- **Deduplication**: Atomic `INSERT OR IGNORE` on delivery ID prevents replay attacks
+- **Event Security Middleware**: Validates webhook events before handler processing
 
 ## Current Security Status
 
-### ✅ Implemented Security Features
+All planned security features are implemented and active:
 
-#### Configuration Security
-- **Environment Variable Protection**: Sensitive values (tokens, secrets) handled as SecretStr
-- **Validation**: All configuration values validated with proper error messages
-- **Path Security**: Approved directory must exist and be accessible
-
-#### Input Validation Foundation
-- **Type Safety**: Full mypy compliance ensures type safety
-- **Validation Framework**: Pydantic validators for all configuration inputs
-- **Error Handling**: Comprehensive exception hierarchy for security errors
-
-#### Development Security
-- **No Secrets in Code**: All sensitive data via environment variables
-- **Secure Defaults**: Production defaults favor security over convenience
-- **Audit Trail**: Structured logging captures all configuration and validation events
-
-### 🚧 Planned Security Features (TODO-3)
-
-#### Authentication System
-```python
-# Planned implementation
-class AuthenticationManager:
-    async def authenticate_user(self, user_id: int) -> bool
-    async def check_permissions(self, user_id: int, action: str) -> bool
-    async def create_session(self, user_id: int) -> Session
-```
-
-#### Path Validation
-```python
-# Planned implementation  
-class SecurityValidator:
-    def validate_path(self, path: str) -> Tuple[bool, Path, Optional[str]]
-    def sanitize_command_input(self, text: str) -> str
-    def validate_filename(self, filename: str) -> Tuple[bool, Optional[str]]
-```
-
-#### Rate Limiting
-```python
-# Planned implementation
-class RateLimiter:
-    async def check_rate_limit(self, user_id: int, cost: float) -> Tuple[bool, Optional[str]]
-    async def track_usage(self, user_id: int, cost: float) -> None
-```
+- Multi-provider authentication system (whitelist + token)
+- Rate limiting with token bucket algorithm (request and cost-based)
+- Input validation with path traversal, command injection, and zip bomb protection
+- Directory isolation with approved directory boundaries
+- Security audit logging with risk assessment and event tracking
+- Bot middleware framework (auth, rate limit, security, burst protection)
+- Webhook signature verification (GitHub HMAC-SHA256, generic Bearer token)
+- Event security middleware for webhook and scheduled event validation
+- Configuration security via Pydantic validators and SecretStr
 
 ## Security Configuration
 
@@ -98,6 +71,20 @@ ALLOWED_USERS=123456789,987654321  # Telegram user IDs
 # Optional: Token-based authentication
 ENABLE_TOKEN_AUTH=true
 AUTH_TOKEN_SECRET=your-secret-here  # Generate with: openssl rand -hex 32
+```
+
+### Webhook Security Settings
+
+```bash
+# GitHub webhook signature verification
+GITHUB_WEBHOOK_SECRET=your-github-webhook-secret
+
+# Generic webhook Bearer token
+WEBHOOK_API_SECRET=your-api-secret
+
+# API server (required for webhooks)
+ENABLE_API_SERVER=true
+API_SERVER_PORT=8080
 ```
 
 ### Recommended Security Settings
@@ -127,19 +114,21 @@ ENVIRONMENT=production  # Enables strict security defaults
    ```bash
    # Use minimal necessary permissions
    chmod 755 /path/to/approved/projects
-   
+
    # Avoid sensitive directories
-   # ❌ Don't use: /, /home, /etc, /var
-   # ✅ Use: /home/user/projects, /opt/bot-projects
+   # Don't use: /, /home, /etc, /var
+   # Use: /home/user/projects, /opt/bot-projects
    ```
 
 2. **Token Management**
    ```bash
    # Generate secure secrets
    openssl rand -hex 32
-   
+
    # Store in environment, never in code
    export AUTH_TOKEN_SECRET="generated-secret"
+   export GITHUB_WEBHOOK_SECRET="generated-secret"
+   export WEBHOOK_API_SECRET="generated-secret"
    ```
 
 3. **User Management**
@@ -154,100 +143,42 @@ ENVIRONMENT=production  # Enables strict security defaults
    # Enable logging and monitoring
    export LOG_LEVEL=INFO
    export ENABLE_TELEMETRY=true
-   
+
    # Monitor logs for security events
    tail -f bot.log | grep -i "security\|auth\|violation"
    ```
 
 ### For Developers
 
-1. **Never Commit Secrets**
-   ```bash
-   # Add to .gitignore
-   .env
-   *.key
-   *.pem
-   config/secrets.yml
-   ```
-
-2. **Use Type Safety**
-   ```python
-   # Always use type hints
-   def validate_path(path: str) -> Tuple[bool, Optional[str]]:
-       pass
-   ```
-
-3. **Validate All Inputs**
-   ```python
-   # Use the security validator
-   from src.security.validators import SecurityValidator
-   
-   validator = SecurityValidator(approved_dir)
-   valid, resolved_path, error = validator.validate_path(user_input)
-   ```
-
-4. **Log Security Events**
-   ```python
-   # Use structured logging
-   logger.warning("Security violation", 
-                 user_id=user_id, 
-                 violation_type="path_traversal",
-                 attempted_path=user_input)
-   ```
+1. **Never Commit Secrets** -- use `.gitignore` for `.env`, `*.key`, `*.pem`
+2. **Use Type Safety** -- all functions must have type hints (`mypy --strict`)
+3. **Validate All Inputs** -- use `SecurityValidator` for user-provided paths and commands
+4. **Log Security Events** -- use structlog with `violation_type` and `user_id` context
 
 ## Threat Model
 
 ### Threats We Protect Against
 
-1. **Directory Traversal** (High Priority)
-   - Attempts to access files outside approved directory
-   - Path traversal attacks (../, ~/, etc.)
-   - Symbolic link attacks
-
-2. **Command Injection** (High Priority)
-   - Shell command injection through user inputs
-   - Environment variable injection
-   - Process substitution attacks
-
-3. **Unauthorized Access** (Medium Priority)
-   - Access by non-whitelisted users
-   - Token theft and replay attacks
-   - Session hijacking
-
-4. **Resource Abuse** (Medium Priority)
-   - Rate limiting bypass attempts
-   - Cost limit violations
-   - Denial of service attacks
-
-5. **Information Disclosure** (Low Priority)
-   - Sensitive file exposure
-   - Configuration information leakage
-   - Error message information leakage
+1. **Directory Traversal** (High Priority) -- path traversal, symlink attacks
+2. **Command Injection** (High Priority) -- shell injection, env var injection
+3. **Unauthorized Access** (Medium Priority) -- non-whitelisted users, token replay
+4. **Resource Abuse** (Medium Priority) -- rate limit bypass, cost limit violations
+5. **Webhook Forgery** (Medium Priority) -- unsigned payloads, replay attacks
+6. **Information Disclosure** (Low Priority) -- sensitive file exposure, error leakage
 
 ### Threats Outside Scope
 
 - Network-level attacks (handled by hosting infrastructure)
 - Telegram API vulnerabilities (handled by Telegram)
 - Host OS security (handled by system administration)
-- Physical access to servers (handled by hosting infrastructure)
 
 ## Reporting a Vulnerability
-
-### Security Contact
 
 **Do not create public GitHub issues for security vulnerabilities.**
 
 For security issues, please email: [Insert security contact email]
 
-### Report Format
-
-Please include:
-
-1. **Description** of the vulnerability
-2. **Steps to reproduce** the issue
-3. **Potential impact** assessment
-4. **Suggested mitigation** if known
-5. **Disclosure timeline** preferences
+Include: description, steps to reproduce, potential impact, and suggested mitigation.
 
 ### Response Process
 
@@ -255,47 +186,18 @@ Please include:
 2. **Initial assessment** within 1 week
 3. **Fix development** as soon as possible
 4. **Security advisory** published after fix
-5. **Credit** to reporter (if desired)
 
-## Security Checklist
+## Production Checklist
 
-### For Each Release
-
-- [ ] All dependencies updated to latest secure versions
-- [ ] Security tests passing
-- [ ] No secrets committed to repository
-- [ ] Security documentation updated
-- [ ] Threat model reviewed
-- [ ] Security configuration validated
-
-### For Production Deployment
-
-- [ ] APPROVED_DIRECTORY properly configured and restricted
-- [ ] ALLOWED_USERS whitelist configured
+- [ ] `APPROVED_DIRECTORY` properly configured and restricted
+- [ ] `ALLOWED_USERS` whitelist configured
 - [ ] Rate limiting enabled and configured
 - [ ] Logging enabled and monitored
 - [ ] Authentication tokens properly secured
+- [ ] `GITHUB_WEBHOOK_SECRET` set (if using GitHub webhooks)
+- [ ] `WEBHOOK_API_SECRET` set (if using generic webhooks)
+- [ ] API server behind reverse proxy with TLS (if enabled)
 - [ ] Environment variables properly configured
 - [ ] File permissions properly set
 - [ ] Network access properly restricted
-
-## Security Resources
-
-### Tools and Libraries
-
-- **Pydantic**: Input validation and type safety
-- **structlog**: Secure, structured logging
-- **SecretStr**: Safe handling of sensitive strings
-- **pathlib**: Safe path manipulation
-
-### References
-
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [OWASP API Security Top 10](https://owasp.org/www-project-api-security/)
-- [Telegram Bot Security Best Practices](https://core.telegram.org/bots/faq#how-do-i-make-sure-that-webhook-requests-are-coming-from-telegram)
-- [Python Security Guide](https://python-security.readthedocs.io/)
-
----
-
-**Last Updated**: 2025-06-05  
-**Security Review**: TODO-3 Implementation Phase
+- [ ] All dependencies updated to latest secure versions
