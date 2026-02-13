@@ -40,7 +40,10 @@ class ClaudeCodeBot:
         self.feature_registry: Optional[FeatureRegistry] = None
 
     async def initialize(self) -> None:
-        """Initialize bot application."""
+        """Initialize bot application. Idempotent — safe to call multiple times."""
+        if self.app is not None:
+            return
+
         logger.info("Initializing Telegram bot")
 
         # Create application

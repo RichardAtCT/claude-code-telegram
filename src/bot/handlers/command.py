@@ -230,7 +230,9 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             from ..utils.formatting import ResponseFormatter
 
             formatter = ResponseFormatter(settings)
-            formatted_messages = formatter.format_claude_response(claude_response.content)
+            formatted_messages = formatter.format_claude_response(
+                claude_response.content
+            )
 
             for msg in formatted_messages:
                 await update.message.reply_text(
@@ -987,7 +989,26 @@ def _format_file_size(size: int) -> str:
 def _escape_markdown(text: str) -> str:
     """Escape special markdown characters in text for Telegram."""
     # Escape characters that have special meaning in Telegram Markdown
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    special_chars = [
+        "_",
+        "*",
+        "[",
+        "]",
+        "(",
+        ")",
+        "~",
+        "`",
+        ">",
+        "#",
+        "+",
+        "-",
+        "=",
+        "|",
+        "{",
+        "}",
+        ".",
+        "!",
+    ]
     for char in special_chars:
-        text = text.replace(char, f'\\{char}')
+        text = text.replace(char, f"\\{char}")
     return text

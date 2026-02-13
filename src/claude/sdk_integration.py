@@ -17,11 +17,11 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 import structlog
 from claude_agent_sdk import (
     AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKError,
     CLIConnectionError,
     CLIJSONDecodeError,
     CLINotFoundError,
-    ClaudeAgentOptions,
-    ClaudeSDKError,
     Message,
     ProcessError,
     ResultMessage,
@@ -181,9 +181,7 @@ class ClaudeSDKManager:
 
             # Pass MCP server configuration if enabled
             if self.config.enable_mcp and self.config.mcp_config_path:
-                options.mcp_servers = self._load_mcp_config(
-                    self.config.mcp_config_path
-                )
+                options.mcp_servers = self._load_mcp_config(self.config.mcp_config_path)
                 logger.info(
                     "MCP servers configured",
                     mcp_config_path=str(self.config.mcp_config_path),
@@ -282,9 +280,7 @@ class ClaudeSDKManager:
             )
             # Check if the process error is MCP-related
             if "mcp" in error_str.lower():
-                raise ClaudeMCPError(
-                    f"MCP server error: {error_str}"
-                )
+                raise ClaudeMCPError(f"MCP server error: {error_str}")
             raise ClaudeProcessError(f"Claude process error: {error_str}")
 
         except CLIConnectionError as e:
@@ -292,9 +288,7 @@ class ClaudeSDKManager:
             logger.error("Claude connection error", error=error_str)
             # Check if the connection error is MCP-related
             if "mcp" in error_str.lower() or "server" in error_str.lower():
-                raise ClaudeMCPError(
-                    f"MCP server connection failed: {error_str}"
-                )
+                raise ClaudeMCPError(f"MCP server connection failed: {error_str}")
             raise ClaudeProcessError(f"Failed to connect to Claude: {error_str}")
 
         except CLIJSONDecodeError as e:
@@ -474,7 +468,9 @@ class ClaudeSDKManager:
                 config_data = json.load(f)
             return config_data.get("mcpServers", {})
         except (json.JSONDecodeError, OSError) as e:
-            logger.error("Failed to load MCP config", path=str(config_path), error=str(e))
+            logger.error(
+                "Failed to load MCP config", path=str(config_path), error=str(e)
+            )
             return {}
 
     def _update_session(self, session_id: str, messages: List[Message]) -> None:

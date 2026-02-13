@@ -207,7 +207,7 @@ class DatabaseManager:
                 """
                 -- Add analytics views
                 CREATE VIEW IF NOT EXISTS daily_stats AS
-                SELECT 
+                SELECT
                     date(timestamp) as date,
                     COUNT(DISTINCT user_id) as active_users,
                     COUNT(*) as total_messages,
@@ -217,7 +217,7 @@ class DatabaseManager:
                 GROUP BY date(timestamp);
 
                 CREATE VIEW IF NOT EXISTS user_stats AS
-                SELECT 
+                SELECT
                     u.user_id,
                     u.telegram_username,
                     COUNT(DISTINCT s.session_id) as total_sessions,
@@ -228,6 +228,49 @@ class DatabaseManager:
                 LEFT JOIN sessions s ON u.user_id = s.user_id
                 LEFT JOIN messages m ON u.user_id = m.user_id
                 GROUP BY u.user_id;
+                """,
+            ),
+            (
+                3,
+                """
+                -- Agentic platform tables
+
+                -- Scheduled jobs for recurring agent tasks
+                CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    job_name TEXT NOT NULL,
+                    cron_expression TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    target_chat_ids TEXT DEFAULT '',
+                    working_directory TEXT NOT NULL,
+                    skill_name TEXT,
+                    created_by INTEGER DEFAULT 0,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                -- Webhook events for deduplication and audit
+                CREATE TABLE IF NOT EXISTS webhook_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    delivery_id TEXT UNIQUE,
+                    payload JSON,
+                    processed BOOLEAN DEFAULT FALSE,
+                    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_webhook_events_delivery
+                    ON webhook_events(delivery_id);
+                CREATE INDEX IF NOT EXISTS idx_webhook_events_provider
+                    ON webhook_events(provider, received_at);
+                CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_active
+                    ON scheduled_jobs(is_active);
+
+                -- Enable WAL mode for better concurrent write performance
+                PRAGMA journal_mode=WAL;
                 """,
             ),
         ]

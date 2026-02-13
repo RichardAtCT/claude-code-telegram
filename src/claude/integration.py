@@ -322,9 +322,7 @@ class ClaudeProcessManager:
 
             # Check for MCP-related errors
             if "mcp" in error_msg.lower():
-                raise ClaudeMCPError(
-                    f"MCP server error: {error_msg}"
-                )
+                raise ClaudeMCPError(f"MCP server error: {error_msg}")
 
             # Generic error handling for other cases
             raise ClaudeProcessError(
@@ -558,7 +556,7 @@ class ClaudeProcessManager:
             logger.debug(
                 "Using fallback content from assistant messages",
                 num_texts=len(assistant_texts),
-                content_length=len(content)
+                content_length=len(content),
             )
 
         return ClaudeResponse(
