@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-telegram"
-version = "0.1.0"
+version = "1.0.0"
 description = "Telegram bot for remote Claude Code access with comprehensive configuration management"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 license = "MIT"

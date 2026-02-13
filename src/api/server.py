@@ -28,7 +28,7 @@ def create_api_app(
 
     app = FastAPI(
         title="Claude Code Telegram - Webhook API",
-        version="0.1.0",
+        version="1.0.0",
         docs_url="/docs" if settings.development_mode else None,
         redoc_url=None,
     )

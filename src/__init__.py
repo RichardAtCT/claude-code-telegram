@@ -19,7 +19,7 @@ Current Implementation Status:
 - 🚧 Storage Layer (TODO-6)
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 __author__ = "Richard Atkinson"
 __email__ = "richardatk01@gmail.com"
 __license__ = "MIT"
