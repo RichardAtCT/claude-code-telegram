@@ -334,16 +334,20 @@ class ConversationEnhancer:
         # Truncate content if too long for Telegram
         content = response.content
         if len(content) > max_content_length:
-            content = content[:max_content_length] + "\n\n... _(response truncated)_"
+            content = (
+                content[:max_content_length] + "\n\n... <i>(response truncated)</i>"
+            )
 
         # Add session info if this is a new session
         if context.conversation_turn == 1 and response.session_id:
-            session_info = f"\n\n🆔 **Session:** `{response.session_id[:8]}...`"
+            session_info = (
+                f"\n\n🆔 <b>Session:</b> <code>{response.session_id[:8]}...</code>"
+            )
             content += session_info
 
         # Add cost info if significant
         if response.cost > 0.01:
-            cost_info = f"\n\n💰 **Cost:** ${response.cost:.4f}"
+            cost_info = f"\n\n💰 <b>Cost:</b> ${response.cost:.4f}"
             content += cost_info
 
         # Generate follow-up suggestions

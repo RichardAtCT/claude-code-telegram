@@ -21,17 +21,7 @@ from telegram.ext import (
 
 from ..claude.exceptions import ClaudeToolValidationError
 from ..config.settings import Settings
-
-# Characters that break Telegram Markdown v1 parsing
-_MD_ESCAPE_CHARS = ("_", "*", "[", "]", "`")
-
-
-def _escape_markdown(text: str) -> str:
-    """Escape Markdown metacharacters in user-supplied text."""
-    for ch in _MD_ESCAPE_CHARS:
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
+from .utils.html_format import escape_html
 
 logger = structlog.get_logger()
 
@@ -185,15 +175,15 @@ class MessageOrchestrator:
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
-        dir_display = f"`{current_dir}/`"
+        dir_display = f"<code>{current_dir}/</code>"
 
-        safe_name = _escape_markdown(user.first_name)
+        safe_name = escape_html(user.first_name)
         await update.message.reply_text(
             f"Hi {safe_name}! I'm your AI coding assistant.\n"
             f"Just tell me what you need — I can read, write, and run code.\n\n"
             f"Working in: {dir_display}\n"
             f"Commands: /new (reset) · /status",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     async def agentic_new(
@@ -315,7 +305,7 @@ class MessageOrchestrator:
             logger.error("Tool validation error", error=str(e), user_id=user_id)
             from .utils.formatting import FormattedMessage
 
-            formatted_messages = [FormattedMessage(str(e), parse_mode="Markdown")]
+            formatted_messages = [FormattedMessage(str(e), parse_mode="HTML")]
 
         except Exception as e:
             success = False
@@ -324,7 +314,7 @@ class MessageOrchestrator:
             from .utils.formatting import FormattedMessage
 
             formatted_messages = [
-                FormattedMessage(_format_error_message(str(e)), parse_mode="Markdown")
+                FormattedMessage(_format_error_message(str(e)), parse_mode="HTML")
             ]
 
         await progress_msg.delete()
@@ -340,11 +330,26 @@ class MessageOrchestrator:
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
             except Exception as e:
-                logger.error("Failed to send response", error=str(e), message_index=i)
-                await update.message.reply_text(
-                    "Failed to send response. Please try again.",
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                logger.warning(
+                    "Failed to send HTML response, retrying as plain text",
+                    error=str(e),
+                    message_index=i,
                 )
+                try:
+                    await update.message.reply_text(
+                        message.text,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+                except Exception:
+                    await update.message.reply_text(
+                        "Failed to send response. Please try again.",
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
 
         # Audit log
         audit_logger = context.bot_data.get("audit_logger")
@@ -472,7 +477,7 @@ class MessageOrchestrator:
             from .handlers.message import _format_error_message
 
             await progress_msg.edit_text(
-                _format_error_message(str(e)), parse_mode="Markdown"
+                _format_error_message(str(e)), parse_mode="HTML"
             )
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
 
@@ -540,7 +545,7 @@ class MessageOrchestrator:
             from .handlers.message import _format_error_message
 
             await progress_msg.edit_text(
-                _format_error_message(str(e)), parse_mode="Markdown"
+                _format_error_message(str(e)), parse_mode="HTML"
             )
             logger.error(
                 "Claude photo processing failed", error=str(e), user_id=user_id

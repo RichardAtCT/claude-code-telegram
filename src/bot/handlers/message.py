@@ -12,6 +12,7 @@ from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.rate_limiter import RateLimiter
 from ...security.validators import SecurityValidator
+from ..utils.html_format import escape_html
 
 logger = structlog.get_logger()
 
@@ -26,24 +27,24 @@ async def _format_progress_update(update_obj) -> Optional[str]:
             tool_name = update_obj.metadata.get("tool_name", "Tool")
 
         if update_obj.is_error():
-            return f"❌ **{tool_name} failed**\n\n_{update_obj.get_error_message()}_"
+            return f"❌ <b>{tool_name} failed</b>\n\n<i>{update_obj.get_error_message()}</i>"
         else:
             execution_time = ""
             if update_obj.metadata and update_obj.metadata.get("execution_time_ms"):
                 time_ms = update_obj.metadata["execution_time_ms"]
                 execution_time = f" ({time_ms}ms)"
-            return f"✅ **{tool_name} completed**{execution_time}"
+            return f"✅ <b>{tool_name} completed</b>{execution_time}"
 
     elif update_obj.type == "progress":
         # Handle progress updates
-        progress_text = f"🔄 **{update_obj.content or 'Working...'}**"
+        progress_text = f"🔄 <b>{update_obj.content or 'Working...'}</b>"
 
         percentage = update_obj.get_progress_percentage()
         if percentage is not None:
             # Create a simple progress bar
             filled = int(percentage / 10)  # 0-10 scale
             bar = "█" * filled + "░" * (10 - filled)
-            progress_text += f"\n\n`{bar}` {percentage}%"
+            progress_text += f"\n\n<code>{bar}</code> {percentage}%"
 
         if update_obj.progress:
             step = update_obj.progress.get("step")
@@ -55,14 +56,14 @@ async def _format_progress_update(update_obj) -> Optional[str]:
 
     elif update_obj.type == "error":
         # Handle error messages
-        return f"❌ **Error**\n\n_{update_obj.get_error_message()}_"
+        return f"❌ <b>Error</b>\n\n<i>{update_obj.get_error_message()}</i>"
 
     elif update_obj.type == "assistant" and update_obj.tool_calls:
         # Show when tools are being called
         tool_names = update_obj.get_tool_names()
         if tool_names:
             tools_text = ", ".join(tool_names)
-            return f"🔧 **Using tools:** {tools_text}"
+            return f"🔧 <b>Using tools:</b> {tools_text}"
 
     elif update_obj.type == "assistant" and update_obj.content:
         # Regular content updates with preview
@@ -71,14 +72,14 @@ async def _format_progress_update(update_obj) -> Optional[str]:
             if len(update_obj.content) > 150
             else update_obj.content
         )
-        return f"🤖 **Claude is working...**\n\n_{content_preview}_"
+        return f"🤖 <b>Claude is working...</b>\n\n<i>{content_preview}</i>"
 
     elif update_obj.type == "system":
         # System initialization or other system messages
         if update_obj.metadata and update_obj.metadata.get("subtype") == "init":
             tools_count = len(update_obj.metadata.get("tools", []))
             model = update_obj.metadata.get("model", "Claude")
-            return f"🚀 **Starting {model}** with {tools_count} tools available"
+            return f"🚀 <b>Starting {model}</b> with {tools_count} tools available"
 
     return None
 
@@ -93,47 +94,41 @@ def _format_error_message(error_str: str) -> str:
         return error_str
     elif "no conversation found" in error_str.lower():
         return (
-            f"🔄 **Session Not Found**\n\n"
+            f"🔄 <b>Session Not Found</b>\n\n"
             f"The Claude session could not be found or has expired.\n\n"
-            f"**What you can do:**\n"
-            f"• Use `/new` to start a fresh session\n"
+            f"<b>What you can do:</b>\n"
+            f"• Use /new to start a fresh session\n"
             f"• Try your request again\n"
-            f"• Use `/status` to check your current session"
+            f"• Use /status to check your current session"
         )
     elif "rate limit" in error_str.lower():
         return (
-            f"⏱️ **Rate Limit Reached**\n\n"
+            f"⏱️ <b>Rate Limit Reached</b>\n\n"
             f"Too many requests in a short time period.\n\n"
-            f"**What you can do:**\n"
+            f"<b>What you can do:</b>\n"
             f"• Wait a moment before trying again\n"
             f"• Use simpler requests\n"
-            f"• Check your current usage with `/status`"
+            f"• Check your current usage with /status"
         )
     elif "timeout" in error_str.lower():
         return (
-            f"⏰ **Request Timeout**\n\n"
+            f"⏰ <b>Request Timeout</b>\n\n"
             f"Your request took too long to process and timed out.\n\n"
-            f"**What you can do:**\n"
+            f"<b>What you can do:</b>\n"
             f"• Try breaking down your request into smaller parts\n"
             f"• Use simpler commands\n"
             f"• Try again in a moment"
         )
     else:
         # Generic error handling
-        # Escape special markdown characters in error message
-        # Replace problematic chars that break Telegram markdown
-        safe_error = (
-            error_str.replace("_", "\\_")
-            .replace("*", "\\*")
-            .replace("`", "\\`")
-            .replace("[", "\\[")
-        )
+        # Escape HTML special characters in error message
+        safe_error = escape_html(error_str)
         # Truncate very long errors
         if len(safe_error) > 200:
             safe_error = safe_error[:200] + "..."
 
         return (
-            f"❌ **Claude Code Error**\n\n"
+            f"❌ <b>Claude Code Error</b>\n\n"
             f"Failed to process your request: {safe_error}\n\n"
             f"Please try again or contact the administrator if the problem persists."
         )
@@ -182,10 +177,10 @@ async def handle_text_message(
 
         if not claude_integration:
             await update.message.reply_text(
-                "❌ **Claude integration not available**\n\n"
+                "❌ <b>Claude integration not available</b>\n\n"
                 "The Claude Code integration is not properly configured. "
                 "Please contact the administrator.",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             return
 
@@ -202,7 +197,7 @@ async def handle_text_message(
             try:
                 progress_text = await _format_progress_update(update_obj)
                 if progress_text:
-                    await progress_msg.edit_text(progress_text, parse_mode="Markdown")
+                    await progress_msg.edit_text(progress_text, parse_mode="HTML")
             except Exception as e:
                 logger.warning("Failed to update progress message", error=str(e))
 
@@ -256,14 +251,14 @@ async def handle_text_message(
             # Error message already formatted, create FormattedMessage
             from ..utils.formatting import FormattedMessage
 
-            formatted_messages = [FormattedMessage(str(e), parse_mode="Markdown")]
+            formatted_messages = [FormattedMessage(str(e), parse_mode="HTML")]
         except Exception as e:
             logger.error("Claude integration failed", error=str(e), user_id=user_id)
             # Format error and create FormattedMessage
             from ..utils.formatting import FormattedMessage
 
             formatted_messages = [
-                FormattedMessage(_format_error_message(str(e)), parse_mode="Markdown")
+                FormattedMessage(_format_error_message(str(e)), parse_mode="HTML")
             ]
 
         # Delete progress message
@@ -284,14 +279,26 @@ async def handle_text_message(
                     await asyncio.sleep(0.5)
 
             except Exception as e:
-                logger.error(
-                    "Failed to send response message", error=str(e), message_index=i
+                logger.warning(
+                    "Failed to send HTML response, retrying as plain text",
+                    error=str(e),
+                    message_index=i,
                 )
-                # Try to send error message
-                await update.message.reply_text(
-                    "❌ Failed to send response. Please try again.",
-                    reply_to_message_id=update.message.message_id if i == 0 else None,
-                )
+                try:
+                    await update.message.reply_text(
+                        message.text,
+                        reply_markup=message.reply_markup,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+                except Exception:
+                    await update.message.reply_text(
+                        "❌ Failed to send response. Please try again.",
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
 
         # Update session info
         context.user_data["last_message"] = update.message.text
@@ -332,8 +339,8 @@ async def handle_text_message(
 
                         # Send follow-up suggestions
                         await update.message.reply_text(
-                            "💡 **What would you like to do next?**",
-                            parse_mode="Markdown",
+                            "💡 <b>What would you like to do next?</b>",
+                            parse_mode="HTML",
                             reply_markup=suggestion_keyboard,
                         )
 
@@ -360,8 +367,8 @@ async def handle_text_message(
         except:
             pass
 
-        error_msg = f"❌ **Error processing message**\n\n{str(e)}"
-        await update.message.reply_text(error_msg, parse_mode="Markdown")
+        error_msg = f"❌ <b>Error processing message</b>\n\n{escape_html(str(e))}"
+        await update.message.reply_text(error_msg, parse_mode="HTML")
 
         # Log failed processing
         if audit_logger:
@@ -401,7 +408,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             valid, error = security_validator.validate_filename(document.file_name)
             if not valid:
                 await update.message.reply_text(
-                    f"❌ **File Upload Rejected**\n\n{error}"
+                    f"❌ <b>File Upload Rejected</b>\n\n{escape_html(error)}",
+                    parse_mode="HTML",
                 )
 
                 # Log security violation
@@ -418,9 +426,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         max_size = 10 * 1024 * 1024  # 10MB
         if document.file_size > max_size:
             await update.message.reply_text(
-                f"❌ **File Too Large**\n\n"
+                f"❌ <b>File Too Large</b>\n\n"
                 f"Maximum file size: {max_size // 1024 // 1024}MB\n"
-                f"Your file: {document.file_size / 1024 / 1024:.1f}MB"
+                f"Your file: {document.file_size / 1024 / 1024:.1f}MB",
+                parse_mode="HTML",
             )
             return
 
@@ -438,7 +447,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.chat.send_action("upload_document")
 
         progress_msg = await update.message.reply_text(
-            f"📄 Processing file: `{document.file_name}`...", parse_mode="Markdown"
+            f"📄 Processing file: <code>{document.file_name}</code>...",
+            parse_mode="HTML",
         )
 
         # Check if enhanced file handler is available
@@ -457,8 +467,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
                 # Update progress message with file type info
                 await progress_msg.edit_text(
-                    f"📄 Processing {processed_file.type} file: `{document.file_name}`...",
-                    parse_mode="Markdown",
+                    f"📄 Processing {processed_file.type} file: <code>{document.file_name}</code>...",
+                    parse_mode="HTML",
                 )
 
             except Exception as e:
@@ -491,13 +501,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             except UnicodeDecodeError:
                 await progress_msg.edit_text(
-                    "❌ **File Format Not Supported**\n\n"
+                    "❌ <b>File Format Not Supported</b>\n\n"
                     "File must be text-based and UTF-8 encoded.\n\n"
-                    "**Supported formats:**\n"
+                    "<b>Supported formats:</b>\n"
                     "• Source code files (.py, .js, .ts, etc.)\n"
                     "• Text files (.txt, .md)\n"
                     "• Configuration files (.json, .yaml, .toml)\n"
-                    "• Documentation files"
+                    "• Documentation files",
+                    parse_mode="HTML",
                 )
                 return
 
@@ -506,7 +517,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         # Create a new progress message for Claude processing
         claude_progress_msg = await update.message.reply_text(
-            "🤖 Processing file with Claude...", parse_mode="Markdown"
+            "🤖 Processing file with Claude...", parse_mode="HTML"
         )
 
         # Get Claude integration from context
@@ -514,9 +525,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if not claude_integration:
             await claude_progress_msg.edit_text(
-                "❌ **Claude integration not available**\n\n"
+                "❌ <b>Claude integration not available</b>\n\n"
                 "The Claude Code integration is not properly configured.",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             return
 
@@ -568,7 +579,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         except Exception as e:
             await claude_progress_msg.edit_text(
-                _format_error_message(str(e)), parse_mode="Markdown"
+                _format_error_message(str(e)), parse_mode="HTML"
             )
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
 
@@ -588,8 +599,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except:
             pass
 
-        error_msg = f"❌ **Error processing file**\n\n{str(e)}"
-        await update.message.reply_text(error_msg, parse_mode="Markdown")
+        error_msg = f"❌ <b>Error processing file</b>\n\n{escape_html(str(e))}"
+        await update.message.reply_text(error_msg, parse_mode="HTML")
 
         # Log failed file processing
         if audit_logger:
@@ -617,7 +628,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         try:
             # Send processing indicator
             progress_msg = await update.message.reply_text(
-                "📸 Processing image...", parse_mode="Markdown"
+                "📸 Processing image...", parse_mode="HTML"
             )
 
             # Get the largest photo size
@@ -633,7 +644,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             # Create Claude progress message
             claude_progress_msg = await update.message.reply_text(
-                "🤖 Analyzing image with Claude...", parse_mode="Markdown"
+                "🤖 Analyzing image with Claude...", parse_mode="HTML"
             )
 
             # Get Claude integration
@@ -641,9 +652,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             if not claude_integration:
                 await claude_progress_msg.edit_text(
-                    "❌ **Claude integration not available**\n\n"
+                    "❌ <b>Claude integration not available</b>\n\n"
                     "The Claude Code integration is not properly configured.",
-                    parse_mode="Markdown",
+                    parse_mode="HTML",
                 )
                 return
 
@@ -692,7 +703,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             except Exception as e:
                 await claude_progress_msg.edit_text(
-                    _format_error_message(str(e)), parse_mode="Markdown"
+                    _format_error_message(str(e)), parse_mode="HTML"
                 )
                 logger.error(
                     "Claude image processing failed", error=str(e), user_id=user_id
@@ -701,21 +712,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except Exception as e:
             logger.error("Image processing failed", error=str(e), user_id=user_id)
             await update.message.reply_text(
-                f"❌ **Error processing image**\n\n{str(e)}", parse_mode="Markdown"
+                f"❌ <b>Error processing image</b>\n\n{escape_html(str(e))}",
+                parse_mode="HTML",
             )
     else:
         # Fall back to unsupported message
         await update.message.reply_text(
-            "📸 **Photo Upload**\n\n"
+            "📸 <b>Photo Upload</b>\n\n"
             "Photo processing is not yet supported.\n\n"
-            "**Currently supported:**\n"
+            "<b>Currently supported:</b>\n"
             "• Text files (.py, .js, .md, etc.)\n"
             "• Configuration files\n"
             "• Documentation files\n\n"
-            "**Coming soon:**\n"
+            "<b>Coming soon:</b>\n"
             "• Image analysis\n"
             "• Screenshot processing\n"
-            "• Diagram interpretation"
+            "• Diagram interpretation",
+            parse_mode="HTML",
         )
 
 
@@ -779,38 +792,38 @@ async def _generate_placeholder_response(
         word in message_lower for word in ["list", "show", "see", "directory", "files"]
     ):
         response_text = (
-            f"🤖 **Claude Code Response** _(Placeholder)_\n\n"
-            f"I understand you want to see files. Try using the `/ls` command to list files "
-            f"in your current directory (`{relative_path}/`).\n\n"
-            f"**Available commands:**\n"
-            f"• `/ls` - List files\n"
-            f"• `/cd <dir>` - Change directory\n"
-            f"• `/projects` - Show projects\n\n"
-            f"_Note: Full Claude Code integration will be available in the next phase._"
+            f"🤖 <b>Claude Code Response</b> <i>(Placeholder)</i>\n\n"
+            f"I understand you want to see files. Try using the /ls command to list files "
+            f"in your current directory (<code>{relative_path}/</code>).\n\n"
+            f"<b>Available commands:</b>\n"
+            f"• /ls - List files\n"
+            f"• /cd &lt;dir&gt; - Change directory\n"
+            f"• /projects - Show projects\n\n"
+            f"<i>Note: Full Claude Code integration will be available in the next phase.</i>"
         )
 
     elif any(word in message_lower for word in ["create", "generate", "make", "build"]):
         response_text = (
-            f"🤖 **Claude Code Response** _(Placeholder)_\n\n"
+            f"🤖 <b>Claude Code Response</b> <i>(Placeholder)</i>\n\n"
             f"I understand you want to create something! Once the Claude Code integration "
             f"is complete, I'll be able to:\n\n"
             f"• Generate code files\n"
             f"• Create project structures\n"
             f"• Write documentation\n"
             f"• Build complete applications\n\n"
-            f"**Current directory:** `{relative_path}/`\n\n"
-            f"_Full functionality coming soon!_"
+            f"<b>Current directory:</b> <code>{relative_path}/</code>\n\n"
+            f"<i>Full functionality coming soon!</i>"
         )
 
     elif any(word in message_lower for word in ["help", "how", "what", "explain"]):
         response_text = (
-            f"🤖 **Claude Code Response** _(Placeholder)_\n\n"
-            f"I'm here to help! Try using `/help` for available commands.\n\n"
-            f"**What I can do now:**\n"
-            f"• Navigate directories (`/cd`, `/ls`, `/pwd`)\n"
-            f"• Show projects (`/projects`)\n"
-            f"• Manage sessions (`/new`, `/status`)\n\n"
-            f"**Coming soon:**\n"
+            f"🤖 <b>Claude Code Response</b> <i>(Placeholder)</i>\n\n"
+            f"I'm here to help! Try using /help for available commands.\n\n"
+            f"<b>What I can do now:</b>\n"
+            f"• Navigate directories (/cd, /ls, /pwd)\n"
+            f"• Show projects (/projects)\n"
+            f"• Manage sessions (/new, /status)\n\n"
+            f"<b>Coming soon:</b>\n"
             f"• Full Claude Code integration\n"
             f"• Code generation and editing\n"
             f"• File operations\n"
@@ -819,18 +832,18 @@ async def _generate_placeholder_response(
 
     else:
         response_text = (
-            f"🤖 **Claude Code Response** _(Placeholder)_\n\n"
+            f"🤖 <b>Claude Code Response</b> <i>(Placeholder)</i>\n\n"
             f"I received your message: \"{message_text[:100]}{'...' if len(message_text) > 100 else ''}\"\n\n"
-            f"**Current Status:**\n"
-            f"• Directory: `{relative_path}/`\n"
+            f"<b>Current Status:</b>\n"
+            f"• Directory: <code>{relative_path}/</code>\n"
             f"• Bot core: ✅ Active\n"
             f"• Claude integration: 🔄 Coming soon\n\n"
             f"Once Claude Code integration is complete, I'll be able to process your "
             f"requests fully and help with coding tasks!\n\n"
-            f"For now, try the available commands like `/ls`, `/cd`, and `/help`."
+            f"For now, try the available commands like /ls, /cd, and /help."
         )
 
-    return {"text": response_text, "parse_mode": "Markdown"}
+    return {"text": response_text, "parse_mode": "HTML"}
 
 
 def _update_working_directory_from_claude_response(

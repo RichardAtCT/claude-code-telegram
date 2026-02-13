@@ -288,12 +288,12 @@ async def test_agentic_document_rejects_large_files(agentic_settings, deps):
     assert "too large" in call_args.args[0].lower()
 
 
-async def test_agentic_start_escapes_markdown_in_name(agentic_settings, deps):
-    """Names with Markdown metacharacters are escaped safely."""
+async def test_agentic_start_escapes_html_in_name(agentic_settings, deps):
+    """Names with HTML-special characters are escaped safely."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
 
     update = MagicMock()
-    update.effective_user.first_name = "A_B*C[D"
+    update.effective_user.first_name = "A<B>&C"
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
@@ -303,10 +303,10 @@ async def test_agentic_start_escapes_markdown_in_name(agentic_settings, deps):
 
     call_kwargs = update.message.reply_text.call_args
     text = call_kwargs.args[0]
-    # Metacharacters should be escaped
-    assert "A\\_B\\*C\\[D" in text
-    # parse_mode is still Markdown (backtick dir display works)
-    assert call_kwargs.kwargs.get("parse_mode") == "Markdown"
+    # HTML-special characters should be escaped
+    assert "A&lt;B&gt;&amp;C" in text
+    # parse_mode is HTML
+    assert call_kwargs.kwargs.get("parse_mode") == "HTML"
 
 
 async def test_agentic_text_logs_failure_on_error(agentic_settings, deps):

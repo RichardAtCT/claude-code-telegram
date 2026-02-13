@@ -108,9 +108,7 @@ class NotificationService:
                 await self.bot.send_message(
                     chat_id=chat_id,
                     text=chunk,
-                    parse_mode=(
-                        ParseMode.MARKDOWN if event.parse_mode == "Markdown" else None
-                    ),
+                    parse_mode=(ParseMode.HTML if event.parse_mode == "HTML" else None),
                 )
                 self._last_send_per_chat[chat_id] = asyncio.get_event_loop().time()
 

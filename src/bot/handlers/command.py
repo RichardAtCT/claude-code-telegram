@@ -8,6 +8,7 @@ from ...claude.facade import ClaudeIntegration
 from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
+from ..utils.html_format import escape_html
 
 logger = structlog.get_logger()
 
@@ -19,21 +20,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     welcome_message = (
         f"👋 Welcome to Claude Code Telegram Bot, {user.first_name}!\n\n"
         f"🤖 I help you access Claude Code remotely through Telegram.\n\n"
-        f"**Available Commands:**\n"
-        f"• `/help` - Show detailed help\n"
-        f"• `/new` - Start a new Claude session\n"
-        f"• `/ls` - List files in current directory\n"
-        f"• `/cd <dir>` - Change directory\n"
-        f"• `/projects` - Show available projects\n"
-        f"• `/status` - Show session status\n"
-        f"• `/actions` - Show quick actions\n"
-        f"• `/git` - Git repository commands\n\n"
-        f"**Quick Start:**\n"
-        f"1. Use `/projects` to see available projects\n"
-        f"2. Use `/cd <project>` to navigate to a project\n"
+        f"<b>Available Commands:</b>\n"
+        f"• <code>/help</code> - Show detailed help\n"
+        f"• <code>/new</code> - Start a new Claude session\n"
+        f"• <code>/ls</code> - List files in current directory\n"
+        f"• <code>/cd &lt;dir&gt;</code> - Change directory\n"
+        f"• <code>/projects</code> - Show available projects\n"
+        f"• <code>/status</code> - Show session status\n"
+        f"• <code>/actions</code> - Show quick actions\n"
+        f"• <code>/git</code> - Git repository commands\n\n"
+        f"<b>Quick Start:</b>\n"
+        f"1. Use <code>/projects</code> to see available projects\n"
+        f"2. Use <code>/cd &lt;project&gt;</code> to navigate to a project\n"
         f"3. Send any message to start coding with Claude!\n\n"
         f"🔒 Your access is secured and all actions are logged.\n"
-        f"📊 Use `/status` to check your usage limits."
+        f"📊 Use <code>/status</code> to check your usage limits."
     )
 
     # Add quick action buttons
@@ -52,7 +53,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        welcome_message, parse_mode="Markdown", reply_markup=reply_markup
+        welcome_message, parse_mode="HTML", reply_markup=reply_markup
     )
 
     # Log command
@@ -66,48 +67,48 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
     help_text = (
-        "🤖 **Claude Code Telegram Bot Help**\n\n"
-        "**Navigation Commands:**\n"
-        "• `/ls` - List files and directories\n"
-        "• `/cd <directory>` - Change to directory\n"
-        "• `/pwd` - Show current directory\n"
-        "• `/projects` - Show available projects\n\n"
-        "**Session Commands:**\n"
-        "• `/new` - Clear context and start a fresh session\n"
-        "• `/continue [message]` - Explicitly continue last session\n"
-        "• `/end` - End current session and clear context\n"
-        "• `/status` - Show session and usage status\n"
-        "• `/export` - Export session history\n"
-        "• `/actions` - Show context-aware quick actions\n"
-        "• `/git` - Git repository information\n\n"
-        "**Session Behavior:**\n"
+        "🤖 <b>Claude Code Telegram Bot Help</b>\n\n"
+        "<b>Navigation Commands:</b>\n"
+        "• <code>/ls</code> - List files and directories\n"
+        "• <code>/cd &lt;directory&gt;</code> - Change to directory\n"
+        "• <code>/pwd</code> - Show current directory\n"
+        "• <code>/projects</code> - Show available projects\n\n"
+        "<b>Session Commands:</b>\n"
+        "• <code>/new</code> - Clear context and start a fresh session\n"
+        "• <code>/continue [message]</code> - Explicitly continue last session\n"
+        "• <code>/end</code> - End current session and clear context\n"
+        "• <code>/status</code> - Show session and usage status\n"
+        "• <code>/export</code> - Export session history\n"
+        "• <code>/actions</code> - Show context-aware quick actions\n"
+        "• <code>/git</code> - Git repository information\n\n"
+        "<b>Session Behavior:</b>\n"
         "• Sessions are automatically maintained per project directory\n"
-        "• Switching directories with `/cd` resumes the session for that project\n"
-        "• Use `/new` or `/end` to explicitly clear session context\n"
+        "• Switching directories with <code>/cd</code> resumes the session for that project\n"
+        "• Use <code>/new</code> or <code>/end</code> to explicitly clear session context\n"
         "• Sessions persist across bot restarts\n\n"
-        "**Usage Examples:**\n"
-        "• `cd myproject` - Enter project directory\n"
-        "• `ls` - See what's in current directory\n"
-        "• `Create a simple Python script` - Ask Claude to code\n"
+        "<b>Usage Examples:</b>\n"
+        "• <code>cd myproject</code> - Enter project directory\n"
+        "• <code>ls</code> - See what's in current directory\n"
+        "• <code>Create a simple Python script</code> - Ask Claude to code\n"
         "• Send a file to have Claude review it\n\n"
-        "**File Operations:**\n"
+        "<b>File Operations:</b>\n"
         "• Send text files (.py, .js, .md, etc.) for review\n"
         "• Claude can read, modify, and create files\n"
         "• All file operations are within your approved directory\n\n"
-        "**Security Features:**\n"
+        "<b>Security Features:</b>\n"
         "• 🔒 Path traversal protection\n"
         "• ⏱️ Rate limiting to prevent abuse\n"
         "• 📊 Usage tracking and limits\n"
         "• 🛡️ Input validation and sanitization\n\n"
-        "**Tips:**\n"
+        "<b>Tips:</b>\n"
         "• Use specific, clear requests for best results\n"
-        "• Check `/status` to monitor your usage\n"
+        "• Check <code>/status</code> to monitor your usage\n"
         "• Use quick action buttons when available\n"
         "• File uploads are automatically processed by Claude\n\n"
         "Need more help? Contact your administrator."
     )
 
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 
 async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -129,7 +130,9 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     cleared_info = ""
     if old_session_id:
-        cleared_info = f"\n🗑️ Previous session `{old_session_id[:8]}...` cleared."
+        cleared_info = (
+            f"\n🗑️ Previous session <code>{old_session_id[:8]}...</code> cleared."
+        )
 
     keyboard = [
         [
@@ -150,11 +153,11 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        f"🆕 **New Claude Code Session**\n\n"
-        f"📂 Working directory: `{relative_path}/`{cleared_info}\n\n"
+        f"🆕 <b>New Claude Code Session</b>\n\n"
+        f"📂 Working directory: <code>{relative_path}/</code>{cleared_info}\n\n"
         f"Context has been cleared. Send a message to start fresh, "
         f"or use the buttons below:",
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=reply_markup,
     )
 
@@ -178,7 +181,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         if not claude_integration:
             await update.message.reply_text(
-                "❌ **Claude Integration Not Available**\n\n"
+                "❌ <b>Claude Integration Not Available</b>\n\n"
                 "Claude integration is not properly configured."
             )
             return
@@ -189,11 +192,11 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if claude_session_id:
             # We have a session in context, continue it directly
             status_msg = await update.message.reply_text(
-                f"🔄 **Continuing Session**\n\n"
-                f"Session ID: `{claude_session_id[:8]}...`\n"
-                f"Directory: `{current_dir.relative_to(settings.approved_directory)}/`\n\n"
+                f"🔄 <b>Continuing Session</b>\n\n"
+                f"Session ID: <code>{claude_session_id[:8]}...</code>\n"
+                f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
                 f"{'Processing your message...' if prompt else 'Continuing where you left off...'}",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
 
             # Continue with the existing session
@@ -207,9 +210,9 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else:
             # No session in context, try to find the most recent session
             status_msg = await update.message.reply_text(
-                "🔍 **Looking for Recent Session**\n\n"
+                "🔍 <b>Looking for Recent Session</b>\n\n"
                 "Searching for your most recent session in this directory...",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
 
             # Use default prompt if none provided
@@ -253,14 +256,14 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else:
             # No session found to continue
             await status_msg.edit_text(
-                "❌ **No Session Found**\n\n"
+                "❌ <b>No Session Found</b>\n\n"
                 f"No recent Claude session found in this directory.\n"
-                f"Directory: `{current_dir.relative_to(settings.approved_directory)}/`\n\n"
-                f"**What you can do:**\n"
-                f"• Use `/new` to start a fresh session\n"
-                f"• Use `/status` to check your sessions\n"
-                f"• Navigate to a different directory with `/cd`",
-                parse_mode="Markdown",
+                f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
+                f"<b>What you can do:</b>\n"
+                f"• Use <code>/new</code> to start a fresh session\n"
+                f"• Use <code>/status</code> to check your sessions\n"
+                f"• Navigate to a different directory with <code>/cd</code>",
+                parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(
                     [
                         [
@@ -288,14 +291,14 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         # Send error response
         await update.message.reply_text(
-            f"❌ **Error Continuing Session**\n\n"
+            f"❌ <b>Error Continuing Session</b>\n\n"
             f"An error occurred while trying to continue your session:\n\n"
-            f"`{error_msg}`\n\n"
-            f"**Suggestions:**\n"
-            f"• Try starting a new session with `/new`\n"
-            f"• Check your session status with `/status`\n"
+            f"<code>{error_msg}</code>\n\n"
+            f"<b>Suggestions:</b>\n"
+            f"• Try starting a new session with <code>/new</code>\n"
+            f"• Check your session status with <code>/status</code>\n"
             f"• Contact support if the issue persists",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
         # Log failed continue
@@ -330,7 +333,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             if item.name.startswith("."):
                 continue
 
-            # Escape markdown special characters in filenames
+            # Escape HTML special characters in filenames
             safe_name = _escape_markdown(item.name)
 
             if item.is_dir():
@@ -350,16 +353,16 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # Format response
         relative_path = current_dir.relative_to(settings.approved_directory)
         if not items:
-            message = f"📂 `{relative_path}/`\n\n_(empty directory)_"
+            message = f"📂 <code>{relative_path}/</code>\n\n<i>(empty directory)</i>"
         else:
-            message = f"📂 `{relative_path}/`\n\n"
+            message = f"📂 <code>{relative_path}/</code>\n\n"
 
             # Limit items shown to prevent message being too long
             max_items = 50
             if len(items) > max_items:
                 shown_items = items[:max_items]
                 message += "\n".join(shown_items)
-                message += f"\n\n_... and {len(items) - max_items} more items_"
+                message += f"\n\n<i>... and {len(items) - max_items} more items</i>"
             else:
                 message += "\n".join(items)
 
@@ -385,7 +388,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
         await update.message.reply_text(
-            message, parse_mode="Markdown", reply_markup=reply_markup
+            message, parse_mode="HTML", reply_markup=reply_markup
         )
 
         # Log successful command
@@ -413,15 +416,15 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Parse arguments
     if not context.args:
         await update.message.reply_text(
-            "**Usage:** `/cd <directory>`\n\n"
-            "**Examples:**\n"
-            "• `/cd myproject` - Enter subdirectory\n"
-            "• `/cd ..` - Go up one level\n"
-            "• `/cd /` - Go to root of approved directory\n\n"
-            "**Tips:**\n"
-            "• Use `/ls` to see available directories\n"
-            "• Use `/projects` to see all projects",
-            parse_mode="Markdown",
+            "<b>Usage:</b> <code>/cd &lt;directory&gt;</code>\n\n"
+            "<b>Examples:</b>\n"
+            "• <code>/cd myproject</code> - Enter subdirectory\n"
+            "• <code>/cd ..</code> - Go up one level\n"
+            "• <code>/cd /</code> - Go to root of approved directory\n\n"
+            "<b>Tips:</b>\n"
+            "• Use <code>/ls</code> to see available directories\n"
+            "• Use <code>/projects</code> to see all projects",
+            parse_mode="HTML",
         )
         return
 
@@ -438,7 +441,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
 
             if not valid:
-                await update.message.reply_text(f"❌ **Access Denied**\n\n{error}")
+                await update.message.reply_text(f"❌ <b>Access Denied</b>\n\n{error}")
 
                 # Log security violation
                 if audit_logger:
@@ -464,13 +467,13 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Check if directory exists and is actually a directory
         if not resolved_path.exists():
             await update.message.reply_text(
-                f"❌ **Directory Not Found**\n\n`{target_path}` does not exist."
+                f"❌ <b>Directory Not Found</b>\n\n<code>{target_path}</code> does not exist."
             )
             return
 
         if not resolved_path.is_dir():
             await update.message.reply_text(
-                f"❌ **Not a Directory**\n\n`{target_path}` is not a directory."
+                f"❌ <b>Not a Directory</b>\n\n<code>{target_path}</code> is not a directory."
             )
             return
 
@@ -489,7 +492,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if existing_session:
                 context.user_data["claude_session_id"] = existing_session.session_id
                 resumed_session_info = (
-                    f"\n🔄 Resumed session `{existing_session.session_id[:8]}...` "
+                    f"\n🔄 Resumed session <code>{existing_session.session_id[:8]}...</code> "
                     f"({existing_session.message_count} messages)"
                 )
             else:
@@ -502,10 +505,10 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Send confirmation
         relative_path = resolved_path.relative_to(settings.approved_directory)
         await update.message.reply_text(
-            f"✅ **Directory Changed**\n\n"
-            f"📂 Current directory: `{relative_path}/`"
+            f"✅ <b>Directory Changed</b>\n\n"
+            f"📂 Current directory: <code>{relative_path}/</code>"
             f"{resumed_session_info}",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
         # Log successful command
@@ -513,8 +516,8 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await audit_logger.log_command(user_id, "cd", [target_path], True)
 
     except Exception as e:
-        error_msg = f"❌ **Error changing directory**\n\n{str(e)}"
-        await update.message.reply_text(error_msg, parse_mode="Markdown")
+        error_msg = f"❌ <b>Error changing directory</b>\n\n{str(e)}"
+        await update.message.reply_text(error_msg, parse_mode="HTML")
 
         # Log failed command
         if audit_logger:
@@ -545,10 +548,10 @@ async def print_working_directory(
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        f"📍 **Current Directory**\n\n"
-        f"Relative: `{relative_path}/`\n"
-        f"Absolute: `{absolute_path}`",
-        parse_mode="Markdown",
+        f"📍 <b>Current Directory</b>\n\n"
+        f"Relative: <code>{relative_path}/</code>\n"
+        f"Absolute: <code>{absolute_path}</code>",
+        parse_mode="HTML",
         reply_markup=reply_markup,
     )
 
@@ -566,7 +569,7 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         if not projects:
             await update.message.reply_text(
-                "📁 **No Projects Found**\n\n"
+                "📁 <b>No Projects Found</b>\n\n"
                 "No subdirectories found in your approved directory.\n"
                 "Create some directories to organize your projects!"
             )
@@ -598,13 +601,13 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        project_list = "\n".join([f"• `{project}/`" for project in projects])
+        project_list = "\n".join([f"• <code>{project}/</code>" for project in projects])
 
         await update.message.reply_text(
-            f"📁 **Available Projects**\n\n"
+            f"📁 <b>Available Projects</b>\n\n"
             f"{project_list}\n\n"
             f"Click a project below to navigate to it:",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=reply_markup,
         )
 
@@ -638,7 +641,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             usage_info = f"💰 Usage: ${current_cost:.2f} / ${cost_limit:.2f} ({cost_percentage:.0f}%)\n"
         except Exception:
-            usage_info = "💰 Usage: _Unable to retrieve_\n"
+            usage_info = "💰 Usage: <i>Unable to retrieve</i>\n"
 
     # Check if there's a resumable session from the database
     resumable_info = ""
@@ -652,22 +655,22 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             if existing:
                 resumable_info = (
-                    f"🔄 Resumable: `{existing.session_id[:8]}...` "
+                    f"🔄 Resumable: <code>{existing.session_id[:8]}...</code> "
                     f"({existing.message_count} msgs)"
                 )
 
     # Format status message
     status_lines = [
-        "📊 **Session Status**",
+        "📊 <b>Session Status</b>",
         "",
-        f"📂 Directory: `{relative_path}/`",
+        f"📂 Directory: <code>{relative_path}/</code>",
         f"🤖 Claude Session: {'✅ Active' if claude_session_id else '❌ None'}",
         usage_info.rstrip(),
         f"🕐 Last Update: {update.message.date.strftime('%H:%M:%S UTC')}",
     ]
 
     if claude_session_id:
-        status_lines.append(f"🆔 Session ID: `{claude_session_id[:8]}...`")
+        status_lines.append(f"🆔 Session ID: <code>{claude_session_id[:8]}...</code>")
     elif resumable_info:
         status_lines.append(resumable_info)
         status_lines.append("💡 Session will auto-resume on your next message")
@@ -702,7 +705,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "\n".join(status_lines), parse_mode="Markdown", reply_markup=reply_markup
+        "\n".join(status_lines), parse_mode="HTML", reply_markup=reply_markup
     )
 
 
@@ -716,9 +719,9 @@ async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not session_exporter:
         await update.message.reply_text(
-            "📤 **Export Session**\n\n"
+            "📤 <b>Export Session</b>\n\n"
             "Session export functionality is not available.\n\n"
-            "**Planned features:**\n"
+            "<b>Planned features:</b>\n"
             "• Export conversation history\n"
             "• Save session state\n"
             "• Share conversations\n"
@@ -731,12 +734,12 @@ async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not claude_session_id:
         await update.message.reply_text(
-            "❌ **No Active Session**\n\n"
+            "❌ <b>No Active Session</b>\n\n"
             "There's no active Claude session to export.\n\n"
-            "**What you can do:**\n"
-            "• Start a new session with `/new`\n"
-            "• Continue an existing session with `/continue`\n"
-            "• Check your status with `/status`"
+            "<b>What you can do:</b>\n"
+            "• Start a new session with <code>/new</code>\n"
+            "• Continue an existing session with <code>/continue</code>\n"
+            "• Check your status with <code>/status</code>"
         )
         return
 
@@ -754,10 +757,10 @@ async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "📤 **Export Session**\n\n"
-        f"Ready to export session: `{claude_session_id[:8]}...`\n\n"
-        "**Choose export format:**",
-        parse_mode="Markdown",
+        "📤 <b>Export Session</b>\n\n"
+        f"Ready to export session: <code>{claude_session_id[:8]}...</code>\n\n"
+        "<b>Choose export format:</b>",
+        parse_mode="HTML",
         reply_markup=reply_markup,
     )
 
@@ -772,11 +775,11 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not claude_session_id:
         await update.message.reply_text(
-            "ℹ️ **No Active Session**\n\n"
+            "ℹ️ <b>No Active Session</b>\n\n"
             "There's no active Claude session to end.\n\n"
-            "**What you can do:**\n"
-            "• Use `/new` to start a new session\n"
-            "• Use `/status` to check your session status\n"
+            "<b>What you can do:</b>\n"
+            "• Use <code>/new</code> to start a new session\n"
+            "• Use <code>/status</code> to check your session status\n"
             "• Send any message to start a conversation"
         )
         return
@@ -808,17 +811,17 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "✅ **Session Ended**\n\n"
+        "✅ <b>Session Ended</b>\n\n"
         f"Your Claude session has been terminated.\n\n"
-        f"**Current Status:**\n"
-        f"• Directory: `{relative_path}/`\n"
+        f"<b>Current Status:</b>\n"
+        f"• Directory: <code>{relative_path}/</code>\n"
         f"• Session: None\n"
         f"• Ready for new commands\n\n"
-        f"**Next Steps:**\n"
-        f"• Start a new session with `/new`\n"
-        f"• Check status with `/status`\n"
+        f"<b>Next Steps:</b>\n"
+        f"• Start a new session with <code>/new</code>\n"
+        f"• Check status with <code>/status</code>\n"
         f"• Send any message to begin a new conversation",
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=reply_markup,
     )
 
@@ -833,7 +836,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if not features or not features.is_enabled("quick_actions"):
         await update.message.reply_text(
-            "❌ **Quick Actions Disabled**\n\n"
+            "❌ <b>Quick Actions Disabled</b>\n\n"
             "Quick actions feature is not enabled.\n"
             "Contact your administrator to enable this feature."
         )
@@ -848,7 +851,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         quick_action_manager = features.get_quick_actions()
         if not quick_action_manager:
             await update.message.reply_text(
-                "❌ **Quick Actions Unavailable**\n\n"
+                "❌ <b>Quick Actions Unavailable</b>\n\n"
                 "Quick actions service is not available."
             )
             return
@@ -860,12 +863,12 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         if not actions:
             await update.message.reply_text(
-                "🤖 **No Actions Available**\n\n"
+                "🤖 <b>No Actions Available</b>\n\n"
                 "No quick actions are available for the current context.\n\n"
-                "**Try:**\n"
-                "• Navigating to a project directory with `/cd`\n"
+                "<b>Try:</b>\n"
+                "• Navigating to a project directory with <code>/cd</code>\n"
                 "• Creating some code files\n"
-                "• Starting a Claude session with `/new`"
+                "• Starting a Claude session with <code>/new</code>"
             )
             return
 
@@ -874,15 +877,15 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         relative_path = current_dir.relative_to(settings.approved_directory)
         await update.message.reply_text(
-            f"⚡ **Quick Actions**\n\n"
-            f"📂 Context: `{relative_path}/`\n\n"
+            f"⚡ <b>Quick Actions</b>\n\n"
+            f"📂 Context: <code>{relative_path}/</code>\n\n"
             f"Select an action to execute:",
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=keyboard,
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ **Error Loading Actions**\n\n{str(e)}")
+        await update.message.reply_text(f"❌ <b>Error Loading Actions</b>\n\n{str(e)}")
         logger.error("Error in quick_actions command", error=str(e), user_id=user_id)
 
 
@@ -894,7 +897,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not features or not features.is_enabled("git"):
         await update.message.reply_text(
-            "❌ **Git Integration Disabled**\n\n"
+            "❌ <b>Git Integration Disabled</b>\n\n"
             "Git integration feature is not enabled.\n"
             "Contact your administrator to enable this feature."
         )
@@ -909,7 +912,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         git_integration = features.get_git_integration()
         if not git_integration:
             await update.message.reply_text(
-                "❌ **Git Integration Unavailable**\n\n"
+                "❌ <b>Git Integration Unavailable</b>\n\n"
                 "Git integration service is not available."
             )
             return
@@ -917,10 +920,10 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Check if current directory is a git repository
         if not (current_dir / ".git").exists():
             await update.message.reply_text(
-                f"📂 **Not a Git Repository**\n\n"
-                f"Current directory `{current_dir.relative_to(settings.approved_directory)}/` is not a git repository.\n\n"
-                f"**Options:**\n"
-                f"• Navigate to a git repository with `/cd`\n"
+                f"📂 <b>Not a Git Repository</b>\n\n"
+                f"Current directory <code>{current_dir.relative_to(settings.approved_directory)}/</code> is not a git repository.\n\n"
+                f"<b>Options:</b>\n"
+                f"• Navigate to a git repository with <code>/cd</code>\n"
                 f"• Initialize a new repository (ask Claude to help)\n"
                 f"• Clone an existing repository (ask Claude to help)"
             )
@@ -931,9 +934,9 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # Format status message
         relative_path = current_dir.relative_to(settings.approved_directory)
-        status_message = f"🔗 **Git Repository Status**\n\n"
-        status_message += f"📂 Directory: `{relative_path}/`\n"
-        status_message += f"🌿 Branch: `{git_status.branch}`\n"
+        status_message = f"🔗 <b>Git Repository Status</b>\n\n"
+        status_message += f"📂 Directory: <code>{relative_path}/</code>\n"
+        status_message += f"🌿 Branch: <code>{git_status.branch}</code>\n"
 
         if git_status.ahead > 0:
             status_message += f"⬆️ Ahead: {git_status.ahead} commits\n"
@@ -942,7 +945,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # Show file changes
         if not git_status.is_clean:
-            status_message += f"\n**Changes:**\n"
+            status_message += f"\n<b>Changes:</b>\n"
             if git_status.modified:
                 status_message += f"📝 Modified: {len(git_status.modified)} files\n"
             if git_status.added:
@@ -969,11 +972,11 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            status_message, parse_mode="Markdown", reply_markup=reply_markup
+            status_message, parse_mode="HTML", reply_markup=reply_markup
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ **Git Error**\n\n{str(e)}")
+        await update.message.reply_text(f"❌ <b>Git Error</b>\n\n{str(e)}")
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
@@ -987,28 +990,8 @@ def _format_file_size(size: int) -> str:
 
 
 def _escape_markdown(text: str) -> str:
-    """Escape special markdown characters in text for Telegram."""
-    # Escape characters that have special meaning in Telegram Markdown
-    special_chars = [
-        "_",
-        "*",
-        "[",
-        "]",
-        "(",
-        ")",
-        "~",
-        "`",
-        ">",
-        "#",
-        "+",
-        "-",
-        "=",
-        "|",
-        "{",
-        "}",
-        ".",
-        "!",
-    ]
-    for char in special_chars:
-        text = text.replace(char, f"\\{char}")
-    return text
+    """Escape HTML-special characters in text for Telegram.
+
+    Legacy name kept for compatibility with callers; actually escapes HTML.
+    """
+    return escape_html(text)
