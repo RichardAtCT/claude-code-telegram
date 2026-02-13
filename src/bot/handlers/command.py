@@ -18,7 +18,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user = update.effective_user
 
     welcome_message = (
-        f"👋 Welcome to Claude Code Telegram Bot, {user.first_name}!\n\n"
+        f"👋 Welcome to Claude Code Telegram Bot, {escape_html(user.first_name)}!\n\n"
         f"🤖 I help you access Claude Code remotely through Telegram.\n\n"
         f"<b>Available Commands:</b>\n"
         f"• <code>/help</code> - Show detailed help\n"
