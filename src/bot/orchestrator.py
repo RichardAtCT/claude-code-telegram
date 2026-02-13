@@ -185,8 +185,7 @@ class MessageOrchestrator:
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
-        relative_path = current_dir.relative_to(self.settings.approved_directory)
-        dir_display = f"`{relative_path}/`" if str(relative_path) != "." else "`~/`"
+        dir_display = f"`{current_dir}/`"
 
         safe_name = _escape_markdown(user.first_name)
         await update.message.reply_text(
@@ -213,8 +212,7 @@ class MessageOrchestrator:
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
-        relative_path = current_dir.relative_to(self.settings.approved_directory)
-        dir_display = str(relative_path) if str(relative_path) != "." else "~"
+        dir_display = str(current_dir)
 
         session_id = context.user_data.get("claude_session_id")
         session_status = "active" if session_id else "none"
