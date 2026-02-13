@@ -148,9 +148,7 @@ class ClaudeIntegration:
         try:
             # Continue session if we have a real (non-temporary) session ID
             is_new = getattr(session, "is_new_session", False)
-            has_real_session = (
-                not is_new and not session.session_id.startswith("temp_")
-            )
+            has_real_session = not is_new and not session.session_id.startswith("temp_")
             should_continue = has_real_session
 
             # For new sessions, don't pass the temporary session_id to Claude Code
@@ -167,9 +165,10 @@ class ClaudeIntegration:
             except Exception as resume_error:
                 # If resume failed (e.g., session expired on Claude's side),
                 # retry as a fresh session
-                if should_continue and "no conversation found" in str(
-                    resume_error
-                ).lower():
+                if (
+                    should_continue
+                    and "no conversation found" in str(resume_error).lower()
+                ):
                     logger.warning(
                         "Session resume failed, starting fresh session",
                         failed_session_id=claude_session_id,

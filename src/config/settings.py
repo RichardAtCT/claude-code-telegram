@@ -149,14 +149,28 @@ class Settings(BaseSettings):
     webhook_port: int = Field(8443, description="Webhook port")
     webhook_path: str = Field("/webhook", description="Webhook path")
 
+    # Agentic platform settings
+    enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
+    api_server_port: int = Field(8080, description="Webhook API server port")
+    enable_scheduler: bool = Field(False, description="Enable job scheduler")
+    github_webhook_secret: Optional[str] = Field(
+        None, description="GitHub webhook HMAC secret"
+    )
+    webhook_api_secret: Optional[str] = Field(
+        None, description="Shared secret for generic webhook providers"
+    )
+    notification_chat_ids: Optional[List[int]] = Field(
+        None, description="Default Telegram chat IDs for proactive notifications"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", mode="before")
+    @field_validator("allowed_users", "notification_chat_ids", mode="before")
     @classmethod
-    def parse_allowed_users(cls, v: Any) -> Optional[List[int]]:
-        """Parse comma-separated user IDs."""
+    def parse_int_list(cls, v: Any) -> Optional[List[int]]:
+        """Parse comma-separated integer lists."""
         if v is None:
             return None
         if isinstance(v, int):
@@ -214,12 +228,16 @@ class Settings(BaseSettings):
         if "mcpServers" not in config_data:
             raise ValueError(
                 "MCP config file must contain a 'mcpServers' key. "
-                "Expected format: {\"mcpServers\": {\"server-name\": {\"command\": \"...\", ...}}}"
+                'Expected format: {"mcpServers": {"server-name": {"command": "...", ...}}}'
             )
         if not isinstance(config_data["mcpServers"], dict):
-            raise ValueError("'mcpServers' must be an object mapping server names to configurations")
+            raise ValueError(
+                "'mcpServers' must be an object mapping server names to configurations"
+            )
         if not config_data["mcpServers"]:
-            raise ValueError("'mcpServers' must contain at least one server configuration")
+            raise ValueError(
+                "'mcpServers' must contain at least one server configuration"
+            )
         return v  # type: ignore[no-any-return]
 
     @field_validator("log_level")

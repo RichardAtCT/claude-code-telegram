@@ -1007,8 +1007,10 @@ async def handle_git_callback(
             else:
                 # Clean up diff output for Telegram
                 # Remove emoji symbols that interfere with markdown parsing
-                clean_diff = diff_output.replace("➕", "+").replace("➖", "-").replace("📍", "@")
-                
+                clean_diff = (
+                    diff_output.replace("➕", "+").replace("➖", "-").replace("📍", "@")
+                )
+
                 # Limit diff output
                 max_length = 2000
                 if len(clean_diff) > max_length:
@@ -1159,7 +1161,26 @@ def _format_file_size(size: int) -> str:
 def _escape_markdown(text: str) -> str:
     """Escape special markdown characters in text for Telegram."""
     # Escape characters that have special meaning in Telegram Markdown
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    special_chars = [
+        "_",
+        "*",
+        "[",
+        "]",
+        "(",
+        ")",
+        "~",
+        "`",
+        ">",
+        "#",
+        "+",
+        "-",
+        "=",
+        "|",
+        "{",
+        "}",
+        ".",
+        "!",
+    ]
     for char in special_chars:
-        text = text.replace(char, f'\\{char}')
+        text = text.replace(char, f"\\{char}")
     return text

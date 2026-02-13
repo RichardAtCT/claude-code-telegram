@@ -5,7 +5,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, ResultMessage, TextBlock
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ResultMessage,
+    TextBlock,
+)
 
 from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from src.config.settings import Settings
@@ -108,6 +113,7 @@ class TestClaudeSDKManager:
 
     async def test_execute_command_success(self, sdk_manager):
         """Test successful command execution."""
+
         async def mock_query(prompt, options):
             yield _make_assistant_message("Test response")
             yield _make_result_message(session_id="test-session", total_cost_usd=0.05)

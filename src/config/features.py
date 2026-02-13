@@ -56,6 +56,16 @@ class FeatureFlags:
         """Check if development features are enabled."""
         return self.settings.development_mode
 
+    @property
+    def api_server_enabled(self) -> bool:
+        """Check if the webhook API server is enabled."""
+        return self.settings.enable_api_server
+
+    @property
+    def scheduler_enabled(self) -> bool:
+        """Check if the job scheduler is enabled."""
+        return self.settings.enable_scheduler
+
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""
         feature_map = {
@@ -67,6 +77,8 @@ class FeatureFlags:
             "token_auth": self.token_auth_enabled,
             "webhook": self.webhook_enabled,
             "development": self.development_features_enabled,
+            "api_server": self.api_server_enabled,
+            "scheduler": self.scheduler_enabled,
         }
         return feature_map.get(feature_name, False)
 
@@ -89,4 +101,8 @@ class FeatureFlags:
             features.append("webhook")
         if self.development_features_enabled:
             features.append("development")
+        if self.api_server_enabled:
+            features.append("api_server")
+        if self.scheduler_enabled:
+            features.append("scheduler")
         return features

@@ -122,7 +122,12 @@ def _format_error_message(error_str: str) -> str:
         # Generic error handling
         # Escape special markdown characters in error message
         # Replace problematic chars that break Telegram markdown
-        safe_error = error_str.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+        safe_error = (
+            error_str.replace("_", "\\_")
+            .replace("*", "\\*")
+            .replace("`", "\\`")
+            .replace("[", "\\[")
+        )
         # Truncate very long errors
         if len(safe_error) > 200:
             safe_error = safe_error[:200] + "..."
