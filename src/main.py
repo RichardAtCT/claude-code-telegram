@@ -265,7 +265,9 @@ async def run_application(app: Dict[str, Any]) -> None:
         if features.api_server_enabled:
             from src.api.server import run_api_server
 
-            api_task = asyncio.create_task(run_api_server(event_bus, config))
+            api_task = asyncio.create_task(
+                run_api_server(event_bus, config, storage.db_manager)
+            )
             tasks.append(api_task)
             logger.info("API server enabled", port=config.api_server_port)
 
@@ -285,6 +287,19 @@ async def run_application(app: Dict[str, Any]) -> None:
 
         # Wait for any task to complete or shutdown signal
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+        # Check completed tasks for exceptions
+        for task in done:
+            if task.cancelled():
+                continue
+            exc = task.exception()
+            if exc is not None:
+                logger.error(
+                    "Task failed",
+                    task=task.get_name(),
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
 
         # Cancel remaining tasks
         for task in pending:

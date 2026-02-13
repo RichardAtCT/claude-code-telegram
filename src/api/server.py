@@ -13,6 +13,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from ..config.settings import Settings
 from ..events.bus import EventBus
 from ..events.types import WebhookEvent
+from ..storage.database import DatabaseManager
 from .auth import verify_github_signature, verify_shared_secret
 
 logger = structlog.get_logger()
@@ -21,6 +22,7 @@ logger = structlog.get_logger()
 def create_api_app(
     event_bus: EventBus,
     settings: Settings,
+    db_manager: Optional[DatabaseManager] = None,
 ) -> FastAPI:
     """Create the FastAPI application."""
 
@@ -65,18 +67,52 @@ def create_api_app(
             event_type_name = x_github_event or "unknown"
             delivery_id = x_github_delivery or str(uuid.uuid4())
         else:
-            # Generic provider — use shared secret
+            # Generic provider — require auth (fail-closed)
             secret = settings.webhook_api_secret
-            if secret and not verify_shared_secret(authorization, secret):
+            if not secret:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Webhook API secret not configured. "
+                        "Set WEBHOOK_API_SECRET to accept "
+                        "webhooks from this provider."
+                    ),
+                )
+            if not verify_shared_secret(authorization, secret):
                 raise HTTPException(status_code=401, detail="Invalid authorization")
             event_type_name = request.headers.get("X-Event-Type", "unknown")
             delivery_id = request.headers.get("X-Delivery-ID", str(uuid.uuid4()))
+
+        # Deduplicate by delivery_id
+        if db_manager and delivery_id:
+            is_dup = await _check_and_record_delivery(db_manager, provider, delivery_id)
+            if is_dup:
+                logger.info(
+                    "Duplicate webhook delivery ignored",
+                    provider=provider,
+                    delivery_id=delivery_id,
+                )
+                return {
+                    "status": "duplicate",
+                    "delivery_id": delivery_id,
+                }
 
         # Parse JSON payload
         try:
             payload: Dict[str, Any] = await request.json()
         except Exception:
             payload = {"raw_body": body.decode("utf-8", errors="replace")[:5000]}
+
+        # Record webhook event for audit
+        if db_manager:
+            await _record_webhook_event(
+                db_manager,
+                event_id=str(uuid.uuid4()),
+                provider=provider,
+                event_type=event_type_name,
+                delivery_id=delivery_id,
+                payload=payload,
+            )
 
         # Publish event to the bus
         event = WebhookEvent(
@@ -101,14 +137,63 @@ def create_api_app(
     return app
 
 
+async def _check_and_record_delivery(
+    db_manager: DatabaseManager,
+    provider: str,
+    delivery_id: str,
+) -> bool:
+    """Check if a delivery_id has been seen before.
+
+    Returns True if duplicate, False if new.
+    """
+    async with db_manager.get_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT 1 FROM webhook_events WHERE delivery_id = ?",
+            (delivery_id,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
+
+async def _record_webhook_event(
+    db_manager: DatabaseManager,
+    event_id: str,
+    provider: str,
+    event_type: str,
+    delivery_id: str,
+    payload: Dict[str, Any],
+) -> None:
+    """Record a webhook event in the database."""
+    import json
+
+    async with db_manager.get_connection() as conn:
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO webhook_events
+            (event_id, provider, event_type, delivery_id, payload,
+             processed)
+            VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            (
+                event_id,
+                provider,
+                event_type,
+                delivery_id,
+                json.dumps(payload),
+            ),
+        )
+        await conn.commit()
+
+
 async def run_api_server(
     event_bus: EventBus,
     settings: Settings,
+    db_manager: Optional[DatabaseManager] = None,
 ) -> None:
     """Run the FastAPI server using uvicorn."""
     import uvicorn
 
-    app = create_api_app(event_bus, settings)
+    app = create_api_app(event_bus, settings, db_manager)
 
     config = uvicorn.Config(
         app=app,

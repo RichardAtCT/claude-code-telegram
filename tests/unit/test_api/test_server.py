@@ -3,7 +3,6 @@
 import hashlib
 import hmac
 
-import pytest
 from fastapi.testclient import TestClient
 
 from src.api.server import create_api_app
@@ -17,7 +16,9 @@ def make_settings(**overrides):  # type: ignore[no-untyped-def]
     settings = MagicMock()
     settings.development_mode = True
     settings.github_webhook_secret = overrides.get("github_webhook_secret", "gh-secret")
-    settings.webhook_api_secret = overrides.get("webhook_api_secret", None)
+    settings.webhook_api_secret = overrides.get(
+        "webhook_api_secret", "default-api-secret"
+    )
     settings.api_server_port = 8080
     settings.debug = False
     return settings
@@ -80,8 +81,8 @@ class TestWebhookAPI:
 
         assert response.status_code == 401
 
-    def test_generic_webhook_no_auth_required(self) -> None:
-        """Generic webhooks without configured secret don't need auth."""
+    def test_generic_webhook_no_secret_configured_rejected(self) -> None:
+        """Generic webhooks without configured secret return 500."""
         bus = EventBus()
         settings = make_settings(webhook_api_secret=None)
         app = create_api_app(bus, settings)
@@ -93,8 +94,7 @@ class TestWebhookAPI:
             headers={"X-Event-Type": "test.event"},
         )
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "accepted"
+        assert response.status_code == 500
 
     def test_generic_webhook_with_auth(self) -> None:
         """Generic webhooks with configured secret require Bearer token."""
@@ -132,3 +132,18 @@ class TestWebhookAPI:
         )
 
         assert response.status_code == 500
+
+    def test_generic_webhook_wrong_token_rejected(self) -> None:
+        """Generic webhook with wrong Bearer token returns 401."""
+        bus = EventBus()
+        settings = make_settings(webhook_api_secret="correct-secret")
+        app = create_api_app(bus, settings)
+        client = TestClient(app)
+
+        response = client.post(
+            "/webhooks/custom",
+            json={"data": "test"},
+            headers={"Authorization": "Bearer wrong-secret"},
+        )
+
+        assert response.status_code == 401
