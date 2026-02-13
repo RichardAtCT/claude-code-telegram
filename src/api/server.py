@@ -83,10 +83,23 @@ def create_api_app(
             event_type_name = request.headers.get("X-Event-Type", "unknown")
             delivery_id = request.headers.get("X-Delivery-ID", str(uuid.uuid4()))
 
-        # Deduplicate by delivery_id
+        # Parse JSON payload
+        try:
+            payload: Dict[str, Any] = await request.json()
+        except Exception:
+            payload = {"raw_body": body.decode("utf-8", errors="replace")[:5000]}
+
+        # Atomic dedupe: attempt INSERT first, only publish if new
         if db_manager and delivery_id:
-            is_dup = await _check_and_record_delivery(db_manager, provider, delivery_id)
-            if is_dup:
+            is_new = await _try_record_webhook(
+                db_manager,
+                event_id=str(uuid.uuid4()),
+                provider=provider,
+                event_type=event_type_name,
+                delivery_id=delivery_id,
+                payload=payload,
+            )
+            if not is_new:
                 logger.info(
                     "Duplicate webhook delivery ignored",
                     provider=provider,
@@ -96,23 +109,6 @@ def create_api_app(
                     "status": "duplicate",
                     "delivery_id": delivery_id,
                 }
-
-        # Parse JSON payload
-        try:
-            payload: Dict[str, Any] = await request.json()
-        except Exception:
-            payload = {"raw_body": body.decode("utf-8", errors="replace")[:5000]}
-
-        # Record webhook event for audit
-        if db_manager:
-            await _record_webhook_event(
-                db_manager,
-                event_id=str(uuid.uuid4()),
-                provider=provider,
-                event_type=event_type_name,
-                delivery_id=delivery_id,
-                payload=payload,
-            )
 
         # Publish event to the bus
         event = WebhookEvent(
@@ -137,33 +133,20 @@ def create_api_app(
     return app
 
 
-async def _check_and_record_delivery(
-    db_manager: DatabaseManager,
-    provider: str,
-    delivery_id: str,
-) -> bool:
-    """Check if a delivery_id has been seen before.
-
-    Returns True if duplicate, False if new.
-    """
-    async with db_manager.get_connection() as conn:
-        cursor = await conn.execute(
-            "SELECT 1 FROM webhook_events WHERE delivery_id = ?",
-            (delivery_id,),
-        )
-        row = await cursor.fetchone()
-        return row is not None
-
-
-async def _record_webhook_event(
+async def _try_record_webhook(
     db_manager: DatabaseManager,
     event_id: str,
     provider: str,
     event_type: str,
     delivery_id: str,
     payload: Dict[str, Any],
-) -> None:
-    """Record a webhook event in the database."""
+) -> bool:
+    """Atomically insert a webhook event, returning whether it was new.
+
+    Uses INSERT OR IGNORE on the unique delivery_id column.
+    If the row already exists the insert is a no-op and changes() == 0.
+    Returns True if the event is new (inserted), False if duplicate.
+    """
     import json
 
     async with db_manager.get_connection() as conn:
@@ -182,7 +165,11 @@ async def _record_webhook_event(
                 json.dumps(payload),
             ),
         )
+        cursor = await conn.execute("SELECT changes()")
+        row = await cursor.fetchone()
+        inserted = row[0] > 0 if row else False
         await conn.commit()
+        return inserted
 
 
 async def run_api_server(
