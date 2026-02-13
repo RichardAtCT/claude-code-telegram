@@ -22,6 +22,17 @@ from telegram.ext import (
 from ..claude.exceptions import ClaudeToolValidationError
 from ..config.settings import Settings
 
+# Characters that break Telegram Markdown v1 parsing
+_MD_ESCAPE_CHARS = ("_", "*", "[", "]", "`")
+
+
+def _escape_markdown(text: str) -> str:
+    """Escape Markdown metacharacters in user-supplied text."""
+    for ch in _MD_ESCAPE_CHARS:
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 logger = structlog.get_logger()
 
 
@@ -83,8 +94,13 @@ class MessageOrchestrator:
             group=10,
         )
 
-        # Only cd: callbacks (for project selection)
-        app.add_handler(CallbackQueryHandler(self._inject_deps(self._agentic_callback)))
+        # Only cd: callbacks (for project selection), scoped by pattern
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._agentic_callback),
+                pattern=r"^cd:",
+            )
+        )
 
         logger.info("Agentic handlers registered (3 commands + text/file/photo)")
 
@@ -172,8 +188,9 @@ class MessageOrchestrator:
         relative_path = current_dir.relative_to(self.settings.approved_directory)
         dir_display = f"`{relative_path}/`" if str(relative_path) != "." else "`~/`"
 
+        safe_name = _escape_markdown(user.first_name)
         await update.message.reply_text(
-            f"Hi {user.first_name}! I'm your AI coding assistant.\n"
+            f"Hi {safe_name}! I'm your AI coding assistant.\n"
             f"Just tell me what you need — I can read, write, and run code.\n\n"
             f"Working in: {dir_display}\n"
             f"Commands: /new (reset) · /status",
@@ -255,6 +272,7 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
+        success = True
         try:
             claude_response = await claude_integration.run_command(
                 prompt=message_text,
@@ -295,12 +313,14 @@ class MessageOrchestrator:
             )
 
         except ClaudeToolValidationError as e:
+            success = False
             logger.error("Tool validation error", error=str(e), user_id=user_id)
             from .utils.formatting import FormattedMessage
 
             formatted_messages = [FormattedMessage(str(e), parse_mode="Markdown")]
 
         except Exception as e:
+            success = False
             logger.error("Claude integration failed", error=str(e), user_id=user_id)
             from .handlers.message import _format_error_message
             from .utils.formatting import FormattedMessage
@@ -335,7 +355,7 @@ class MessageOrchestrator:
                 user_id=user_id,
                 command="text_message",
                 args=[message_text[:100]],
-                success=True,
+                success=success,
             )
 
     async def agentic_document(
@@ -531,15 +551,13 @@ class MessageOrchestrator:
     async def _agentic_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """In agentic mode, only handle cd: callbacks."""
+        """Handle cd: callbacks (pattern-filtered by registration)."""
         query = update.callback_query
         await query.answer()
 
         data = query.data
-        if data and data.startswith("cd:"):
-            from .handlers.callback import handle_cd_callback
+        _, param = data.split(":", 1)
 
-            _, param = data.split(":", 1)
-            await handle_cd_callback(query, param, context)
-        else:
-            await query.edit_message_text("This action is not available.")
+        from .handlers.callback import handle_cd_callback
+
+        await handle_cd_callback(query, param, context)

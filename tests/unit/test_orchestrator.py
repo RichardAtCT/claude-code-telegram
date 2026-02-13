@@ -247,24 +247,26 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
         assert call.kwargs.get("reply_markup") is None
 
 
-async def test_agentic_callback_rejects_non_cd(agentic_settings, deps):
-    """Agentic callback handler rejects non-cd callbacks."""
+async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
+    """Agentic callback handler is registered with cd: pattern filter."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
 
-    update = MagicMock()
-    query = MagicMock()
-    query.data = "action:help"
-    query.answer = AsyncMock()
-    query.edit_message_text = AsyncMock()
-    update.callback_query = query
+    orchestrator.register_handlers(app)
 
-    context = MagicMock()
-    context.bot_data = {}
+    from telegram.ext import CallbackQueryHandler
 
-    await orchestrator._agentic_callback(update, context)
+    cb_handlers = [
+        call[0][0]
+        for call in app.add_handler.call_args_list
+        if isinstance(call[0][0], CallbackQueryHandler)
+    ]
 
-    query.answer.assert_called_once()
-    query.edit_message_text.assert_called_once_with("This action is not available.")
+    assert len(cb_handlers) == 1
+    # The pattern attribute should match cd: prefixed data
+    assert cb_handlers[0].pattern is not None
+    assert cb_handlers[0].pattern.match("cd:my_project")
 
 
 async def test_agentic_document_rejects_large_files(agentic_settings, deps):
@@ -284,3 +286,63 @@ async def test_agentic_document_rejects_large_files(agentic_settings, deps):
 
     call_args = update.message.reply_text.call_args
     assert "too large" in call_args.args[0].lower()
+
+
+async def test_agentic_start_escapes_markdown_in_name(agentic_settings, deps):
+    """Names with Markdown metacharacters are escaped safely."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.effective_user.first_name = "A_B*C[D"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await orchestrator.agentic_start(update, context)
+
+    call_kwargs = update.message.reply_text.call_args
+    text = call_kwargs.args[0]
+    # Metacharacters should be escaped
+    assert "A\\_B\\*C\\[D" in text
+    # parse_mode is still Markdown (backtick dir display works)
+    assert call_kwargs.kwargs.get("parse_mode") == "Markdown"
+
+
+async def test_agentic_text_logs_failure_on_error(agentic_settings, deps):
+    """Failed Claude runs are logged with success=False."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(side_effect=Exception("Claude broke"))
+
+    audit_logger = AsyncMock()
+    audit_logger.log_command = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "do something"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": audit_logger,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    # Audit logged with success=False
+    audit_logger.log_command.assert_called_once()
+    call_kwargs = audit_logger.log_command.call_args
+    assert call_kwargs.kwargs["success"] is False
