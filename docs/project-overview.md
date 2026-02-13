@@ -1,16 +1,16 @@
-# Claude Code Telegram Bot - Project Overview
+# Claude Code Telegram Bot -- Project Overview
 
 ## Project Description
 
-A Telegram bot that provides remote access to Claude Code, allowing developers to interact with their projects from anywhere. The bot offers a terminal-like interface through Telegram, enabling project navigation, file management, and Claude Code sessions with full context persistence.
+A Telegram bot that provides remote access to Claude Code, allowing developers to interact with their projects from anywhere. The default interaction model is **agentic mode** -- a conversational interface where users chat naturally with Claude. A classic terminal-like mode with 13 commands is also available.
 
 ## Core Objectives
 
-1. **Remote Development Access**: Enable developers to use Claude Code when away from their primary development machine
+1. **Remote Development Access**: Enable developers to use Claude Code from any device with Telegram
 2. **Security-First Design**: Implement robust security boundaries to prevent unauthorized access
-3. **Intuitive Interface**: Provide familiar terminal commands within Telegram's chat interface
+3. **Conversational Interface**: Natural language interaction as the primary mode (agentic mode)
 4. **Session Persistence**: Maintain Claude Code context across conversations and project switches
-5. **Open Source Ready**: Build with community contribution and extensibility in mind
+5. **Event-Driven Automation**: Support webhooks, scheduled jobs, and proactive notifications
 
 ## Target Users
 
@@ -21,16 +21,28 @@ A Telegram bot that provides remote access to Claude Code, allowing developers t
 
 ## Key Features
 
-### Navigation & File Management
+### Agentic Mode (Default)
+- Natural language conversation with Claude -- no commands needed
+- Minimal command set: `/start`, `/new`, `/status`
+- Automatic session persistence per user/project directory
+- File and image upload support
+
+### Classic Mode
 - Terminal-like commands (cd, ls, pwd)
 - Project quick-switching with visual selection
-- File upload and review capabilities
+- Inline keyboards for common actions
 - Git status integration
+- Session export in multiple formats
+
+### Event-Driven Platform
+- **Event Bus**: Async pub/sub system with typed event subscriptions
+- **Webhook API**: FastAPI server receiving GitHub and generic webhooks with signature verification
+- **Job Scheduler**: APScheduler cron jobs with persistent storage
+- **Notifications**: Rate-limited Telegram delivery for agent responses
 
 ### Claude Code Integration
-- Full Claude Code CLI integration
+- Full Claude Code SDK integration (CLI fallback)
 - Session management per user/project
-- Streaming responses for long operations
 - Tool usage visibility
 - Cost tracking and limits
 
@@ -38,66 +50,62 @@ A Telegram bot that provides remote access to Claude Code, allowing developers t
 - Approved directory boundaries
 - User authentication (whitelist and token-based)
 - Rate limiting per user
-- Cost caps to prevent overuse
+- Webhook authentication (HMAC-SHA256, Bearer token)
 - Audit logging
-
-### User Experience
-- Inline keyboards for common actions
-- Progress indicators for long operations
-- Formatted code output with syntax highlighting
-- Session export and sharing
-- Quick action buttons
 
 ## Technical Architecture
 
 ### Components
 
-1. **Bot Core** (`bot.py`)
-   - Telegram bot interface
-   - Command handlers
-   - Message routing
+1. **MessageOrchestrator** (`src/bot/orchestrator.py`)
+   - Routes to agentic or classic handlers based on mode
+   - Dependency injection for all handlers
 
-2. **Configuration** (`config.py`)
-   - Environment-based configuration
-   - Feature flags
-   - Security settings
+2. **Configuration** (`src/config/`)
+   - Pydantic Settings v2 with environment variables
+   - Feature flags for dynamic functionality control
 
-3. **Authentication** (`auth.py`)
-   - User verification
-   - Token management
-   - Permission checking
+3. **Authentication** (`src/security/`)
+   - User verification, token management, permission checking
+   - Input validation and security middleware
 
-4. **Claude Integration** (`claude_integration.py`)
-   - Claude Code subprocess management
-   - Response parsing and streaming
-   - Session state management
+4. **Claude Integration** (`src/claude/`)
+   - SDK and CLI backends via facade pattern
+   - Session state management and auto-resume
 
-5. **Storage Layer** (`storage/`)
-   - SQLite database with complete schema
-   - Repository pattern for data access
-   - Session persistence and analytics
-   - Cost tracking and audit logging
+5. **Storage Layer** (`src/storage/`)
+   - SQLite database with repository pattern
+   - Session persistence, analytics, cost tracking
 
-6. **Security** (`security.py`)
-   - Directory traversal prevention
-   - Input sanitization
-   - Rate limiting
+6. **Event Bus** (`src/events/`)
+   - Async pub/sub with typed subscriptions
+   - AgentHandler bridges events to Claude
+   - EventSecurityMiddleware validates events
 
-7. **Utilities** (`utils.py`)
-   - Message formatting
-   - File handling
-   - Error management
+7. **Webhook API** (`src/api/`)
+   - FastAPI server for external webhooks
+   - GitHub HMAC-SHA256 + generic Bearer token auth
+
+8. **Scheduler** (`src/scheduler/`)
+   - APScheduler with cron triggers
+   - Persistent job storage in SQLite
+
+9. **Notifications** (`src/notifications/`)
+   - Rate-limited Telegram delivery
+   - Message splitting and broadcast support
 
 ### Data Flow
 
+**Agentic mode (direct messages):**
 ```
-User Message → Telegram Bot → Auth Check → Command Parser
-                                              ↓
-                                    Claude Code Process
-                                              ↓
-Storage ← Response Formatter ← Parse Output ←
-   ↓
-User Response
+User Message -> Telegram -> Middleware Chain -> MessageOrchestrator
+    -> ClaudeIntegration.run_command() -> Response -> Telegram
+```
+
+**External triggers (webhooks/scheduler):**
+```
+Webhook/Cron -> EventBus -> AgentHandler -> ClaudeIntegration
+    -> AgentResponseEvent -> NotificationService -> Telegram
 ```
 
 ### Security Model
@@ -105,22 +113,14 @@ User Response
 - **Directory Isolation**: All operations confined to approved directory tree
 - **User Authentication**: Whitelist or token-based access
 - **Rate Limiting**: Prevent abuse and control costs
+- **Webhook Verification**: HMAC-SHA256 and Bearer token authentication
 - **Audit Trail**: Log all operations for security review
 - **Input Validation**: Sanitize all user inputs
 
 ## Development Principles
 
 1. **Security First**: Every feature must consider security implications
-2. **User Experience**: Terminal familiarity with chat convenience
-3. **Extensibility**: Plugin-ready architecture for community features
+2. **Conversational by Default**: Agentic mode as the primary interaction model
+3. **Event-Driven**: Decoupled components communicating through the event bus
 4. **Testability**: Comprehensive test coverage
 5. **Documentation**: Clear docs for users and contributors
-
-## Success Criteria
-
-- Zero security vulnerabilities in directory access
-- <2s response time for basic commands
-- 99%+ uptime for bot availability
-- Support for 10+ concurrent users
-- Complete feature parity with local Claude Code usage
-- Active open source community (10+ contributors in first year)
