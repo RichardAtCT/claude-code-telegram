@@ -139,6 +139,17 @@ class Settings(BaseSettings):
         description="Conversational agentic mode (default) vs classic command mode",
     )
 
+    # Security relaxation (for trusted environments)
+    disable_security_patterns: bool = Field(
+        False, description="Disable dangerous pattern validation (pipes, redirections, etc.)"
+    )
+    disable_tool_validation: bool = Field(
+        False, description="Allow all Claude tools without restriction"
+    )
+    show_tool_details: bool = Field(
+        True, description="Show detailed tool calls and results in responses"
+    )
+
     # Monitoring
     log_level: str = Field("INFO", description="Logging level")
     enable_telemetry: bool = Field(False, description="Enable anonymous telemetry")

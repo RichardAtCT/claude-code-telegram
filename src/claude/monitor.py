@@ -29,6 +29,8 @@ class ToolMonitor:
         self.security_validator = security_validator
         self.tool_usage: Dict[str, int] = defaultdict(int)
         self.security_violations: List[Dict[str, Any]] = []
+        # Check if tool validation is disabled via config
+        self.disable_tool_validation = getattr(config, "disable_tool_validation", False)
 
     async def validate_tool_call(
         self,
@@ -45,6 +47,10 @@ class ToolMonitor:
             user_id=user_id,
         )
 
+        # Skip tool validation if disabled
+        if self.disable_tool_validation:
+            return True, None
+        
         # Check if tool is allowed
         if (
             hasattr(self.config, "claude_allowed_tools")

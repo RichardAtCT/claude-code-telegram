@@ -189,11 +189,34 @@ class MessageOrchestrator:
     async def agentic_new(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Reset session, one-line confirmation."""
+        """Reset session completely - clear all context."""
+        user_id = update.effective_user.id
+
+        # Clear session from user data
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
 
-        await update.message.reply_text("Session reset. What's next?")
+        # Clear ALL sessions for this user (all directories)
+        claude_integration = context.bot_data.get("claude_integration")
+        if claude_integration:
+            try:
+                # Access session_manager through claude_integration
+                session_manager = claude_integration.session_manager
+                if session_manager:
+                    user_sessions = await session_manager._get_user_sessions(user_id)
+                    removed_count = 0
+                    for session in user_sessions:
+                        await session_manager.remove_session(session.session_id)
+                        removed_count += 1
+                    logger.info(
+                        "Cleared ALL sessions on /new",
+                        user_id=user_id,
+                        removed_count=removed_count,
+                    )
+            except Exception as e:
+                logger.warning("Failed to clear sessions", error=str(e))
+
+        await update.message.reply_text("🆕 New session started. ALL previous context cleared.")
 
     async def agentic_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -261,12 +284,30 @@ class MessageOrchestrator:
         session_id = context.user_data.get("claude_session_id")
 
         success = True
+
+        # Stream handler for real-time updates and collecting full details
+        full_details = []  # Collect all updates for final message
+
+        async def stream_handler(update_obj):
+            try:
+                from .handlers.message import _format_progress_update
+
+                # Store details for final message
+                full_details.append(update_obj)
+
+                progress_text = await _format_progress_update(update_obj)
+                if progress_text:
+                    await progress_msg.edit_text(progress_text, parse_mode="HTML")
+            except Exception as e:
+                logger.warning("Failed to update progress", error=str(e))
+
         try:
             claude_response = await claude_integration.run_command(
                 prompt=message_text,
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=stream_handler,
             )
 
             context.user_data["claude_session_id"] = claude_response.session_id
@@ -292,13 +333,33 @@ class MessageOrchestrator:
                 except Exception as e:
                     logger.warning("Failed to log interaction", error=str(e))
 
+            # Build detailed response with all stream updates
+            detailed_content = self._format_detailed_response(
+                claude_response.content, full_details
+            )
+
             # Format response (no reply_markup — strip keyboards)
             from .utils.formatting import ResponseFormatter
 
             formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(
-                claude_response.content
-            )
+            formatted_messages = formatter.format_claude_response(detailed_content)
+
+            # Add tool usage summary
+            if claude_response.tools_used:
+                tool_names = [
+                    t.get("name", "Unknown")
+                    for t in claude_response.tools_used
+                    if t.get("name", "").strip()  # Only include non-empty tool names
+                ]
+                # Filter out duplicates while preserving order
+                unique_tools = list(dict.fromkeys(tool_names))
+                if unique_tools:
+                    tool_summary = "\n\n🔧 <b>Tools:</b> " + ", ".join(unique_tools)
+                    if formatted_messages:
+                        formatted_messages[-1].text += tool_summary
+                    else:
+                        from .utils.formatting import FormattedMessage
+                        formatted_messages.append(FormattedMessage(tool_summary, parse_mode="HTML"))
 
         except ClaudeToolValidationError as e:
             success = False
@@ -564,3 +625,98 @@ class MessageOrchestrator:
         from .handlers.callback import handle_cd_callback
 
         await handle_cd_callback(query, param, context)
+
+    def _format_detailed_response(
+        self, content: str, updates: list
+    ) -> str:
+        """Format a detailed response including all stream updates."""
+        parts = []
+
+        # Track tool calls and their results by ID
+        tool_results = {}
+        tool_names_by_id = {}  # Track tool names for better result matching
+
+        # First pass: collect tool results and tool names
+        for update in updates:
+            if update.type == "assistant" and update.tool_calls:
+                for tool_call in update.tool_calls:
+                    tool_id = tool_call.get("id", "")
+                    tool_names_by_id[tool_id] = tool_call.get("name", "")
+            elif update.type == "tool_result":
+                tool_id = update.metadata.get("tool_use_id", "") if update.metadata else ""
+                if tool_id:
+                    result = update.content or ""
+                    tool_results[tool_id] = result
+
+        # Second pass: format output with results immediately following commands
+        for update in updates:
+            if update.type == "assistant" and update.tool_calls:
+                for tool_call in update.tool_calls:
+                    tool_name = tool_call.get("name", "").strip()
+                    tool_input = tool_call.get("input", {})
+                    tool_id = tool_call.get("id", "")
+
+                    # Skip if no tool name
+                    if not tool_name:
+                        continue
+
+                    # Format based on tool type
+                    if tool_name == "Bash":
+                        cmd = tool_input.get("command", "")
+                        result = tool_results.get(tool_id, "")
+                        # Only show bash if we have an actual result (not nested in Task)
+                        if cmd and tool_id in tool_results and result and result.strip():
+                            parts.append(f"\n<b>$</b> <code>{cmd[:300]}</code>")
+                            if len(result) > 1500:
+                                result = result[:1500] + "\n..."
+                            parts.append(f"\n<pre>{escape_html(result)}</pre>")
+                    elif tool_name == "Read":
+                        path = tool_input.get("file_path", "")
+                        if path:
+                            parts.append(f"\n📖 <code>{path}</code>")
+                            if tool_id in tool_results:
+                                result = tool_results[tool_id]
+                                if result and result.strip():
+                                    if len(result) > 1500:
+                                        result = result[:1500] + "\n..."
+                                    parts.append(f"\n<pre>{escape_html(result)}</pre>")
+
+                    elif tool_name in ("Write", "Edit"):
+                        path = tool_input.get("file_path", "")
+                        if path:
+                            icon = "📝" if tool_name == "Write" else "✏️"
+                            parts.append(f"\n{icon} <code>{path}</code>")
+
+                    elif tool_name == "Task":
+                        desc = tool_input.get("description", "")
+                        if desc:
+                            parts.append(f"\n📋 <b>{escape_html(desc[:80])}</b>")
+                        # Show Task result if available (contains subagent output)
+                        if tool_id in tool_results:
+                            result = tool_results[tool_id]
+                            if result and result.strip():
+                                if len(result) > 2000:
+                                    result = result[:2000] + "\n..."
+                                parts.append(f"\n<pre>{escape_html(result)}</pre>")
+
+                    else:
+                        # Generic tool - show name and result
+                        parts.append(f"\n🔧 <b>{escape_html(tool_name)}</b>")
+                        if tool_id in tool_results:
+                            result = tool_results[tool_id]
+                            if result and result.strip():
+                                if len(result) > 1000:
+                                    result = result[:1000] + "\n..."
+                                parts.append(f"\n{escape_html(result)}")
+
+        # Add main response at the end with separator
+        if content and content.strip():
+            parts.append(f"\n\n───\n\n{content}")
+
+        return "".join(parts) if parts else (content or "")
+
+def escape_html(text: str) -> str:
+    """Escape HTML special characters for safe display."""
+    if not text:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
