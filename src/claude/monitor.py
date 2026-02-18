@@ -46,19 +46,19 @@ class ToolMonitor:
             user_id=user_id,
         )
 
-        # Skip tool validation when explicitly disabled in trusted environments
+        # When disabled, skip only allowlist/disallowlist name checks.
+        # Keep path and command safety validation active.
         if self.disable_tool_validation:
-            self.tool_usage[tool_name] += 1
             logger.debug(
-                "Tool validation disabled; allowing tool call",
+                "Tool name validation disabled; skipping allow/disallow checks",
                 tool_name=tool_name,
                 user_id=user_id,
             )
-            return True, None
 
         # Check if tool is allowed
         if (
-            hasattr(self.config, "claude_allowed_tools")
+            not self.disable_tool_validation
+            and hasattr(self.config, "claude_allowed_tools")
             and self.config.claude_allowed_tools
         ):
             if tool_name not in self.config.claude_allowed_tools:
@@ -74,7 +74,8 @@ class ToolMonitor:
 
         # Check if tool is explicitly disallowed
         if (
-            hasattr(self.config, "claude_disallowed_tools")
+            not self.disable_tool_validation
+            and hasattr(self.config, "claude_disallowed_tools")
             and self.config.claude_disallowed_tools
         ):
             if tool_name in self.config.claude_disallowed_tools:

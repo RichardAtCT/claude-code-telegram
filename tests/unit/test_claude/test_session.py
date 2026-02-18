@@ -20,6 +20,18 @@ class _MonitorConfigStub:
         self.claude_disallowed_tools = ["Bash"]
 
 
+class _ValidatorStub:
+    """Minimal security validator stub for ToolMonitor tests."""
+
+    def __init__(self, should_allow_path: bool = True):
+        self.should_allow_path = should_allow_path
+
+    def validate_path(self, file_path: str, working_directory: Path):
+        if self.should_allow_path:
+            return True, working_directory / file_path, None
+        return False, None, "invalid path"
+
+
 class TestClaudeSession:
     """Test ClaudeSession class."""
 
@@ -230,6 +242,35 @@ class TestToolMonitorConfigBypass:
 
         assert allowed is False
         assert "Tool not allowed" in (error or "")
+
+    async def test_disable_tool_validation_still_rejects_invalid_file_path(self):
+        validator = _ValidatorStub(should_allow_path=False)
+        monitor = ToolMonitor(
+            _MonitorConfigStub(disable_tool_validation=True), validator
+        )
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="Read",
+            tool_input={"file_path": "../secret"},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is False
+        assert error == "invalid path"
+
+    async def test_disable_tool_validation_still_rejects_dangerous_bash(self):
+        monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=True), None)
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="Bash",
+            tool_input={"command": "echo test > /tmp/out"},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is False
+        assert "Dangerous command pattern detected" in (error or "")
 
 
     @pytest.fixture

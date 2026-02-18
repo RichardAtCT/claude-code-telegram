@@ -54,7 +54,7 @@ AUTH_TOKEN_SECRET=your-secret-key-here
 DISABLE_SECURITY_PATTERNS=false
 
 # Disable ToolMonitor allowlist/disallowlist checks (default: false)
-# WARNING: This allows any Claude tool name to pass tool validation.
+# WARNING: This only skips tool-name allow/disallow checks; path and Bash safety checks still apply.
 DISABLE_TOOL_VALIDATION=false
 ```
 
