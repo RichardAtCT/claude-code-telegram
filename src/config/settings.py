@@ -139,6 +139,16 @@ class Settings(BaseSettings):
         description="Conversational agentic mode (default) vs classic command mode",
     )
 
+    # Tool command security
+    disable_tool_command_validation: bool = Field(
+        False,
+        description=(
+            "Disable dangerous-command-pattern checks on Claude's tool calls "
+            "(pipes, redirects, semicolons, etc.). Message-level security "
+            "middleware remains active. Only enable for trusted admin users."
+        ),
+    )
+
     # Output verbosity (0=quiet, 1=normal, 2=detailed)
     verbose_level: int = Field(
         1,

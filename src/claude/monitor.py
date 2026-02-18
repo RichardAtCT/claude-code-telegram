@@ -109,8 +109,10 @@ class ToolMonitor:
                     logger.warning("Invalid file path in tool call", **violation)
                     return False, error
 
-        # Validate shell commands
-        if tool_name in ["bash", "shell", "Bash"]:
+        # Validate shell commands (skipped when disable_tool_command_validation is set)
+        if tool_name in ["bash", "shell", "Bash"] and not getattr(
+            self.config, "disable_tool_command_validation", False
+        ):
             command = tool_input.get("command", "")
 
             # Check for dangerous commands
