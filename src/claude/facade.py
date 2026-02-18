@@ -296,6 +296,7 @@ class ClaudeIntegration:
                     or "JSON decode error" in error_str
                     or "TaskGroup" in error_str
                     or "ExceptionGroup" in error_str
+                    or "Unknown message type" in error_str
                 ):
                     self._sdk_failed_count += 1
                     logger.warning(
