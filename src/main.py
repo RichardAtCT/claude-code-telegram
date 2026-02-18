@@ -27,10 +27,11 @@ from src.events.middleware import EventSecurityMiddleware
 from src.exceptions import ConfigurationError
 from src.notifications.service import NotificationService
 from src.scheduler.scheduler import JobScheduler
-from src.security.audit import AuditLogger, InMemoryAuditStorage
+from src.security.audit import AuditLogger, InMemoryAuditStorage, SQLiteAuditStorage
 from src.security.auth import (
     AuthenticationManager,
     InMemoryTokenStorage,
+    SQLiteTokenStorage,
     TokenAuthProvider,
     WhitelistAuthProvider,
 )
@@ -113,7 +114,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     # Add token provider if enabled
     if config.enable_token_auth:
-        token_storage = InMemoryTokenStorage()  # TODO: Use database storage
+        token_storage = SQLiteTokenStorage(storage.db_manager)
         providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
 
     # Fall back to allowing all users in development mode
@@ -130,8 +131,8 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     security_validator = SecurityValidator(config.approved_directory)
     rate_limiter = RateLimiter(config)
 
-    # Create audit storage and logger
-    audit_storage = InMemoryAuditStorage()  # TODO: Use database storage in production
+    # Create audit storage and logger (SQLite-backed for persistence across restarts)
+    audit_storage = SQLiteAuditStorage(storage.db_manager)
     audit_logger = AuditLogger(audit_storage)
 
     # Create Claude integration components with persistent storage

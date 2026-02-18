@@ -4,7 +4,7 @@ Provides simple interface for bot handlers.
 """
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import structlog
 
@@ -48,6 +48,19 @@ class ClaudeIntegration:
         self.tool_monitor = tool_monitor
         self._sdk_failed_count = 0  # Track SDK failures for adaptive fallback
 
+    @staticmethod
+    def _load_project_context(working_directory: Path) -> Optional[str]:
+        """Load CLAUDE.md from the working directory if it exists."""
+        claude_md = Path(working_directory) / "CLAUDE.md"
+        if claude_md.is_file():
+            try:
+                content = claude_md.read_text(encoding="utf-8")
+                if content.strip():
+                    return content[:8000]  # Cap at 8K to avoid bloating context
+            except Exception:
+                pass
+        return None
+
     async def run_command(
         self,
         prompt: str,
@@ -84,6 +97,21 @@ class ClaudeIntegration:
         session = await self.session_manager.get_or_create_session(
             user_id, working_directory, session_id
         )
+
+        # For new sessions, inject CLAUDE.md project context if available
+        is_new = getattr(session, "is_new_session", False)
+        if is_new:
+            project_context = self._load_project_context(working_directory)
+            if project_context:
+                prompt = (
+                    f"[Project context from CLAUDE.md]\n{project_context}\n\n"
+                    f"---\n\n{prompt}"
+                )
+                logger.info(
+                    "Injected CLAUDE.md context",
+                    working_directory=str(working_directory),
+                    context_length=len(project_context),
+                )
 
         # Track streaming updates and validate tool calls
         tools_validated = True

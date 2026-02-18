@@ -112,38 +112,39 @@ class ToolMonitor:
         # Validate shell commands
         if tool_name in ["bash", "shell", "Bash"]:
             command = tool_input.get("command", "")
+            # Normalize: collapse whitespace, strip, lowercase for matching
+            normalized = " ".join(command.lower().split())
 
-            # Check for dangerous commands
-            dangerous_patterns = [
-                "rm -rf",
-                "sudo",
-                "chmod 777",
-                "curl",
-                "wget",
-                "nc ",
-                "netcat",
-                ">",
-                ">>",
-                "|",
-                "&",
-                ";",
-                "$(",
-                "`",
+            # Dangerous command patterns (regex for robustness)
+            import re
+
+            dangerous_regexes = [
+                (r"\brm\s+(-[a-z]*r[a-z]*\s+.*|.*-[a-z]*f[a-z]*)", "rm with recursive/force flags"),
+                (r"\bsudo\b", "sudo"),
+                (r"\bchmod\s+777\b", "chmod 777"),
+                (r"\bcurl\b", "curl (network access)"),
+                (r"\bwget\b", "wget (network access)"),
+                (r"\bnc\b|\bnetcat\b|\bncat\b", "netcat (network tool)"),
+                (r"\bdd\b\s+", "dd (disk utility)"),
+                (r"\bmkfs\b|\bfdisk\b|\bparted\b", "disk formatting"),
+                (r";\s*rm\b|&&\s*rm\b|\|\|\s*rm\b", "chained rm command"),
+                (r"\beval\b\s+", "eval (code injection risk)"),
+                (r"\bbase64\s+-d\b.*\|\s*(sh|bash)\b", "encoded command execution"),
             ]
 
-            for pattern in dangerous_patterns:
-                if pattern in command.lower():
+            for pattern, description in dangerous_regexes:
+                if re.search(pattern, normalized):
                     violation = {
                         "type": "dangerous_command",
                         "tool_name": tool_name,
-                        "command": command,
-                        "pattern": pattern,
+                        "command": command[:200],
+                        "pattern": description,
                         "user_id": user_id,
                         "working_directory": str(working_directory),
                     }
                     self.security_violations.append(violation)
                     logger.warning("Dangerous command detected", **violation)
-                    return False, f"Dangerous command pattern detected: {pattern}"
+                    return False, f"Dangerous command pattern detected: {description}"
 
         # Track usage
         self.tool_usage[tool_name] += 1
