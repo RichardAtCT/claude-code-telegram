@@ -95,6 +95,8 @@ Settings loaded from environment variables via Pydantic Settings. Required: `TEL
 
 Agentic platform settings: `AGENTIC_MODE` (default true), `ENABLE_API_SERVER`, `API_SERVER_PORT` (default 8080), `GITHUB_WEBHOOK_SECRET`, `WEBHOOK_API_SECRET`, `ENABLE_SCHEDULER`, `NOTIFICATION_CHAT_IDS`.
 
+Output verbosity: `VERBOSE_LEVEL` (default 1, range 0-2). Controls how much of Claude's background activity is shown to the user in real-time. 0 = quiet (only final response), 1 = normal (tool names shown during execution), 2 = detailed (tool names + input summaries). Users can override per-session via `/verbose 0|1|2`.
+
 Feature flags in `src/config/features.py` control: MCP, git integration, file uploads, quick actions, session export, image uploads, conversation mode, agentic mode, API server, scheduler.
 
 ## Code Style
@@ -108,7 +110,7 @@ Feature flags in `src/config/features.py` control: MCP, git integration, file up
 
 ### Agentic mode
 
-Agentic mode has minimal commands (`/start`, `/new`, `/status`). To add a new command:
+Agentic mode has minimal commands (`/start`, `/new`, `/status`, `/verbose`). To add a new command:
 
 1. Add handler function in `src/bot/orchestrator.py`
 2. Register in `MessageOrchestrator._register_agentic_handlers()`

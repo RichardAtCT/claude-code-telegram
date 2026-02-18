@@ -6,7 +6,8 @@ classic mode, delegates to existing full-featured handlers.
 """
 
 import asyncio
-from typing import Any, Callable, Dict, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 from telegram import BotCommand, Update
@@ -20,10 +21,35 @@ from telegram.ext import (
 )
 
 from ..claude.exceptions import ClaudeToolValidationError
+from ..claude.integration import StreamUpdate
 from ..config.settings import Settings
 from .utils.html_format import escape_html
 
 logger = structlog.get_logger()
+
+# Tool name -> friendly emoji mapping for verbose output
+_TOOL_ICONS: Dict[str, str] = {
+    "Read": "\U0001f4d6",
+    "Write": "\u270f\ufe0f",
+    "Edit": "\u270f\ufe0f",
+    "MultiEdit": "\u270f\ufe0f",
+    "Bash": "\U0001f4bb",
+    "Glob": "\U0001f50d",
+    "Grep": "\U0001f50d",
+    "LS": "\U0001f4c2",
+    "Task": "\U0001f9e0",
+    "WebFetch": "\U0001f310",
+    "WebSearch": "\U0001f310",
+    "NotebookRead": "\U0001f4d3",
+    "NotebookEdit": "\U0001f4d3",
+    "TodoRead": "\u2611\ufe0f",
+    "TodoWrite": "\u2611\ufe0f",
+}
+
+
+def _tool_icon(name: str) -> str:
+    """Return emoji for a tool, with a default wrench."""
+    return _TOOL_ICONS.get(name, "\U0001f527")
 
 
 class MessageOrchestrator:
@@ -52,12 +78,13 @@ class MessageOrchestrator:
             self._register_classic_handlers(app)
 
     def _register_agentic_handlers(self, app: Application) -> None:
-        """Register minimal agentic handlers: 3 commands + text/file/photo."""
+        """Register minimal agentic handlers: 4 commands + text/file/photo."""
         # Commands
         for cmd, handler in [
             ("start", self.agentic_start),
             ("new", self.agentic_new),
             ("status", self.agentic_status),
+            ("verbose", self.agentic_verbose),
         ]:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
 
@@ -147,6 +174,7 @@ class MessageOrchestrator:
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
+                BotCommand("verbose", "Set output verbosity (0/1/2)"),
             ]
         else:
             return [
@@ -223,6 +251,139 @@ class MessageOrchestrator:
             f"📂 {dir_display} · Session: {session_status}{cost_str}"
         )
 
+    def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Return effective verbose level: per-user override or global default."""
+        user_override = context.user_data.get("verbose_level")
+        if user_override is not None:
+            return int(user_override)
+        return self.settings.verbose_level
+
+    async def agentic_verbose(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Set output verbosity: /verbose [0|1|2]."""
+        args = update.message.text.split()[1:] if update.message.text else []
+        if not args:
+            current = self._get_verbose_level(context)
+            labels = {0: "quiet", 1: "normal", 2: "detailed"}
+            await update.message.reply_text(
+                f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
+                "Usage: <code>/verbose 0|1|2</code>\n"
+                "  0 = quiet (final response only)\n"
+                "  1 = normal (show tool names)\n"
+                "  2 = detailed (show tool names + inputs)",
+                parse_mode="HTML",
+            )
+            return
+
+        try:
+            level = int(args[0])
+            if level not in (0, 1, 2):
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(
+                "Please use: /verbose 0, /verbose 1, or /verbose 2"
+            )
+            return
+
+        context.user_data["verbose_level"] = level
+        labels = {0: "quiet", 1: "normal", 2: "detailed"}
+        await update.message.reply_text(
+            f"Verbosity set to <b>{level}</b> ({labels[level]})",
+            parse_mode="HTML",
+        )
+
+    def _format_verbose_progress(
+        self,
+        tool_log: List[Dict[str, Any]],
+        verbose_level: int,
+        start_time: float,
+    ) -> str:
+        """Build the progress message text based on tool activity so far."""
+        if not tool_log:
+            return "Working..."
+
+        elapsed = time.time() - start_time
+        lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
+
+        for entry in tool_log[-15:]:  # Show last 15 tool calls max
+            icon = _tool_icon(entry["name"])
+            if verbose_level >= 2 and entry.get("detail"):
+                lines.append(f"{icon} {entry['name']}: {entry['detail']}")
+            else:
+                lines.append(f"{icon} {entry['name']}")
+
+        if len(tool_log) > 15:
+            lines.insert(1, f"... ({len(tool_log) - 15} earlier calls)\n")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
+        """Return a short summary of tool input for verbose level 2."""
+        if not tool_input:
+            return ""
+        if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
+            path = tool_input.get("file_path") or tool_input.get("path", "")
+            if path:
+                # Show just the filename, not the full path
+                return path.rsplit("/", 1)[-1]
+        if tool_name in ("Glob", "Grep"):
+            pattern = tool_input.get("pattern", "")
+            if pattern:
+                return pattern[:60]
+        if tool_name == "Bash":
+            cmd = tool_input.get("command", "")
+            if cmd:
+                return cmd[:80]
+        if tool_name in ("WebFetch", "WebSearch"):
+            return (tool_input.get("url", "") or tool_input.get("query", ""))[:60]
+        if tool_name == "Task":
+            desc = tool_input.get("description", "")
+            if desc:
+                return desc[:60]
+        # Generic: show first key's value
+        for v in tool_input.values():
+            if isinstance(v, str) and v:
+                return v[:60]
+        return ""
+
+    def _make_stream_callback(
+        self,
+        verbose_level: int,
+        progress_msg: Any,
+        tool_log: List[Dict[str, Any]],
+        start_time: float,
+    ) -> Optional[Callable[[StreamUpdate], Any]]:
+        """Create a stream callback for verbose progress updates.
+
+        Returns None when verbose_level is 0 (quiet mode).
+        """
+        if verbose_level == 0:
+            return None
+
+        last_update_time = [0.0]  # mutable container for closure
+
+        async def _on_stream(update_obj: StreamUpdate) -> None:
+            if update_obj.tool_calls:
+                for tc in update_obj.tool_calls:
+                    name = tc.get("name", "unknown")
+                    detail = self._summarize_tool_input(name, tc.get("input", {}))
+                    tool_log.append({"name": name, "detail": detail})
+
+            now = time.time()
+            if tool_log and (now - last_update_time[0]) >= 2.0:
+                last_update_time[0] = now
+                new_text = self._format_verbose_progress(
+                    tool_log, verbose_level, start_time
+                )
+                try:
+                    await progress_msg.edit_text(new_text)
+                except Exception:
+                    pass
+
+        return _on_stream
+
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -246,6 +407,7 @@ class MessageOrchestrator:
 
         await update.message.chat.send_action("typing")
 
+        verbose_level = self._get_verbose_level(context)
         progress_msg = await update.message.reply_text("Working...")
 
         claude_integration = context.bot_data.get("claude_integration")
@@ -260,6 +422,13 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
+        # --- Verbose progress tracking via stream callback ---
+        tool_log: List[Dict[str, Any]] = []
+        start_time = time.time()
+        on_stream = self._make_stream_callback(
+            verbose_level, progress_msg, tool_log, start_time
+        )
+
         success = True
         try:
             claude_response = await claude_integration.run_command(
@@ -267,6 +436,7 @@ class MessageOrchestrator:
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=on_stream,
             )
 
             context.user_data["claude_session_id"] = claude_response.session_id
@@ -439,12 +609,19 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
+        verbose_level = self._get_verbose_level(context)
+        tool_log: List[Dict[str, Any]] = []
+        on_stream = self._make_stream_callback(
+            verbose_level, progress_msg, tool_log, time.time()
+        )
+
         try:
             claude_response = await claude_integration.run_command(
                 prompt=prompt,
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=on_stream,
             )
             context.user_data["claude_session_id"] = claude_response.session_id
 
@@ -514,11 +691,18 @@ class MessageOrchestrator:
             )
             session_id = context.user_data.get("claude_session_id")
 
+            verbose_level = self._get_verbose_level(context)
+            tool_log: List[Dict[str, Any]] = []
+            on_stream = self._make_stream_callback(
+                verbose_level, progress_msg, tool_log, time.time()
+            )
+
             claude_response = await claude_integration.run_command(
                 prompt=processed_image.prompt,
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=on_stream,
             )
             context.user_data["claude_session_id"] = claude_response.session_id
 

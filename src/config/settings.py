@@ -139,6 +139,14 @@ class Settings(BaseSettings):
         description="Conversational agentic mode (default) vs classic command mode",
     )
 
+    # Output verbosity (0=quiet, 1=normal/tool names, 2=verbose/tool details)
+    verbose_level: int = Field(
+        1,
+        description="Bot output verbosity: 0=quiet, 1=tool names, 2=tool details",
+        ge=0,
+        le=2,
+    )
+
     # Monitoring
     log_level: str = Field("INFO", description="Logging level")
     enable_telemetry: bool = Field(False, description="Enable anonymous telemetry")
