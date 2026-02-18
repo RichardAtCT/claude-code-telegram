@@ -21,6 +21,7 @@ from telegram.ext import (
 
 from ..claude.exceptions import ClaudeToolValidationError
 from ..config.settings import Settings
+from .progress import ProgressUpdater
 from .utils.html_format import escape_html
 
 logger = structlog.get_logger()
@@ -246,7 +247,8 @@ class MessageOrchestrator:
 
         await update.message.chat.send_action("typing")
 
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text("\u23f3 Working...")
+        progress = ProgressUpdater(progress_msg)
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
@@ -267,6 +269,7 @@ class MessageOrchestrator:
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=progress.handle_update,
             )
 
             context.user_data["claude_session_id"] = claude_response.session_id
@@ -317,6 +320,7 @@ class MessageOrchestrator:
                 FormattedMessage(_format_error_message(str(e)), parse_mode="HTML")
             ]
 
+        await progress.stop()
         await progress_msg.delete()
 
         for i, message in enumerate(formatted_messages):
@@ -390,7 +394,8 @@ class MessageOrchestrator:
             )
             return
 
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text("\u23f3 Working...")
+        progress = ProgressUpdater(progress_msg)
 
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
@@ -445,6 +450,7 @@ class MessageOrchestrator:
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=progress.handle_update,
             )
             context.user_data["claude_session_id"] = claude_response.session_id
 
@@ -461,6 +467,7 @@ class MessageOrchestrator:
                 claude_response.content
             )
 
+            await progress.stop()
             await progress_msg.delete()
 
             for i, message in enumerate(formatted_messages):
@@ -494,7 +501,8 @@ class MessageOrchestrator:
             await update.message.reply_text("Photo processing is not available.")
             return
 
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text("\u23f3 Working...")
+        progress = ProgressUpdater(progress_msg)
 
         try:
             photo = update.message.photo[-1]
@@ -519,6 +527,7 @@ class MessageOrchestrator:
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                on_stream=progress.handle_update,
             )
             context.user_data["claude_session_id"] = claude_response.session_id
 
@@ -529,6 +538,7 @@ class MessageOrchestrator:
                 claude_response.content
             )
 
+            await progress.stop()
             await progress_msg.delete()
 
             for i, message in enumerate(formatted_messages):
