@@ -29,6 +29,7 @@ class ToolMonitor:
         self.security_validator = security_validator
         self.tool_usage: Dict[str, int] = defaultdict(int)
         self.security_violations: List[Dict[str, Any]] = []
+        self.disable_tool_validation = getattr(config, "disable_tool_validation", False)
 
     async def validate_tool_call(
         self,
@@ -44,6 +45,16 @@ class ToolMonitor:
             working_directory=str(working_directory),
             user_id=user_id,
         )
+
+        # Skip tool validation when explicitly disabled in trusted environments
+        if self.disable_tool_validation:
+            self.tool_usage[tool_name] += 1
+            logger.debug(
+                "Tool validation disabled; allowing tool call",
+                tool_name=tool_name,
+                user_id=user_id,
+            )
+            return True, None
 
         # Check if tool is allowed
         if (

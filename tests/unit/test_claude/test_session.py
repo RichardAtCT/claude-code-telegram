@@ -6,8 +6,18 @@ from pathlib import Path
 import pytest
 
 from src.claude.sdk_integration import ClaudeResponse
+from src.claude.monitor import ToolMonitor
 from src.claude.session import ClaudeSession, InMemorySessionStorage, SessionManager
 from src.config.settings import Settings
+
+
+class _MonitorConfigStub:
+    """Minimal config object for ToolMonitor tests."""
+
+    def __init__(self, disable_tool_validation: bool):
+        self.disable_tool_validation = disable_tool_validation
+        self.claude_allowed_tools = ["Read"]
+        self.claude_disallowed_tools = ["Bash"]
 
 
 class TestClaudeSession:
@@ -189,6 +199,38 @@ class TestInMemorySessionStorage:
 
 class TestSessionManager:
     """Test session manager."""
+
+
+class TestToolMonitorConfigBypass:
+    """Test ToolMonitor behavior when tool validation is disabled."""
+
+    async def test_validate_tool_call_bypasses_allowlist_when_disabled(self):
+        monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=True), None)
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="TotallyCustomTool",
+            tool_input={},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is True
+        assert error is None
+        assert monitor.tool_usage["TotallyCustomTool"] == 1
+
+    async def test_validate_tool_call_enforces_allowlist_when_enabled(self):
+        monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=False), None)
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="TotallyCustomTool",
+            tool_input={},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is False
+        assert "Tool not allowed" in (error or "")
+
 
     @pytest.fixture
     def config(self, tmp_path):

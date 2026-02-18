@@ -49,6 +49,18 @@ class Settings(BaseSettings):
         None, description="Secret for auth tokens"
     )
 
+    # Security relaxation (for trusted environments)
+    disable_security_patterns: bool = Field(
+        False,
+        description=(
+            "Disable dangerous pattern validation (pipes, redirections, etc.)"
+        ),
+    )
+    disable_tool_validation: bool = Field(
+        False,
+        description="Allow all Claude tools by bypassing tool validation checks",
+    )
+
     # Claude settings
     claude_binary_path: Optional[str] = Field(
         None, description="Path to Claude CLI binary (deprecated)"

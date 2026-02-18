@@ -131,12 +131,16 @@ class SecurityValidator:
         r".*\.rar$",  # Archives (potentially dangerous)
     ]
 
-    def __init__(self, approved_directory: Path):
+    def __init__(
+        self, approved_directory: Path, disable_security_patterns: bool = False
+    ):
         """Initialize validator with approved directory."""
         self.approved_directory = approved_directory.resolve()
+        self.disable_security_patterns = disable_security_patterns
         logger.info(
             "Security validator initialized",
             approved_directory=str(self.approved_directory),
+            disable_security_patterns=self.disable_security_patterns,
         )
 
     def validate_path(
@@ -154,19 +158,20 @@ class SecurityValidator:
 
             user_path = user_path.strip()
 
-            # Check for dangerous patterns
-            for pattern in self.DANGEROUS_PATTERNS:
-                if re.search(pattern, user_path, re.IGNORECASE):
-                    logger.warning(
-                        "Dangerous pattern detected in path",
-                        path=user_path,
-                        pattern=pattern,
-                    )
-                    return (
-                        False,
-                        None,
-                        f"Invalid path: contains forbidden pattern '{pattern}'",
-                    )
+            # Check for dangerous patterns (unless explicitly disabled)
+            if not self.disable_security_patterns:
+                for pattern in self.DANGEROUS_PATTERNS:
+                    if re.search(pattern, user_path, re.IGNORECASE):
+                        logger.warning(
+                            "Dangerous pattern detected in path",
+                            path=user_path,
+                            pattern=pattern,
+                        )
+                        return (
+                            False,
+                            None,
+                            f"Invalid path: contains forbidden pattern '{pattern}'",
+                        )
 
             # Handle path resolution
             current_dir = current_dir or self.approved_directory
