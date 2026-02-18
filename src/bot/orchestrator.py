@@ -354,12 +354,15 @@ class MessageOrchestrator:
         progress_msg: Any,
         tool_log: List[Dict[str, Any]],
         start_time: float,
+        chat: Any = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
-        Returns None when verbose_level is 0 (quiet mode).
+        Returns None when verbose_level is 0 and no chat is provided.
+        When chat is provided, always returns a callback to keep the
+        typing indicator alive even at verbose level 0.
         """
-        if verbose_level == 0:
+        if verbose_level == 0 and chat is None:
             return None
 
         last_update_time = [0.0]  # mutable container for closure
@@ -372,15 +375,23 @@ class MessageOrchestrator:
                     tool_log.append({"name": name, "detail": detail})
 
             now = time.time()
-            if tool_log and (now - last_update_time[0]) >= 2.0:
+            if (now - last_update_time[0]) >= 2.0:
                 last_update_time[0] = now
-                new_text = self._format_verbose_progress(
-                    tool_log, verbose_level, start_time
-                )
-                try:
-                    await progress_msg.edit_text(new_text)
-                except Exception:
-                    pass
+                # Re-send typing indicator to keep it alive
+                if chat:
+                    try:
+                        await chat.send_action("typing")
+                    except Exception:
+                        pass
+                # Update verbose progress text
+                if verbose_level > 0 and tool_log:
+                    new_text = self._format_verbose_progress(
+                        tool_log, verbose_level, start_time
+                    )
+                    try:
+                        await progress_msg.edit_text(new_text)
+                    except Exception:
+                        pass
 
         return _on_stream
 
@@ -405,7 +416,8 @@ class MessageOrchestrator:
                 await update.message.reply_text(f"⏱️ {limit_message}")
                 return
 
-        await update.message.chat.send_action("typing")
+        chat = update.message.chat
+        await chat.send_action("typing")
 
         verbose_level = self._get_verbose_level(context)
         progress_msg = await update.message.reply_text("Working...")
@@ -426,7 +438,7 @@ class MessageOrchestrator:
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, start_time
+            verbose_level, progress_msg, tool_log, start_time, chat=chat
         )
 
         success = True
@@ -560,6 +572,8 @@ class MessageOrchestrator:
             )
             return
 
+        chat = update.message.chat
+        await chat.send_action("typing")
         progress_msg = await update.message.reply_text("Working...")
 
         # Try enhanced file handler, fall back to basic
@@ -612,7 +626,7 @@ class MessageOrchestrator:
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, time.time()
+            verbose_level, progress_msg, tool_log, time.time(), chat=chat
         )
 
         try:
@@ -671,6 +685,8 @@ class MessageOrchestrator:
             await update.message.reply_text("Photo processing is not available.")
             return
 
+        chat = update.message.chat
+        await chat.send_action("typing")
         progress_msg = await update.message.reply_text("Working...")
 
         try:
@@ -694,7 +710,7 @@ class MessageOrchestrator:
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
             on_stream = self._make_stream_callback(
-                verbose_level, progress_msg, tool_log, time.time()
+                verbose_level, progress_msg, tool_log, time.time(), chat=chat
             )
 
             claude_response = await claude_integration.run_command(
