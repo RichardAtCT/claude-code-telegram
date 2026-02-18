@@ -1,6 +1,6 @@
 """Test Claude session management."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -29,8 +29,8 @@ class TestClaudeSession:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         assert session.session_id == "test-session"
@@ -43,7 +43,7 @@ class TestClaudeSession:
 
     def test_session_expiry(self):
         """Test session expiry logic."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         old_time = now - timedelta(hours=25)
 
         session = ClaudeSession(
@@ -64,8 +64,8 @@ class TestClaudeSession:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         response = ClaudeResponse(
@@ -91,8 +91,8 @@ class TestClaudeSession:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
             total_cost=0.05,
             total_turns=2,
             message_count=1,
@@ -127,8 +127,8 @@ class TestInMemorySessionStorage:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
     async def test_save_and_load_session(self, storage, sample_session):
@@ -164,22 +164,22 @@ class TestInMemorySessionStorage:
             session_id="session1",
             user_id=123,
             project_path=Path("/test/path1"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         session2 = ClaudeSession(
             session_id="session2",
             user_id=123,
             project_path=Path("/test/path2"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         session3 = ClaudeSession(
             session_id="session3",
             user_id=456,
             project_path=Path("/test/path3"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         await storage.save_session(session1)
