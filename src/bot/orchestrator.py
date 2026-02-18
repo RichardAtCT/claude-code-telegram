@@ -6,6 +6,7 @@ classic mode, delegates to existing full-featured handlers.
 """
 
 import asyncio
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -26,6 +27,48 @@ from ..config.settings import Settings
 from .utils.html_format import escape_html
 
 logger = structlog.get_logger()
+
+# Patterns that look like secrets/credentials in CLI arguments
+_SECRET_PATTERNS: List[re.Pattern[str]] = [
+    # API keys / tokens (sk-ant-..., sk-..., ghp_..., gho_..., github_pat_..., xoxb-...)
+    re.compile(
+        r"(sk-ant-api\d*-[A-Za-z0-9_-]{10})[A-Za-z0-9_-]*"
+        r"|(sk-[A-Za-z0-9_-]{20})[A-Za-z0-9_-]*"
+        r"|(ghp_[A-Za-z0-9]{5})[A-Za-z0-9]*"
+        r"|(gho_[A-Za-z0-9]{5})[A-Za-z0-9]*"
+        r"|(github_pat_[A-Za-z0-9_]{5})[A-Za-z0-9_]*"
+        r"|(xoxb-[A-Za-z0-9]{5})[A-Za-z0-9-]*"
+    ),
+    # AWS access keys
+    re.compile(r"(AKIA[0-9A-Z]{4})[0-9A-Z]{12}"),
+    # Generic long hex/base64 tokens after common flags/env patterns
+    re.compile(
+        r"((?:--token|--secret|--password|--api-key|--apikey|--auth)"
+        r"[= ]+)['\"]?[A-Za-z0-9+/_.:-]{8,}['\"]?"
+    ),
+    # Inline env assignments like KEY=value
+    re.compile(
+        r"((?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|AUTH_TOKEN|PRIVATE_KEY"
+        r"|ACCESS_KEY|CLIENT_SECRET|WEBHOOK_SECRET)"
+        r"=)['\"]?[^\s'\"]{8,}['\"]?"
+    ),
+    # Bearer / Basic auth headers
+    re.compile(r"(Bearer )[A-Za-z0-9+/_.:-]{8,}" r"|(Basic )[A-Za-z0-9+/=]{8,}"),
+    # Connection strings with credentials  user:pass@host
+    re.compile(r"://([^:]+:)[^@]{4,}(@)"),
+]
+
+
+def _redact_secrets(text: str) -> str:
+    """Replace likely secrets/credentials with redacted placeholders."""
+    result = text
+    for pattern in _SECRET_PATTERNS:
+        result = pattern.sub(
+            lambda m: next((g + "***" for g in m.groups() if g is not None), "***"),
+            result,
+        )
+    return result
+
 
 # Tool name -> friendly emoji mapping for verbose output
 _TOOL_ICONS: Dict[str, str] = {
@@ -346,7 +389,7 @@ class MessageOrchestrator:
         if tool_name == "Bash":
             cmd = tool_input.get("command", "")
             if cmd:
-                return cmd[:80]
+                return _redact_secrets(cmd[:100])[:80]
         if tool_name in ("WebFetch", "WebSearch"):
             return (tool_input.get("url", "") or tool_input.get("query", ""))[:60]
         if tool_name == "Task":
@@ -359,24 +402,47 @@ class MessageOrchestrator:
                 return v[:60]
         return ""
 
+    @staticmethod
+    def _start_typing_heartbeat(
+        chat: Any,
+        interval: float = 2.0,
+    ) -> "asyncio.Task[None]":
+        """Start a background typing indicator task.
+
+        Sends typing every *interval* seconds, independently of
+        stream events. Cancel the returned task in a ``finally``
+        block.
+        """
+
+        async def _heartbeat() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    try:
+                        await chat.send_action("typing")
+                    except Exception:
+                        pass
+            except asyncio.CancelledError:
+                pass
+
+        return asyncio.create_task(_heartbeat())
+
     def _make_stream_callback(
         self,
         verbose_level: int,
         progress_msg: Any,
         tool_log: List[Dict[str, Any]],
         start_time: float,
-        chat: Any = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
-        Returns None when verbose_level is 0 and no chat is provided.
-        When chat is provided, always returns a callback to keep the
-        typing indicator alive even at verbose level 0.
+        Returns None when verbose_level is 0 (nothing to display).
+        Typing indicators are handled by a separate heartbeat task.
         """
-        if verbose_level == 0 and chat is None:
+        if verbose_level == 0:
             return None
 
-        last_update_time = [0.0]  # mutable container for closure
+        last_edit_time = [0.0]  # mutable container for closure
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
             # Capture tool calls
@@ -395,24 +461,17 @@ class MessageOrchestrator:
                     if first_line:
                         tool_log.append({"kind": "text", "detail": first_line[:120]})
 
+            # Throttle progress message edits to avoid Telegram rate limits
             now = time.time()
-            if (now - last_update_time[0]) >= 2.0:
-                last_update_time[0] = now
-                # Re-send typing indicator to keep it alive
-                if chat:
-                    try:
-                        await chat.send_action("typing")
-                    except Exception:
-                        pass
-                # Update verbose progress text
-                if verbose_level > 0 and tool_log:
-                    new_text = self._format_verbose_progress(
-                        tool_log, verbose_level, start_time
-                    )
-                    try:
-                        await progress_msg.edit_text(new_text)
-                    except Exception:
-                        pass
+            if (now - last_edit_time[0]) >= 2.0 and tool_log:
+                last_edit_time[0] = now
+                new_text = self._format_verbose_progress(
+                    tool_log, verbose_level, start_time
+                )
+                try:
+                    await progress_msg.edit_text(new_text)
+                except Exception:
+                    pass
 
         return _on_stream
 
@@ -459,8 +518,11 @@ class MessageOrchestrator:
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, start_time, chat=chat
+            verbose_level, progress_msg, tool_log, start_time
         )
+
+        # Independent typing heartbeat — stays alive even with no stream events
+        heartbeat = self._start_typing_heartbeat(chat)
 
         success = True
         try:
@@ -519,6 +581,8 @@ class MessageOrchestrator:
             formatted_messages = [
                 FormattedMessage(_format_error_message(str(e)), parse_mode="HTML")
             ]
+        finally:
+            heartbeat.cancel()
 
         await progress_msg.delete()
 
@@ -647,9 +711,10 @@ class MessageOrchestrator:
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, time.time(), chat=chat
+            verbose_level, progress_msg, tool_log, time.time()
         )
 
+        heartbeat = self._start_typing_heartbeat(chat)
         try:
             claude_response = await claude_integration.run_command(
                 prompt=prompt,
@@ -692,6 +757,8 @@ class MessageOrchestrator:
                 _format_error_message(str(e)), parse_mode="HTML"
             )
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
+        finally:
+            heartbeat.cancel()
 
     async def agentic_photo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -731,16 +798,20 @@ class MessageOrchestrator:
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
             on_stream = self._make_stream_callback(
-                verbose_level, progress_msg, tool_log, time.time(), chat=chat
+                verbose_level, progress_msg, tool_log, time.time()
             )
 
-            claude_response = await claude_integration.run_command(
-                prompt=processed_image.prompt,
-                working_directory=current_dir,
-                user_id=user_id,
-                session_id=session_id,
-                on_stream=on_stream,
-            )
+            heartbeat = self._start_typing_heartbeat(chat)
+            try:
+                claude_response = await claude_integration.run_command(
+                    prompt=processed_image.prompt,
+                    working_directory=current_dir,
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_stream=on_stream,
+                )
+            finally:
+                heartbeat.cancel()
             context.user_data["claude_session_id"] = claude_response.session_id
 
             from .utils.formatting import ResponseFormatter
