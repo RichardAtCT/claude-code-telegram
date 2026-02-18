@@ -1,4 +1,4 @@
-"""Tests for middleware handler stop behavior.
+"""Tests for middleware handler stop behavior and bot-originated guards.
 
 Verifies that when middleware rejects a request (auth failure, security
 violation, rate limit exceeded), ApplicationHandlerStop is raised to
@@ -13,6 +13,8 @@ import pytest
 from telegram.ext import ApplicationHandlerStop
 
 from src.bot.core import ClaudeCodeBot
+from src.bot.middleware.rate_limit import estimate_message_cost
+from src.config import create_test_config
 from src.config.settings import Settings
 
 
@@ -57,6 +59,7 @@ def mock_update():
     update.effective_user = MagicMock()
     update.effective_user.id = 999999
     update.effective_user.username = "attacker"
+    update.effective_user.is_bot = False
     update.effective_message = MagicMock()
     update.effective_message.text = "hello"
     update.effective_message.document = None
@@ -82,7 +85,6 @@ class TestMiddlewareBlocksSubsequentGroups:
         """Auth middleware must raise ApplicationHandlerStop on rejection."""
 
         async def rejecting_auth(handler, event, data):
-            # Simulate auth failure: send error and return without calling handler
             await event.effective_message.reply_text("Not authorized")
             return
 
@@ -97,7 +99,6 @@ class TestMiddlewareBlocksSubsequentGroups:
         """Security middleware must raise ApplicationHandlerStop on dangerous input."""
 
         async def rejecting_security(handler, event, data):
-            # Simulate security block: return without calling handler
             await event.effective_message.reply_text("Blocked")
             return
 
@@ -112,7 +113,6 @@ class TestMiddlewareBlocksSubsequentGroups:
         """Rate limit middleware must raise ApplicationHandlerStop."""
 
         async def rejecting_rate_limit(handler, event, data):
-            # Simulate rate limit exceeded: return without calling handler
             await event.effective_message.reply_text("Rate limited")
             return
 
@@ -125,25 +125,20 @@ class TestMiddlewareBlocksSubsequentGroups:
         """Middleware that calls the handler must NOT raise ApplicationHandlerStop."""
 
         async def allowing_middleware(handler, event, data):
-            # Middleware approves: call the handler
             return await handler(event, data)
 
         wrapper = bot._create_middleware_handler(allowing_middleware)
-
-        # Should complete without raising
         await wrapper(mock_update, mock_context)
 
     async def test_real_auth_middleware_rejection(self, bot, mock_update, mock_context):
         """Integration test: actual auth_middleware rejects unauthorized user."""
         from src.bot.middleware.auth import auth_middleware
 
-        # Set up auth_manager to reject the user
         auth_manager = MagicMock()
         auth_manager.is_authenticated.return_value = False
         auth_manager.authenticate_user = AsyncMock(return_value=False)
         bot.deps["auth_manager"] = auth_manager
 
-        # audit_logger methods are async
         audit_logger = AsyncMock()
         bot.deps["audit_logger"] = audit_logger
 
@@ -152,7 +147,6 @@ class TestMiddlewareBlocksSubsequentGroups:
         with pytest.raises(ApplicationHandlerStop):
             await wrapper(mock_update, mock_context)
 
-        # Verify the rejection message was sent
         mock_update.effective_message.reply_text.assert_called_once()
         call_args = mock_update.effective_message.reply_text.call_args
         assert (
@@ -173,8 +167,6 @@ class TestMiddlewareBlocksSubsequentGroups:
         bot.deps["auth_manager"] = auth_manager
 
         wrapper = bot._create_middleware_handler(auth_middleware)
-
-        # Should not raise
         await wrapper(mock_update, mock_context)
 
     async def test_real_rate_limit_middleware_rejection(
@@ -189,7 +181,6 @@ class TestMiddlewareBlocksSubsequentGroups:
         )
         bot.deps["rate_limiter"] = rate_limiter
 
-        # audit_logger methods are async
         audit_logger = AsyncMock()
         bot.deps["audit_logger"] = audit_logger
 
@@ -215,3 +206,64 @@ class TestMiddlewareBlocksSubsequentGroups:
         assert "security_validator" in captured_data
         assert "rate_limiter" in captured_data
         assert "settings" in captured_data
+
+
+@pytest.mark.asyncio
+async def test_middleware_wrapper_stops_bot_originated_updates() -> None:
+    """Middleware wrapper should stop updates sent by bot users."""
+    settings = create_test_config()
+    claude_bot = ClaudeCodeBot(settings, {})
+
+    middleware_called = False
+
+    async def fake_middleware(handler, event, data):
+        nonlocal middleware_called
+        middleware_called = True
+        return await handler(event, data)
+
+    wrapper = claude_bot._create_middleware_handler(fake_middleware)
+
+    update = MagicMock()
+    update.effective_user = MagicMock(id=123, is_bot=True)
+    context = MagicMock()
+    context.bot_data = {}
+
+    with pytest.raises(ApplicationHandlerStop):
+        await wrapper(update, context)
+
+    assert middleware_called is False
+
+
+@pytest.mark.asyncio
+async def test_middleware_wrapper_runs_for_non_bot_updates() -> None:
+    """Middleware wrapper should execute middleware for user updates."""
+    settings = create_test_config()
+    claude_bot = ClaudeCodeBot(settings, {})
+
+    middleware_called = False
+
+    async def allowing_middleware(handler, event, data):
+        nonlocal middleware_called
+        middleware_called = True
+        return await handler(event, data)
+
+    wrapper = claude_bot._create_middleware_handler(allowing_middleware)
+
+    update = MagicMock()
+    update.effective_user = MagicMock(id=456, is_bot=False)
+    context = MagicMock()
+    context.bot_data = {}
+
+    await wrapper(update, context)
+
+    assert middleware_called is True
+
+
+def test_estimate_message_cost_handles_none_text() -> None:
+    """Cost estimation should not fail on service-like messages without text."""
+    event = MagicMock()
+    event.effective_message = MagicMock(text=None, document=None, photo=None)
+
+    cost = estimate_message_cost(event)
+
+    assert cost >= 0.01

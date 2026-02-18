@@ -91,7 +91,7 @@ def estimate_message_cost(event: Any) -> float:
     - Expected Claude usage
     """
     message = event.effective_message
-    message_text = message.text if message else ""
+    message_text = (message.text or "") if message else ""
 
     # Base cost for any message
     base_cost = 0.01

@@ -53,6 +53,7 @@ class TestDatabaseManager:
                 "audit_log",
                 "user_tokens",
                 "cost_tracking",
+                "project_threads",
                 "schema_version",
             ]
 
@@ -82,6 +83,8 @@ class TestDatabaseManager:
                 "idx_audit_log_user_id",
                 "idx_audit_log_timestamp",
                 "idx_cost_tracking_user_date",
+                "idx_project_threads_chat_active",
+                "idx_project_threads_slug",
             ]
 
             for index in expected_indexes:

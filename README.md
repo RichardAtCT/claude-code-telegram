@@ -80,7 +80,8 @@ The bot supports two interaction modes:
 
 The default conversational mode. Just talk to Claude naturally -- no special commands required.
 
-**Commands:** `/start`, `/new`, `/status`, `/verbose`
+**Commands:** `/start`, `/new`, `/status`, `/verbose`  
+If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
 
 ```
 You: What files are in this project?
@@ -114,7 +115,8 @@ Use `/verbose 0|1|2` to control how much background activity is shown:
 
 Set `AGENTIC_MODE=false` to enable the full 13-command terminal-like interface with directory navigation, inline keyboards, quick actions, git integration, and session export.
 
-**Commands:** `/start`, `/help`, `/new`, `/continue`, `/end`, `/status`, `/cd`, `/ls`, `/pwd`, `/projects`, `/export`, `/actions`, `/git`
+**Commands:** `/start`, `/help`, `/new`, `/continue`, `/end`, `/status`, `/cd`, `/ls`, `/pwd`, `/projects`, `/export`, `/actions`, `/git`  
+If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
 
 ```
 You: /cd my-web-app
@@ -219,6 +221,25 @@ ENABLE_SCHEDULER=false           # Enable cron job scheduler
 # Notifications
 NOTIFICATION_CHAT_IDS=123,456    # Default chat IDs for proactive notifications
 ```
+
+### Project Threads Mode
+
+```bash
+# Enable strict topic routing by project
+ENABLE_PROJECT_THREADS=true
+
+# Mode: private (default) or group
+PROJECT_THREADS_MODE=private
+
+# YAML registry file (see config/projects.example.yaml)
+PROJECTS_CONFIG_PATH=config/projects.yaml
+
+# Required only when PROJECT_THREADS_MODE=group
+PROJECT_THREADS_CHAT_ID=-1001234567890
+```
+
+In strict mode, only `/start` and `/sync_threads` work outside mapped project topics.
+In private mode, `/start` auto-syncs project topics for your private bot chat.
 
 > **Full reference:** See [docs/configuration.md](docs/configuration.md) and [`.env.example`](.env.example).
 

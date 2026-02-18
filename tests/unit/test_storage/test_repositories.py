@@ -10,6 +10,7 @@ from src.storage.database import DatabaseManager
 from src.storage.models import (
     AuditLogModel,
     MessageModel,
+    ProjectThreadModel,
     SessionModel,
     ToolUsageModel,
     UserModel,
@@ -18,6 +19,7 @@ from src.storage.repositories import (
     AnalyticsRepository,
     AuditLogRepository,
     MessageRepository,
+    ProjectThreadRepository,
     SessionRepository,
     ToolUsageRepository,
     UserRepository,
@@ -69,6 +71,12 @@ async def audit_repo(db_manager):
 async def analytics_repo(db_manager):
     """Create analytics repository."""
     return AnalyticsRepository(db_manager)
+
+
+@pytest.fixture
+async def project_thread_repo(db_manager):
+    """Create project thread repository."""
+    return ProjectThreadRepository(db_manager)
 
 
 class TestUserRepository:
@@ -296,6 +304,56 @@ class TestMessageRepository:
         assert len(messages) == 1
         assert messages[0].prompt == "Test prompt"
         assert messages[0].response == "Test response"
+
+
+class TestProjectThreadRepository:
+    """Test project thread repository."""
+
+    async def test_upsert_and_lookup(self, project_thread_repo):
+        """Upsert creates mapping and lookup resolves it."""
+        mapping = await project_thread_repo.upsert_mapping(
+            project_slug="app1",
+            chat_id=-1001234567890,
+            message_thread_id=321,
+            topic_name="App One",
+        )
+
+        assert isinstance(mapping, ProjectThreadModel)
+        assert mapping.project_slug == "app1"
+        assert mapping.message_thread_id == 321
+
+        lookup = await project_thread_repo.get_by_chat_thread(
+            -1001234567890, 321
+        )
+        assert lookup is not None
+        assert lookup.project_slug == "app1"
+
+    async def test_deactivate_missing_projects(self, project_thread_repo):
+        """Mappings not in active set are deactivated."""
+        await project_thread_repo.upsert_mapping(
+            project_slug="app1",
+            chat_id=-1001234567890,
+            message_thread_id=111,
+            topic_name="App 1",
+        )
+        await project_thread_repo.upsert_mapping(
+            project_slug="app2",
+            chat_id=-1001234567890,
+            message_thread_id=222,
+            topic_name="App 2",
+        )
+
+        changed = await project_thread_repo.deactivate_missing_projects(
+            chat_id=-1001234567890,
+            active_project_slugs=["app1"],
+        )
+
+        assert changed == 1
+        inactive_mapping = await project_thread_repo.get_by_chat_project(
+            -1001234567890, "app2"
+        )
+        assert inactive_mapping is not None
+        assert inactive_mapping.is_active is False
 
 
 class TestToolUsageRepository:

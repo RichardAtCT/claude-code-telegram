@@ -22,6 +22,7 @@ from .repositories import (
     AuditLogRepository,
     CostTrackingRepository,
     MessageRepository,
+    ProjectThreadRepository,
     SessionRepository,
     ToolUsageRepository,
     UserRepository,
@@ -38,6 +39,7 @@ class Storage:
         self.db_manager = DatabaseManager(database_url)
         self.users = UserRepository(self.db_manager)
         self.sessions = SessionRepository(self.db_manager)
+        self.project_threads = ProjectThreadRepository(self.db_manager)
         self.messages = MessageRepository(self.db_manager)
         self.tools = ToolUsageRepository(self.db_manager)
         self.audit = AuditLogRepository(self.db_manager)

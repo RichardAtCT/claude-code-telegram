@@ -273,6 +273,29 @@ class DatabaseManager:
                 PRAGMA journal_mode=WAL;
                 """,
             ),
+            (
+                4,
+                """
+                -- Project thread mapping for strict forum-topic routing
+                CREATE TABLE IF NOT EXISTS project_threads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_slug TEXT NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    message_thread_id INTEGER NOT NULL,
+                    topic_name TEXT NOT NULL,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(chat_id, project_slug),
+                    UNIQUE(chat_id, message_thread_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_project_threads_chat_active
+                    ON project_threads(chat_id, is_active);
+                CREATE INDEX IF NOT EXISTS idx_project_threads_slug
+                    ON project_threads(project_slug);
+                """,
+            ),
         ]
 
     async def _init_pool(self):

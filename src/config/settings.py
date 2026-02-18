@@ -10,7 +10,7 @@ Features:
 
 import json
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -188,6 +188,20 @@ class Settings(BaseSettings):
     notification_chat_ids: Optional[List[int]] = Field(
         None, description="Default Telegram chat IDs for proactive notifications"
     )
+    enable_project_threads: bool = Field(
+        False,
+        description="Enable strict routing by Telegram forum project threads",
+    )
+    project_threads_mode: Literal["private", "group"] = Field(
+        "private",
+        description="Project thread mode: private chat topics or group forum topics",
+    )
+    project_threads_chat_id: Optional[int] = Field(
+        None, description="Telegram forum chat ID where project topics are managed"
+    )
+    projects_config_path: Optional[Path] = Field(
+        None, description="Path to YAML project registry for thread mode"
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
@@ -266,6 +280,49 @@ class Settings(BaseSettings):
             )
         return v  # type: ignore[no-any-return]
 
+    @field_validator("projects_config_path", mode="before")
+    @classmethod
+    def validate_projects_config_path(cls, v: Any) -> Optional[Path]:
+        """Validate projects config path if provided."""
+        if not v:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            v = Path(value)
+        if not v.exists():
+            raise ValueError(f"Projects config file does not exist: {v}")
+        if not v.is_file():
+            raise ValueError(f"Projects config path is not a file: {v}")
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("project_threads_mode", mode="before")
+    @classmethod
+    def validate_project_threads_mode(cls, v: Any) -> str:
+        """Validate project thread mode."""
+        if v is None:
+            return "private"
+        mode = str(v).strip().lower()
+        if mode not in {"private", "group"}:
+            raise ValueError("project_threads_mode must be one of ['private', 'group']")
+        return mode
+
+    @field_validator("project_threads_chat_id", mode="before")
+    @classmethod
+    def validate_project_threads_chat_id(cls, v: Any) -> Optional[int]:
+        """Allow empty chat ID for private mode by treating blank values as None."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            return int(value)
+        if isinstance(v, int):
+            return v
+        return v  # type: ignore[no-any-return]
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: Any) -> str:
@@ -287,6 +344,16 @@ class Settings(BaseSettings):
         # Check MCP requirements
         if self.enable_mcp and not self.mcp_config_path:
             raise ValueError("mcp_config_path required when enable_mcp is True")
+
+        if self.enable_project_threads:
+            if self.project_threads_mode == "group" and self.project_threads_chat_id is None:
+                raise ValueError(
+                    "project_threads_chat_id required when project_threads_mode is 'group'"
+                )
+            if not self.projects_config_path:
+                raise ValueError(
+                    "projects_config_path required when enable_project_threads is True"
+                )
 
         return self
 

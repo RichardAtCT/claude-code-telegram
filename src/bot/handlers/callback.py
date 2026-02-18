@@ -1,5 +1,8 @@
 """Handle inline keyboard callbacks."""
 
+from pathlib import Path
+from typing import Optional
+
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -11,6 +14,27 @@ from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
 
 logger = structlog.get_logger()
+
+
+def _is_within_root(path: Path, root: Path) -> bool:
+    """Check whether path is within root directory."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _get_thread_project_root(
+    settings: Settings, context: ContextTypes.DEFAULT_TYPE
+) -> Optional[Path]:
+    """Get thread project root when strict thread mode is active."""
+    if not settings.enable_project_threads:
+        return None
+    thread_context = context.user_data.get("_thread_context")
+    if not thread_context:
+        return None
+    return Path(thread_context["project_root"]).resolve()
 
 
 async def handle_callback_query(
@@ -87,22 +111,27 @@ async def handle_cd_callback(
     settings: Settings = context.bot_data["settings"]
     security_validator: SecurityValidator = context.bot_data.get("security_validator")
     audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    claude_integration: ClaudeIntegration = context.bot_data.get("claude_integration")
 
     try:
         current_dir = context.user_data.get(
             "current_directory", settings.approved_directory
         )
+        project_root = _get_thread_project_root(settings, context)
+        directory_root = project_root or settings.approved_directory
 
         # Handle special paths
         if project_name == "/":
-            new_path = settings.approved_directory
+            new_path = directory_root
         elif project_name == "..":
             new_path = current_dir.parent
-            # Ensure we don't go above approved directory
-            if not str(new_path).startswith(str(settings.approved_directory)):
-                new_path = settings.approved_directory
+            if not _is_within_root(new_path, directory_root):
+                new_path = directory_root
         else:
-            new_path = settings.approved_directory / project_name
+            if project_root:
+                new_path = current_dir / project_name
+            else:
+                new_path = settings.approved_directory / project_name
 
         # Validate path if security validator is available
         if security_validator:
@@ -119,6 +148,14 @@ async def handle_cd_callback(
             # Use the validated path
             new_path = resolved_path
 
+        if project_root and not _is_within_root(new_path, project_root):
+            await query.edit_message_text(
+                "❌ <b>Access Denied</b>\n\n"
+                "In thread mode, navigation is limited to the current project root.",
+                parse_mode="HTML",
+            )
+            return
+
         # Check if directory exists
         if not new_path.exists() or not new_path.is_dir():
             await query.edit_message_text(
@@ -128,12 +165,33 @@ async def handle_cd_callback(
             )
             return
 
-        # Update directory and clear session
+        # Update directory and resume session for that directory when available
         context.user_data["current_directory"] = new_path
-        context.user_data["claude_session_id"] = None
+
+        resumed_session_info = ""
+        if claude_integration:
+            existing_session = await claude_integration._find_resumable_session(
+                user_id, new_path
+            )
+            if existing_session:
+                context.user_data["claude_session_id"] = existing_session.session_id
+                resumed_session_info = (
+                    f"\n🔄 Resumed session <code>{escape_html(existing_session.session_id[:8])}...</code> "
+                    f"({existing_session.message_count} messages)"
+                )
+            else:
+                context.user_data["claude_session_id"] = None
+                resumed_session_info = (
+                    "\n🆕 No existing session. Send a message to start a new one."
+                )
+        else:
+            context.user_data["claude_session_id"] = None
+            resumed_session_info = "\n🆕 Send a message to start a new session."
 
         # Send confirmation with new directory info
-        relative_path = new_path.relative_to(settings.approved_directory)
+        relative_base = project_root or settings.approved_directory
+        relative_path = new_path.relative_to(relative_base)
+        relative_display = "/" if str(relative_path) == "." else f"{relative_path}/"
 
         # Add navigation buttons
         keyboard = [
@@ -154,8 +212,8 @@ async def handle_cd_callback(
 
         await query.edit_message_text(
             f"✅ <b>Directory Changed</b>\n\n"
-            f"📂 Current directory: <code>{escape_html(str(relative_path))}/</code>\n\n"
-            f"🔄 Claude session cleared. You can now start coding in this directory!",
+            f"📂 Current directory: <code>{escape_html(str(relative_display))}</code>"
+            f"{resumed_session_info}",
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
@@ -270,6 +328,39 @@ async def _handle_show_projects_action(
     settings: Settings = context.bot_data["settings"]
 
     try:
+        if settings.enable_project_threads:
+            registry = context.bot_data.get("project_registry")
+            if not registry:
+                await query.edit_message_text(
+                    "❌ <b>Project registry is not initialized.</b>",
+                    parse_mode="HTML",
+                )
+                return
+
+            projects = registry.list_enabled()
+            if not projects:
+                await query.edit_message_text(
+                    "📁 <b>No Projects Found</b>\n\n"
+                    "No enabled projects found in projects config.",
+                    parse_mode="HTML",
+                )
+                return
+
+            project_list = "\n".join(
+                [
+                    f"• <b>{escape_html(p.name)}</b> "
+                    f"(<code>{escape_html(p.slug)}</code>) "
+                    f"→ <code>{escape_html(str(p.relative_path))}</code>"
+                    for p in projects
+                ]
+            )
+
+            await query.edit_message_text(
+                f"📁 <b>Configured Projects</b>\n\n{project_list}",
+                parse_mode="HTML",
+            )
+            return
+
         # Get directories in approved directory
         projects = []
         for item in sorted(settings.approved_directory.iterdir()):

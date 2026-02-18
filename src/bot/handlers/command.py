@@ -1,11 +1,15 @@
 """Command handlers for bot operations."""
 
+from pathlib import Path
+from typing import Optional
+
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ...claude.facade import ClaudeIntegration
 from ...config.settings import Settings
+from ...projects import PrivateTopicsUnavailableError, load_project_registry
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
@@ -13,9 +17,95 @@ from ..utils.html_format import escape_html
 logger = structlog.get_logger()
 
 
+def _is_within_root(path: Path, root: Path) -> bool:
+    """Check whether path is within root directory."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _get_thread_project_root(
+    settings: Settings, context: ContextTypes.DEFAULT_TYPE
+) -> Optional[Path]:
+    """Get thread project root when strict thread mode is active."""
+    if not settings.enable_project_threads:
+        return None
+    thread_context = context.user_data.get("_thread_context")
+    if not thread_context:
+        return None
+    return Path(thread_context["project_root"]).resolve()
+
+
+def _is_private_chat(update: Update) -> bool:
+    """Return True when update is from a private chat."""
+    chat = update.effective_chat
+    return bool(chat and getattr(chat, "type", "") == "private")
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     user = update.effective_user
+    settings: Settings = context.bot_data["settings"]
+    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    manager = context.bot_data.get("project_threads_manager")
+    sync_section = ""
+
+    if settings.enable_project_threads and settings.project_threads_mode == "private":
+        if not _is_private_chat(update):
+            await update.message.reply_text(
+                "🚫 <b>Private Topics Mode</b>\n\n"
+                "Use this bot in a private chat and run <code>/start</code> there.",
+                parse_mode="HTML",
+            )
+            return
+
+    if (
+        settings.enable_project_threads
+        and settings.project_threads_mode == "private"
+        and _is_private_chat(update)
+    ):
+        if manager is None:
+            await update.message.reply_text(
+                "❌ <b>Project thread mode is misconfigured</b>\n\n"
+                "Thread manager is not initialized.",
+                parse_mode="HTML",
+            )
+            return
+
+        try:
+            sync_result = await manager.sync_topics(
+                context.bot,
+                chat_id=update.effective_chat.id,
+            )
+            sync_section = (
+                "\n\n🧵 <b>Project Topics Synced</b>\n"
+                f"• Created: <b>{sync_result.created}</b>\n"
+                f"• Reused: <b>{sync_result.reused}</b>\n"
+                f"• Renamed: <b>{sync_result.renamed}</b>\n"
+                f"• Failed: <b>{sync_result.failed}</b>\n\n"
+                "Use a project topic thread to start coding."
+            )
+        except PrivateTopicsUnavailableError:
+            await update.message.reply_text(
+                manager.private_topics_unavailable_message(),
+                parse_mode="HTML",
+            )
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=user.id,
+                    command="start",
+                    args=[],
+                    success=False,
+                )
+            return
+        except Exception as e:
+            sync_section = (
+                "\n\n⚠️ <b>Topic Sync Warning</b>\n"
+                f"{escape_html(str(e))}\n\n"
+                "Run <code>/sync_threads</code> to retry."
+            )
 
     welcome_message = (
         f"👋 Welcome to Claude Code Telegram Bot, {escape_html(user.first_name)}!\n\n"
@@ -35,6 +125,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"3. Send any message to start coding with Claude!\n\n"
         f"🔒 Your access is secured and all actions are logged.\n"
         f"📊 Use <code>/status</code> to check your usage limits."
+        f"{sync_section}"
     )
 
     # Add quick action buttons
@@ -57,7 +148,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
     # Log command
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
     if audit_logger:
         await audit_logger.log_command(
             user_id=user.id, command="start", args=[], success=True
@@ -109,6 +199,94 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
     await update.message.reply_text(help_text, parse_mode="HTML")
+
+
+async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Synchronize project topics in the configured forum chat."""
+    settings: Settings = context.bot_data["settings"]
+    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    user_id = update.effective_user.id
+
+    if not settings.enable_project_threads:
+        await update.message.reply_text(
+            "ℹ️ <b>Project thread mode is disabled.</b>", parse_mode="HTML"
+        )
+        return
+
+    manager = context.bot_data.get("project_threads_manager")
+    if not manager:
+        await update.message.reply_text(
+            "❌ <b>Project thread manager not initialized.</b>", parse_mode="HTML"
+        )
+        return
+
+    status_msg = await update.message.reply_text(
+        "🔄 <b>Syncing project topics...</b>", parse_mode="HTML"
+    )
+
+    if settings.project_threads_mode == "private":
+        if not _is_private_chat(update):
+            await status_msg.edit_text(
+                "❌ <b>Private Thread Mode</b>\n\n"
+                "Run <code>/sync_threads</code> in your private chat with the bot.",
+                parse_mode="HTML",
+            )
+            return
+        target_chat_id = update.effective_chat.id
+    else:
+        if settings.project_threads_chat_id is None:
+            await status_msg.edit_text(
+                "❌ <b>Group Thread Mode Misconfigured</b>\n\n"
+                "Set <code>PROJECT_THREADS_CHAT_ID</code> first.",
+                parse_mode="HTML",
+            )
+            return
+        target_chat_id = settings.project_threads_chat_id
+
+    try:
+        if not settings.projects_config_path:
+            await status_msg.edit_text(
+                "❌ <b>Project thread mode is misconfigured</b>\n\n"
+                "Set <code>PROJECTS_CONFIG_PATH</code> to a valid YAML file.",
+                parse_mode="HTML",
+            )
+            if audit_logger:
+                await audit_logger.log_command(user_id, "sync_threads", [], False)
+            return
+
+        registry = load_project_registry(
+            config_path=settings.projects_config_path,
+            approved_directory=settings.approved_directory,
+        )
+        manager.registry = registry
+        context.bot_data["project_registry"] = registry
+
+        result = await manager.sync_topics(context.bot, chat_id=target_chat_id)
+        await status_msg.edit_text(
+            "✅ <b>Project topic sync complete</b>\n\n"
+            f"• Created: <b>{result.created}</b>\n"
+            f"• Reused: <b>{result.reused}</b>\n"
+            f"• Renamed: <b>{result.renamed}</b>\n"
+            f"• Deactivated: <b>{result.deactivated}</b>\n"
+            f"• Failed: <b>{result.failed}</b>",
+            parse_mode="HTML",
+        )
+        if audit_logger:
+            await audit_logger.log_command(user_id, "sync_threads", [], True)
+    except PrivateTopicsUnavailableError:
+        await status_msg.edit_text(
+            manager.private_topics_unavailable_message(),
+            parse_mode="HTML",
+        )
+        if audit_logger:
+            await audit_logger.log_command(user_id, "sync_threads", [], False)
+    except Exception as e:
+        await status_msg.edit_text(
+            f"❌ <b>Project topic sync failed</b>\n\n{escape_html(str(e))}",
+            parse_mode="HTML",
+        )
+        if audit_logger:
+            await audit_logger.log_command(user_id, "sync_threads", [], False)
 
 
 async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -433,37 +611,49 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
+    project_root = _get_thread_project_root(settings, context)
+    directory_root = project_root or settings.approved_directory
 
     try:
-        # Validate path using security validator
-        if security_validator:
-            valid, resolved_path, error = security_validator.validate_path(
-                target_path, current_dir
-            )
-
-            if not valid:
-                await update.message.reply_text(f"❌ <b>Access Denied</b>\n\n{error}")
-
-                # Log security violation
-                if audit_logger:
-                    await audit_logger.log_security_violation(
-                        user_id=user_id,
-                        violation_type="path_traversal_attempt",
-                        details=f"Attempted path: {target_path}",
-                        severity="medium",
-                    )
-                return
+        # Handle known navigation shortcuts first
+        if target_path == "/":
+            resolved_path = directory_root
+        elif target_path == "..":
+            resolved_path = current_dir.parent
+            if not _is_within_root(resolved_path, directory_root):
+                resolved_path = directory_root
         else:
-            # Fallback validation without security validator
-            if target_path == "/":
-                resolved_path = settings.approved_directory
-            elif target_path == "..":
-                resolved_path = current_dir.parent
-                if not str(resolved_path).startswith(str(settings.approved_directory)):
-                    resolved_path = settings.approved_directory
+            # Validate path using security validator
+            if security_validator:
+                valid, resolved_path, error = security_validator.validate_path(
+                    target_path, current_dir
+                )
+
+                if not valid:
+                    await update.message.reply_text(
+                        f"❌ <b>Access Denied</b>\n\n{error}"
+                    )
+
+                    # Log security violation
+                    if audit_logger:
+                        await audit_logger.log_security_violation(
+                            user_id=user_id,
+                            violation_type="path_traversal_attempt",
+                            details=f"Attempted path: {target_path}",
+                            severity="medium",
+                        )
+                    return
             else:
                 resolved_path = current_dir / target_path
                 resolved_path = resolved_path.resolve()
+
+        if project_root and not _is_within_root(resolved_path, project_root):
+            await update.message.reply_text(
+                "❌ <b>Access Denied</b>\n\n"
+                "In thread mode, navigation is limited to the current project root.",
+                parse_mode="HTML",
+            )
+            return
 
         # Check if directory exists and is actually a directory
         if not resolved_path.exists():
@@ -504,10 +694,12 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 )
 
         # Send confirmation
-        relative_path = resolved_path.relative_to(settings.approved_directory)
+        relative_base = project_root or settings.approved_directory
+        relative_path = resolved_path.relative_to(relative_base)
+        relative_display = "/" if str(relative_path) == "." else f"{relative_path}/"
         await update.message.reply_text(
             f"✅ <b>Directory Changed</b>\n\n"
-            f"📂 Current directory: <code>{relative_path}/</code>"
+            f"📂 Current directory: <code>{relative_display}</code>"
             f"{resumed_session_info}",
             parse_mode="HTML",
         )
@@ -562,6 +754,42 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     settings: Settings = context.bot_data["settings"]
 
     try:
+        if settings.enable_project_threads:
+            registry = context.bot_data.get("project_registry")
+            manager = context.bot_data.get("project_threads_manager")
+            if manager and getattr(manager, "registry", None):
+                registry = manager.registry
+            if not registry:
+                await update.message.reply_text(
+                    "❌ <b>Project registry is not initialized.</b>",
+                    parse_mode="HTML",
+                )
+                return
+
+            projects = registry.list_enabled()
+            if not projects:
+                await update.message.reply_text(
+                    "📁 <b>No Projects Found</b>\n\n"
+                    "No enabled projects found in projects config.",
+                    parse_mode="HTML",
+                )
+                return
+
+            project_list = "\n".join(
+                [
+                    f"• <b>{escape_html(p.name)}</b> "
+                    f"(<code>{escape_html(p.slug)}</code>) "
+                    f"→ <code>{escape_html(str(p.relative_path))}</code>"
+                    for p in projects
+                ]
+            )
+
+            await update.message.reply_text(
+                f"📁 <b>Configured Projects</b>\n\n{project_list}",
+                parse_mode="HTML",
+            )
+            return
+
         # Get directories in approved directory (these are "projects")
         projects = []
         for item in sorted(settings.approved_directory.iterdir()):

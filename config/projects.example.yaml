@@ -1,0 +1,10 @@
+projects:
+  - slug: claude-code-telegram
+    name: Claude Code Telegram
+    path: claude-code-telegram-main
+    enabled: true
+
+  - slug: infra
+    name: Infrastructure
+    path: infrastructure
+    enabled: true
