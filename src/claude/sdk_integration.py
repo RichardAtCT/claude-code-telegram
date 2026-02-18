@@ -177,6 +177,15 @@ class ClaudeSDKManager:
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
                 cli_path=cli_path,
+                sandbox={
+                    "enabled": self.config.sandbox_enabled,
+                    "autoAllowBashIfSandboxed": True,
+                    "excludedCommands": self.config.sandbox_excluded_commands or [],
+                },
+                system_prompt=(
+                    f"All file operations must stay within {working_directory}. "
+                    "Use relative paths."
+                ),
             )
 
             # Pass MCP server configuration if enabled

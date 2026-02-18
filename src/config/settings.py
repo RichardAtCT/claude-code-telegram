@@ -98,6 +98,16 @@ class Settings(BaseSettings):
         description="List of explicitly disallowed Claude tools/commands",
     )
 
+    # Sandbox settings
+    sandbox_enabled: bool = Field(
+        True,
+        description="Enable OS-level bash sandboxing to restrict commands to approved directory",
+    )
+    sandbox_excluded_commands: Optional[List[str]] = Field(
+        default=["git", "npm", "pip", "poetry", "make", "docker"],
+        description="Commands that run outside the sandbox (need system access)",
+    )
+
     # Rate limiting
     rate_limit_requests: int = Field(
         DEFAULT_RATE_LIMIT_REQUESTS, description="Requests per window"

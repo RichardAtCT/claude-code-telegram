@@ -120,7 +120,7 @@ class ClaudeIntegration:
                         )
 
                         # For critical tools, we should fail fast
-                        if tool_name in ["Task", "Read", "Write", "Edit"]:
+                        if tool_name in ["Task", "Read", "Write", "Edit", "Bash"]:
                             # Create comprehensive error message
                             admin_instructions = self._get_admin_instructions(
                                 list(blocked_tools)

@@ -4,11 +4,13 @@ Features:
 - Track tool calls
 - Security validation
 - Usage analytics
+- Bash directory boundary enforcement
 """
 
+import shlex
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import structlog
 
@@ -16,6 +18,106 @@ from ..config.settings import Settings
 from ..security.validators import SecurityValidator
 
 logger = structlog.get_logger()
+
+# Commands that modify the filesystem and should have paths checked
+_FS_MODIFYING_COMMANDS: Set[str] = {
+    "mkdir",
+    "touch",
+    "cp",
+    "mv",
+    "rm",
+    "rmdir",
+    "ln",
+    "install",
+    "tee",
+}
+
+# Commands that are read-only or don't take filesystem paths
+_READ_ONLY_COMMANDS: Set[str] = {
+    "cat",
+    "ls",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "find",
+    "which",
+    "whoami",
+    "pwd",
+    "echo",
+    "printf",
+    "env",
+    "printenv",
+    "date",
+    "wc",
+    "sort",
+    "uniq",
+    "diff",
+    "file",
+    "stat",
+    "du",
+    "df",
+    "tree",
+    "realpath",
+    "dirname",
+    "basename",
+}
+
+
+def check_bash_directory_boundary(
+    command: str,
+    working_directory: Path,
+    approved_directory: Path,
+) -> Tuple[bool, Optional[str]]:
+    """Check if a bash command's absolute paths stay within the approved directory.
+
+    Returns (True, None) if the command is safe, or (False, error_message) if it
+    attempts to write outside the approved directory boundary.
+    """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # If we can't parse the command, let it through —
+        # the sandbox will catch it at the OS level
+        return True, None
+
+    if not tokens:
+        return True, None
+
+    base_command = Path(tokens[0]).name
+
+    # Read-only commands are always allowed
+    if base_command in _READ_ONLY_COMMANDS:
+        return True, None
+
+    # Only check filesystem-modifying commands
+    if base_command not in _FS_MODIFYING_COMMANDS:
+        return True, None
+
+    # Check each argument for absolute paths outside the boundary
+    resolved_approved = approved_directory.resolve()
+
+    for token in tokens[1:]:
+        # Skip flags
+        if token.startswith("-"):
+            continue
+
+        # Only check absolute paths — relative paths resolve from cwd
+        # which is already set to the approved directory
+        if not token.startswith("/"):
+            continue
+
+        try:
+            resolved = Path(token).resolve()
+            resolved.relative_to(resolved_approved)
+        except ValueError:
+            return False, (
+                f"Directory boundary violation: '{base_command}' targets "
+                f"'{token}' which is outside approved directory "
+                f"'{resolved_approved}'"
+            )
+
+    return True, None
 
 
 class ToolMonitor:
@@ -144,6 +246,23 @@ class ToolMonitor:
                     self.security_violations.append(violation)
                     logger.warning("Dangerous command detected", **violation)
                     return False, f"Dangerous command pattern detected: {pattern}"
+
+            # Check directory boundary for filesystem-modifying commands
+            valid, error = check_bash_directory_boundary(
+                command, working_directory, self.config.approved_directory
+            )
+            if not valid:
+                violation = {
+                    "type": "directory_boundary_violation",
+                    "tool_name": tool_name,
+                    "command": command,
+                    "user_id": user_id,
+                    "working_directory": str(working_directory),
+                    "error": error,
+                }
+                self.security_violations.append(violation)
+                logger.warning("Directory boundary violation", **violation)
+                return False, error
 
         # Track usage
         self.tool_usage[tool_name] += 1
