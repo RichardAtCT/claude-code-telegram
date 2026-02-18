@@ -10,6 +10,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ResultMessage,
     TextBlock,
+    ToolUseBlock,
 )
 
 from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
@@ -266,6 +267,30 @@ class TestClaudeSDKManager:
         # Verify MCP config was NOT set (should be empty default)
         assert len(captured_options) == 1
         assert captured_options[0].mcp_servers == {}
+
+    async def test_handle_stream_message_emits_tool_calls(self, sdk_manager):
+        """_handle_stream_message should emit tool_calls for ToolUseBlock."""
+        callback = AsyncMock()
+
+        # Create an AssistantMessage with a ToolUseBlock
+        tool_block = MagicMock(spec=ToolUseBlock)
+        tool_block.tool_name = "Read"
+        tool_block.tool_input = {"file_path": "/test.py"}
+        tool_block.id = "tool_123"
+        # Ensure hasattr(block, "text") returns False for ToolUseBlock mock
+        del tool_block.text
+
+        message = MagicMock(spec=AssistantMessage)
+        message.content = [tool_block]
+
+        await sdk_manager._handle_stream_message(message, callback)
+
+        callback.assert_called_once()
+        update = callback.call_args.args[0]
+        assert update.tool_calls is not None
+        assert len(update.tool_calls) == 1
+        assert update.tool_calls[0]["name"] == "Read"
+        assert update.tool_calls[0]["input"] == {"file_path": "/test.py"}
 
 
 class TestClaudeMCPErrors:
