@@ -11,6 +11,21 @@ from typing import Any, Dict, Optional
 import aiosqlite
 
 
+def _parse_datetime(value: Any) -> Any:
+    """Parse datetime values from SQLite rows.
+
+    With sqlite3 converters enabled, values may already be datetime instances.
+    Without converters, values may be ISO strings.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return value
+
+
 @dataclass
 class UserModel:
     """User data model."""
@@ -40,8 +55,7 @@ class UserModel:
 
         # Parse datetime fields
         for field in ["first_seen", "last_active"]:
-            if data.get(field):
-                data[field] = datetime.fromisoformat(data[field])
+            data[field] = _parse_datetime(data.get(field))
 
         return cls(**data)
 
@@ -76,8 +90,7 @@ class SessionModel:
 
         # Parse datetime fields
         for field in ["created_at", "last_used"]:
-            if data.get(field):
-                data[field] = datetime.fromisoformat(data[field])
+            data[field] = _parse_datetime(data.get(field))
 
         return cls(**data)
 
@@ -118,8 +131,7 @@ class MessageModel:
         data = dict(row)
 
         # Parse datetime fields
-        if data.get("timestamp"):
-            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        data["timestamp"] = _parse_datetime(data.get("timestamp"))
 
         return cls(**data)
 
@@ -154,8 +166,7 @@ class ToolUsageModel:
         data = dict(row)
 
         # Parse datetime fields
-        if data.get("timestamp"):
-            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        data["timestamp"] = _parse_datetime(data.get("timestamp"))
 
         # Parse JSON fields
         if data.get("tool_input"):
@@ -196,8 +207,7 @@ class AuditLogModel:
         data = dict(row)
 
         # Parse datetime fields
-        if data.get("timestamp"):
-            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        data["timestamp"] = _parse_datetime(data.get("timestamp"))
 
         # Parse JSON fields
         if data.get("event_data"):
@@ -257,8 +267,7 @@ class UserTokenModel:
 
         # Parse datetime fields
         for field in ["created_at", "expires_at", "last_used"]:
-            if data.get(field):
-                data[field] = datetime.fromisoformat(data[field])
+            data[field] = _parse_datetime(data.get(field))
 
         return cls(**data)
 
