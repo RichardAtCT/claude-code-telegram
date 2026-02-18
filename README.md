@@ -80,18 +80,35 @@ The bot supports two interaction modes:
 
 The default conversational mode. Just talk to Claude naturally -- no special commands required.
 
-**Commands:** `/start`, `/new`, `/status`
+**Commands:** `/start`, `/new`, `/status`, `/verbose`
 
 ```
 You: What files are in this project?
-Bot: [Claude explores the directory and describes the project structure]
+Bot: Working... (3s)
+     📖 Read
+     📂 LS
+     💬 Let me describe the project structure
+Bot: [Claude describes the project structure]
 
 You: Add a retry decorator to the HTTP client
-Bot: [Claude reads the code, writes the decorator, and updates the imports]
+Bot: Working... (8s)
+     📖 Read: http_client.py
+     💬 I'll add a retry decorator with exponential backoff
+     ✏️ Edit: http_client.py
+     💻 Bash: poetry run pytest tests/ -v
+Bot: [Claude shows the changes and test results]
 
-You: /new
-Bot: Session cleared. Send a message to start fresh.
+You: /verbose 0
+Bot: Verbosity set to 0 (quiet)
 ```
+
+Use `/verbose 0|1|2` to control how much background activity is shown:
+
+| Level | Shows |
+|-------|-------|
+| **0** (quiet) | Final response only (typing indicator stays active) |
+| **1** (normal, default) | Tool names + reasoning snippets in real-time |
+| **2** (detailed) | Tool names with inputs + longer reasoning text |
 
 ### Classic Mode
 
@@ -144,9 +161,11 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 - Job scheduler with cron expressions and persistent storage
 - Notification service with per-chat rate limiting
 
+- Tunable verbose output showing Claude's tool usage and reasoning in real-time
+- Persistent typing indicator so users always know the bot is working
+
 ### Planned Enhancements
 
-- True streaming responses with real-time updates
 - Plugin system for third-party extensions
 
 ## Configuration
@@ -171,6 +190,7 @@ CLAUDE_TIMEOUT_SECONDS=300       # Operation timeout
 
 # Mode
 AGENTIC_MODE=true                # Agentic (default) or classic mode
+VERBOSE_LEVEL=1                  # 0=quiet, 1=normal (default), 2=detailed
 
 # Rate Limiting
 RATE_LIMIT_REQUESTS=10           # Requests per window
