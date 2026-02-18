@@ -388,7 +388,7 @@ class ClaudeSDKManager:
                         if isinstance(block, ToolUseBlock):
                             tool_calls.append(
                                 {
-                                    "name": getattr(block, "tool_name", "unknown"),
+                                    "name": getattr(block, "name", "unknown"),
                                     "input": getattr(block, "tool_input", {}),
                                     "id": getattr(block, "id", None),
                                 }
@@ -456,7 +456,7 @@ class ClaudeSDKManager:
                         if isinstance(block, ToolUseBlock):
                             tools_used.append(
                                 {
-                                    "name": getattr(block, "tool_name", "unknown"),
+                                    "name": getattr(block, "name", "unknown"),
                                     "timestamp": current_time,
                                     "input": getattr(block, "tool_input", {}),
                                 }
