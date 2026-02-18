@@ -355,6 +355,59 @@ class TestProjectThreadRepository:
         assert inactive_mapping is not None
         assert inactive_mapping.is_active is False
 
+    async def test_list_stale_active_mappings(self, project_thread_repo):
+        """Returns only active mappings not in enabled project set."""
+        await project_thread_repo.upsert_mapping(
+            project_slug="app1",
+            chat_id=-1001234567890,
+            message_thread_id=111,
+            topic_name="App 1",
+            is_active=True,
+        )
+        await project_thread_repo.upsert_mapping(
+            project_slug="app2",
+            chat_id=-1001234567890,
+            message_thread_id=222,
+            topic_name="App 2",
+            is_active=True,
+        )
+        await project_thread_repo.upsert_mapping(
+            project_slug="app3",
+            chat_id=-1001234567890,
+            message_thread_id=333,
+            topic_name="App 3",
+            is_active=False,
+        )
+
+        stale = await project_thread_repo.list_stale_active_mappings(
+            chat_id=-1001234567890,
+            active_project_slugs=["app1"],
+        )
+
+        assert len(stale) == 1
+        assert stale[0].project_slug == "app2"
+
+    async def test_set_active_updates_flag(self, project_thread_repo):
+        """set_active toggles mapping active flag."""
+        await project_thread_repo.upsert_mapping(
+            project_slug="app1",
+            chat_id=-1001234567890,
+            message_thread_id=111,
+            topic_name="App 1",
+            is_active=True,
+        )
+
+        changed = await project_thread_repo.set_active(
+            chat_id=-1001234567890,
+            project_slug="app1",
+            is_active=False,
+        )
+
+        assert changed == 1
+        mapping = await project_thread_repo.get_by_chat_project(-1001234567890, "app1")
+        assert mapping is not None
+        assert mapping.is_active is False
+
 
 class TestToolUsageRepository:
     """Test tool usage repository."""

@@ -100,6 +100,8 @@ async def test_start_private_mode_triggers_auto_sync(thread_settings):
             created=1,
             reused=1,
             renamed=0,
+            reopened=0,
+            closed=0,
             failed=0,
             deactivated=0,
         )
@@ -169,6 +171,8 @@ async def test_sync_threads_reloads_registry_from_yaml(thread_settings, monkeypa
             created=0,
             reused=2,
             renamed=0,
+            reopened=0,
+            closed=0,
             deactivated=0,
             failed=0,
         )
@@ -206,3 +210,53 @@ async def test_sync_threads_reloads_registry_from_yaml(thread_settings, monkeypa
     assert manager.registry is new_registry
     assert context.bot_data["project_registry"] is new_registry
     manager.sync_topics.assert_called_once()
+
+
+async def test_sync_threads_group_mode_rejects_non_target_chat(tmp_path: Path):
+    """sync_threads in group mode must be called from configured target chat."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+    project_root = approved / "project_a"
+    project_root.mkdir()
+
+    config_file = tmp_path / "projects.yaml"
+    config_file.write_text(
+        "projects:\n"
+        "  - slug: project_a\n"
+        "    name: Project A\n"
+        "    path: project_a\n",
+        encoding="utf-8",
+    )
+
+    settings = create_test_config(
+        approved_directory=str(approved),
+        enable_project_threads=True,
+        project_threads_mode="group",
+        project_threads_chat_id=-10012345,
+        projects_config_path=str(config_file),
+    )
+
+    manager = AsyncMock()
+    manager.sync_topics = AsyncMock()
+
+    status_msg = AsyncMock()
+    status_msg.edit_text = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 1
+    update.effective_chat.id = -10099999
+    update.message.reply_text = AsyncMock(return_value=status_msg)
+
+    context = MagicMock()
+    context.bot = AsyncMock()
+    context.bot_data = {
+        "settings": settings,
+        "audit_logger": None,
+        "project_threads_manager": manager,
+    }
+    context.user_data = {}
+
+    await command.sync_threads(update, context)
+
+    manager.sync_topics.assert_not_called()
+    status_msg.edit_text.assert_called_once()

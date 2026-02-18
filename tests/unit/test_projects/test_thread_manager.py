@@ -62,6 +62,9 @@ async def test_sync_topics_idempotent(tmp_path: Path, db_manager) -> None:
     bot.create_forum_topic = AsyncMock(
         return_value=SimpleNamespace(message_thread_id=101)
     )
+    bot.send_message = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
+    bot.close_forum_topic = AsyncMock()
     bot.edit_forum_topic = AsyncMock()
 
     first = await manager.sync_topics(bot, chat_id=-1001234567890)
@@ -113,6 +116,9 @@ async def test_sync_deactivates_stale_projects(tmp_path: Path, db_manager) -> No
             SimpleNamespace(message_thread_id=102),
         ]
     )
+    bot.send_message = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
+    bot.close_forum_topic = AsyncMock()
     bot.edit_forum_topic = AsyncMock()
 
     await manager.sync_topics(bot, chat_id=-1001234567890)
@@ -133,8 +139,13 @@ async def test_sync_deactivates_stale_projects(tmp_path: Path, db_manager) -> No
 
     app2 = [m for m in mappings if m.project_slug == "app2"]
     assert result.deactivated == 1
+    assert result.closed == 1
     assert app2
     assert app2[0].is_active is False
+    bot.close_forum_topic.assert_called_once_with(
+        chat_id=-1001234567890,
+        message_thread_id=102,
+    )
 
 
 async def test_sync_private_topics_unavailable_raises(tmp_path: Path, db_manager) -> None:
@@ -187,6 +198,7 @@ async def test_sync_renames_existing_topic_and_updates_mapping(
     manager = ProjectThreadManager(registry, repo)
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
     bot.edit_forum_topic = AsyncMock()
 
     result = await manager.sync_topics(bot, chat_id=42)
@@ -229,6 +241,7 @@ async def test_sync_rename_failure_keeps_old_mapping_for_retry(
     manager = ProjectThreadManager(registry, repo)
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
     bot.edit_forum_topic = AsyncMock(side_effect=TelegramError("rename failed"))
 
     result = await manager.sync_topics(bot, chat_id=42)
@@ -271,6 +284,7 @@ async def test_sync_reused_mapping_skips_rename_when_name_matches(
     manager = ProjectThreadManager(registry, repo)
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
     bot.edit_forum_topic = AsyncMock()
 
     result = await manager.sync_topics(bot, chat_id=42)
@@ -304,3 +318,135 @@ async def test_sync_create_sends_bootstrap_message(tmp_path: Path, db_manager) -
     kwargs = bot.send_message.call_args.kwargs
     assert kwargs["chat_id"] == 42
     assert kwargs["message_thread_id"] == 101
+
+
+async def test_sync_recreates_active_mapping_when_topic_unusable(
+    tmp_path: Path, db_manager
+) -> None:
+    """Active mapping with unusable topic is recreated and remapped."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+    (approved / "app1").mkdir()
+
+    config_file = tmp_path / "projects.yaml"
+    config_file.write_text(
+        "projects:\n"
+        "  - slug: app1\n"
+        "    name: App One\n"
+        "    path: app1\n",
+        encoding="utf-8",
+    )
+    registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    await repo.upsert_mapping(
+        project_slug="app1",
+        chat_id=42,
+        message_thread_id=1001,
+        topic_name="App One",
+        is_active=True,
+    )
+
+    manager = ProjectThreadManager(registry, repo)
+    bot = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock(
+        side_effect=TelegramError("Bad Request: topic deleted")
+    )
+    bot.create_forum_topic = AsyncMock(
+        return_value=SimpleNamespace(message_thread_id=2002)
+    )
+    bot.send_message = AsyncMock()
+
+    result = await manager.sync_topics(bot, chat_id=42)
+    mapping = await repo.get_by_chat_project(42, "app1")
+
+    assert result.created == 1
+    assert result.reused == 0
+    assert mapping is not None
+    assert mapping.message_thread_id == 2002
+
+
+async def test_sync_reopen_inactive_mapping(tmp_path: Path, db_manager) -> None:
+    """Inactive mapping is reopened and reactivated when project returns."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+    (approved / "app1").mkdir()
+
+    config_file = tmp_path / "projects.yaml"
+    config_file.write_text(
+        "projects:\n"
+        "  - slug: app1\n"
+        "    name: App One\n"
+        "    path: app1\n",
+        encoding="utf-8",
+    )
+    registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    await repo.upsert_mapping(
+        project_slug="app1",
+        chat_id=42,
+        message_thread_id=1001,
+        topic_name="App One",
+        is_active=False,
+    )
+
+    manager = ProjectThreadManager(registry, repo)
+    bot = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
+    bot.edit_forum_topic = AsyncMock()
+
+    result = await manager.sync_topics(bot, chat_id=42)
+    mapping = await repo.get_by_chat_project(42, "app1")
+
+    assert result.reopened == 1
+    assert result.reused == 1
+    assert mapping is not None
+    assert mapping.is_active is True
+
+
+async def test_sync_reopen_unusable_inactive_mapping_recreates(
+    tmp_path: Path, db_manager
+) -> None:
+    """Inactive mapping with dead topic is recreated."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+    (approved / "app1").mkdir()
+
+    config_file = tmp_path / "projects.yaml"
+    config_file.write_text(
+        "projects:\n"
+        "  - slug: app1\n"
+        "    name: App One\n"
+        "    path: app1\n",
+        encoding="utf-8",
+    )
+    registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    await repo.upsert_mapping(
+        project_slug="app1",
+        chat_id=42,
+        message_thread_id=1001,
+        topic_name="App One",
+        is_active=False,
+    )
+
+    manager = ProjectThreadManager(registry, repo)
+    bot = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock(
+        side_effect=TelegramError("Bad Request: message thread not found")
+    )
+    bot.create_forum_topic = AsyncMock(
+        return_value=SimpleNamespace(message_thread_id=3003)
+    )
+    bot.send_message = AsyncMock()
+
+    result = await manager.sync_topics(bot, chat_id=42)
+    mapping = await repo.get_by_chat_project(42, "app1")
+
+    assert result.created == 1
+    assert result.reopened == 0
+    assert mapping is not None
+    assert mapping.is_active is True
+    assert mapping.message_thread_id == 3003

@@ -695,6 +695,54 @@ async def test_private_mode_start_bypasses_thread_gate(
     await wrapped(update, context)
 
     assert called["value"] is True
+    project_threads_manager.resolve_project.assert_not_called()
+
+
+async def test_private_mode_start_inside_topic_uses_thread_context(
+    private_thread_settings, deps
+):
+    """/start in private topic should load mapped thread context."""
+    orchestrator = MessageOrchestrator(private_thread_settings, deps)
+    project_path = private_thread_settings.approved_directory / "project_a"
+    project = SimpleNamespace(
+        slug="project_a",
+        name="Project A",
+        absolute_path=project_path,
+    )
+    project_threads_manager = MagicMock()
+    project_threads_manager.resolve_project = AsyncMock(return_value=project)
+    project_threads_manager.guidance_message.return_value = "Use project topic"
+    deps["project_threads_manager"] = project_threads_manager
+
+    captured = {"dir": None}
+
+    async def start_command(update, context):
+        captured["dir"] = context.user_data.get("current_directory")
+
+    wrapped = orchestrator._inject_deps(start_command)
+
+    update = MagicMock()
+    update.effective_chat.type = "private"
+    update.effective_chat.id = 12345
+    update.effective_message.message_thread_id = 777
+    update.effective_message.reply_text = AsyncMock()
+    update.callback_query = None
+
+    context = MagicMock()
+    context.bot_data = {}
+    context.user_data = {
+        "thread_state": {
+            "12345:777": {
+                "current_directory": str(project_path),
+                "claude_session_id": "old",
+            }
+        }
+    }
+
+    await wrapped(update, context)
+
+    project_threads_manager.resolve_project.assert_awaited_once_with(12345, 777)
+    assert captured["dir"] == project_path
 
 
 async def test_private_mode_rejects_help_outside_topics(private_thread_settings, deps):

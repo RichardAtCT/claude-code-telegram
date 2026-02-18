@@ -27,6 +27,8 @@ class TopicSyncResult:
     renamed: int = 0
     failed: int = 0
     deactivated: int = 0
+    closed: int = 0
+    reopened: int = 0
 
 
 class ProjectThreadManager:
@@ -55,48 +57,21 @@ class ProjectThreadManager:
                 )
 
                 if existing:
-                    result.reused += 1
-                    topic_name = existing.topic_name
-                    if existing.topic_name != project.name:
-                        renamed = await self._rename_topic_if_possible(
-                            bot=bot,
-                            mapping=existing,
-                            target_name=project.name,
-                        )
-                        if renamed:
-                            result.renamed += 1
-                            topic_name = project.name
-                        else:
-                            result.failed += 1
-
-                    await self.repository.upsert_mapping(
-                        project_slug=project.slug,
-                        chat_id=chat_id,
-                        message_thread_id=existing.message_thread_id,
-                        topic_name=topic_name,
-                        is_active=True,
+                    handled = await self._sync_existing_mapping(
+                        bot=bot,
+                        project=project,
+                        mapping=existing,
+                        result=result,
                     )
-                    continue
+                    if handled:
+                        continue
 
-                topic = await bot.create_forum_topic(
-                    chat_id=chat_id,
-                    name=project.name,
-                )
-
-                await self.repository.upsert_mapping(
-                    project_slug=project.slug,
-                    chat_id=chat_id,
-                    message_thread_id=topic.message_thread_id,
-                    topic_name=project.name,
-                    is_active=True,
-                )
-                await self._send_topic_bootstrap_message(
+                await self._create_and_map_topic(
                     bot=bot,
+                    project=project,
                     chat_id=chat_id,
-                    message_thread_id=topic.message_thread_id,
-                    project_name=project.name,
+                    result=result,
                 )
-                result.created += 1
 
             except TelegramError as e:
                 if self._is_private_topics_unavailable_error(e):
@@ -119,12 +94,164 @@ class ProjectThreadManager:
                     error=str(e),
                 )
 
-        result.deactivated = await self.repository.deactivate_missing_projects(
+        stale_mappings = await self.repository.list_stale_active_mappings(
             chat_id=chat_id,
             active_project_slugs=active_slugs,
         )
+        for stale in stale_mappings:
+            try:
+                await bot.close_forum_topic(
+                    chat_id=stale.chat_id,
+                    message_thread_id=stale.message_thread_id,
+                )
+                result.closed += 1
+            except TelegramError as e:
+                if self._is_private_topics_unavailable_error(e):
+                    raise PrivateTopicsUnavailableError(
+                        "Private chat topics are not enabled for this bot chat."
+                    ) from e
+                result.failed += 1
+                logger.warning(
+                    "Could not close stale topic",
+                    chat_id=stale.chat_id,
+                    message_thread_id=stale.message_thread_id,
+                    project_slug=stale.project_slug,
+                    error=str(e),
+                )
+            finally:
+                await self.repository.set_active(
+                    chat_id=stale.chat_id,
+                    project_slug=stale.project_slug,
+                    is_active=False,
+                )
+                result.deactivated += 1
 
         return result
+
+    async def _sync_existing_mapping(
+        self,
+        bot: Bot,
+        project: ProjectDefinition,
+        mapping: ProjectThreadModel,
+        result: TopicSyncResult,
+    ) -> bool:
+        """Sync an existing mapping. Returns True if handled without recreate."""
+        chat_id = mapping.chat_id
+
+        if not mapping.is_active:
+            reopen_status = await self._reopen_topic_if_possible(bot, mapping)
+            if reopen_status == "unusable":
+                return False
+            if reopen_status == "failed":
+                result.failed += 1
+                return True
+            result.reopened += 1
+
+        usable_status = await self._ensure_topic_usable(bot, mapping)
+        if usable_status == "unusable":
+            return False
+        if usable_status == "failed":
+            result.failed += 1
+            return True
+
+        topic_name = mapping.topic_name
+        if mapping.topic_name != project.name:
+            rename_status = await self._rename_topic(
+                bot=bot,
+                mapping=mapping,
+                target_name=project.name,
+            )
+            if rename_status == "unusable":
+                return False
+            if rename_status == "failed":
+                await self.repository.upsert_mapping(
+                    project_slug=project.slug,
+                    chat_id=chat_id,
+                    message_thread_id=mapping.message_thread_id,
+                    topic_name=mapping.topic_name,
+                    is_active=True,
+                )
+                result.failed += 1
+                result.reused += 1
+                return True
+            topic_name = project.name
+            result.renamed += 1
+
+        await self.repository.upsert_mapping(
+            project_slug=project.slug,
+            chat_id=chat_id,
+            message_thread_id=mapping.message_thread_id,
+            topic_name=topic_name,
+            is_active=True,
+        )
+        result.reused += 1
+        return True
+
+    async def _create_and_map_topic(
+        self,
+        bot: Bot,
+        project: ProjectDefinition,
+        chat_id: int,
+        result: TopicSyncResult,
+    ) -> None:
+        """Create a topic and persist mapping."""
+        topic = await bot.create_forum_topic(
+            chat_id=chat_id,
+            name=project.name,
+        )
+
+        await self.repository.upsert_mapping(
+            project_slug=project.slug,
+            chat_id=chat_id,
+            message_thread_id=topic.message_thread_id,
+            topic_name=project.name,
+            is_active=True,
+        )
+        await self._send_topic_bootstrap_message(
+            bot=bot,
+            chat_id=chat_id,
+            message_thread_id=topic.message_thread_id,
+            project_name=project.name,
+        )
+        result.created += 1
+
+    async def _ensure_topic_usable(self, bot: Bot, mapping: ProjectThreadModel) -> str:
+        """Ensure mapped topic is usable. Returns ok|unusable|failed."""
+        try:
+            await bot.reopen_forum_topic(
+                chat_id=mapping.chat_id,
+                message_thread_id=mapping.message_thread_id,
+            )
+            return "ok"
+        except TelegramError as e:
+            if self._is_topic_unusable_error(e):
+                return "unusable"
+            logger.warning(
+                "Could not verify topic usability",
+                chat_id=mapping.chat_id,
+                message_thread_id=mapping.message_thread_id,
+                error=str(e),
+            )
+            return "failed"
+
+    async def _reopen_topic_if_possible(self, bot: Bot, mapping: ProjectThreadModel) -> str:
+        """Reopen inactive topic. Returns reopened|unusable|failed."""
+        try:
+            await bot.reopen_forum_topic(
+                chat_id=mapping.chat_id,
+                message_thread_id=mapping.message_thread_id,
+            )
+            return "reopened"
+        except TelegramError as e:
+            if self._is_topic_unusable_error(e):
+                return "unusable"
+            logger.warning(
+                "Could not reopen topic",
+                chat_id=mapping.chat_id,
+                message_thread_id=mapping.message_thread_id,
+                error=str(e),
+            )
+            return "failed"
 
     async def resolve_project(
         self, chat_id: int, message_thread_id: int
@@ -179,21 +306,23 @@ class ProjectThreadManager:
         ]
         return any(marker in text for marker in markers)
 
-    async def _rename_topic_if_possible(
+    async def _rename_topic(
         self,
         bot: Bot,
         mapping: ProjectThreadModel,
         target_name: str,
-    ) -> bool:
-        """Rename an existing forum topic (best effort)."""
+    ) -> str:
+        """Rename forum topic. Returns renamed|unusable|failed."""
         try:
             await bot.edit_forum_topic(
                 chat_id=mapping.chat_id,
                 message_thread_id=mapping.message_thread_id,
                 name=target_name,
             )
-            return True
+            return "renamed"
         except TelegramError as e:
+            if self._is_topic_unusable_error(e):
+                return "unusable"
             logger.warning(
                 "Could not rename topic",
                 chat_id=mapping.chat_id,
@@ -201,7 +330,7 @@ class ProjectThreadManager:
                 target_name=target_name,
                 error=str(e),
             )
-            return False
+            return "failed"
 
     async def _send_topic_bootstrap_message(
         self,
@@ -229,3 +358,19 @@ class ProjectThreadManager:
                 project_name=project_name,
                 error=str(e),
             )
+
+    @staticmethod
+    def _is_topic_unusable_error(error: TelegramError) -> bool:
+        """Return True when topic no longer exists or thread id is invalid."""
+        text = str(error).lower()
+        markers = [
+            "topic deleted",
+            "topic was deleted",
+            "topic_closed",
+            "topic closed",
+            "message thread not found",
+            "thread not found",
+            "invalid message thread id",
+            "forum topic not found",
+        ]
+        return any(marker in text for marker in markers)

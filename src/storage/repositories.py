@@ -321,6 +321,50 @@ class ProjectThreadRepository:
             await conn.commit()
             return cursor.rowcount
 
+    async def list_stale_active_mappings(
+        self, chat_id: int, active_project_slugs: List[str]
+    ) -> List[ProjectThreadModel]:
+        """List active mappings that are no longer enabled/present."""
+        async with self.db.get_connection() as conn:
+            if active_project_slugs:
+                placeholders = ",".join("?" for _ in active_project_slugs)
+                query = f"""
+                    SELECT * FROM project_threads
+                    WHERE chat_id = ?
+                      AND is_active = TRUE
+                      AND project_slug NOT IN ({placeholders})
+                    ORDER BY project_slug ASC
+                """
+                params = [chat_id] + active_project_slugs
+                cursor = await conn.execute(query, params)
+            else:
+                cursor = await conn.execute(
+                    """
+                    SELECT * FROM project_threads
+                    WHERE chat_id = ? AND is_active = TRUE
+                    ORDER BY project_slug ASC
+                """,
+                    (chat_id,),
+                )
+            rows = await cursor.fetchall()
+            return [ProjectThreadModel.from_row(row) for row in rows]
+
+    async def set_active(
+        self, chat_id: int, project_slug: str, is_active: bool
+    ) -> int:
+        """Set active flag for a mapping by chat+project."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE project_threads
+                SET is_active = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE chat_id = ? AND project_slug = ?
+            """,
+                (is_active, chat_id, project_slug),
+            )
+            await conn.commit()
+            return cursor.rowcount
+
     async def list_by_chat(
         self, chat_id: int, active_only: bool = True
     ) -> List[ProjectThreadModel]:

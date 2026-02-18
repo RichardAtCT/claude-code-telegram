@@ -241,6 +241,16 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 parse_mode="HTML",
             )
             return
+        if (
+            not update.effective_chat
+            or update.effective_chat.id != settings.project_threads_chat_id
+        ):
+            await status_msg.edit_text(
+                "❌ <b>Group Thread Mode</b>\n\n"
+                "Run <code>/sync_threads</code> in the configured project threads group.",
+                parse_mode="HTML",
+            )
+            return
         target_chat_id = settings.project_threads_chat_id
 
     try:
@@ -267,6 +277,8 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"• Created: <b>{result.created}</b>\n"
             f"• Reused: <b>{result.reused}</b>\n"
             f"• Renamed: <b>{result.renamed}</b>\n"
+            f"• Reopened: <b>{result.reopened}</b>\n"
+            f"• Closed: <b>{result.closed}</b>\n"
             f"• Deactivated: <b>{result.deactivated}</b>\n"
             f"• Failed: <b>{result.failed}</b>",
             parse_mode="HTML",

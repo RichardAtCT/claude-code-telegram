@@ -115,11 +115,14 @@ class MessageOrchestrator:
 
             is_sync_bypass = handler.__name__ == "sync_threads"
             is_start_bypass = handler.__name__ in {"start_command", "agentic_start"}
+            message_thread_id = self._extract_message_thread_id(update)
             should_enforce = self.settings.enable_project_threads
 
             if should_enforce:
                 if self.settings.project_threads_mode == "private":
-                    should_enforce = not (is_sync_bypass or is_start_bypass)
+                    should_enforce = not is_sync_bypass and not (
+                        is_start_bypass and message_thread_id is None
+                    )
                 else:
                     should_enforce = not is_sync_bypass
 
@@ -169,10 +172,7 @@ class MessageOrchestrator:
                 )
                 return False
 
-        message_thread_id = getattr(message, "message_thread_id", None)
-        if not message_thread_id:
-            dm_topic = getattr(message, "direct_messages_topic", None)
-            message_thread_id = getattr(dm_topic, "topic_id", None) if dm_topic else None
+        message_thread_id = self._extract_message_thread_id(update)
         if not message_thread_id:
             await self._reject_for_thread_mode(
                 update,
@@ -241,6 +241,21 @@ class MessageOrchestrator:
             return True
         except ValueError:
             return False
+
+    @staticmethod
+    def _extract_message_thread_id(update: Update) -> Optional[int]:
+        """Extract topic/thread id from update message for forum/direct topics."""
+        message = update.effective_message
+        if not message:
+            return None
+        message_thread_id = getattr(message, "message_thread_id", None)
+        if isinstance(message_thread_id, int) and message_thread_id > 0:
+            return message_thread_id
+        dm_topic = getattr(message, "direct_messages_topic", None)
+        topic_id = getattr(dm_topic, "topic_id", None) if dm_topic else None
+        if isinstance(topic_id, int) and topic_id > 0:
+            return topic_id
+        return None
 
     async def _reject_for_thread_mode(self, update: Update, message: str) -> None:
         """Send a guidance response when strict thread routing rejects an update."""
