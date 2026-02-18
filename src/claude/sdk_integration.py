@@ -378,30 +378,37 @@ class ClaudeSDKManager:
         """Handle streaming message from claude-agent-sdk."""
         try:
             if isinstance(message, AssistantMessage):
-                # Extract content from assistant message
                 content = getattr(message, "content", [])
                 if content and isinstance(content, list):
-                    # Extract text from TextBlock objects
                     text_parts = []
+                    tool_calls = []
+
                     for block in content:
                         if hasattr(block, "text"):
                             text_parts.append(block.text)
-                    if text_parts:
+                        elif isinstance(block, ToolUseBlock):
+                            tool_calls.append(
+                                {
+                                    "name": getattr(block, "tool_name", "unknown"),
+                                    "input": getattr(block, "tool_input", {}),
+                                    "id": getattr(block, "id", None),
+                                }
+                            )
+
+                    if text_parts or tool_calls:
                         update = StreamUpdate(
                             type="assistant",
-                            content="\n".join(text_parts),
+                            content=("\n".join(text_parts) if text_parts else None),
+                            tool_calls=tool_calls if tool_calls else None,
                         )
                         await stream_callback(update)
+
                 elif content:
-                    # Fallback for non-list content
                     update = StreamUpdate(
                         type="assistant",
                         content=str(content),
                     )
                     await stream_callback(update)
-
-                # Check for tool calls (if available in the message structure)
-                # Note: This depends on the actual claude-agent-sdk message structure
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
