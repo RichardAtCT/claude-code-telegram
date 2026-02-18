@@ -295,26 +295,37 @@ class MessageOrchestrator:
 
     def _format_verbose_progress(
         self,
-        tool_log: List[Dict[str, Any]],
+        activity_log: List[Dict[str, Any]],
         verbose_level: int,
         start_time: float,
     ) -> str:
-        """Build the progress message text based on tool activity so far."""
-        if not tool_log:
+        """Build the progress message text based on activity so far."""
+        if not activity_log:
             return "Working..."
 
         elapsed = time.time() - start_time
         lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
 
-        for entry in tool_log[-15:]:  # Show last 15 tool calls max
-            icon = _tool_icon(entry["name"])
-            if verbose_level >= 2 and entry.get("detail"):
-                lines.append(f"{icon} {entry['name']}: {entry['detail']}")
+        for entry in activity_log[-15:]:  # Show last 15 entries max
+            kind = entry.get("kind", "tool")
+            if kind == "text":
+                # Claude's intermediate reasoning/commentary
+                snippet = entry.get("detail", "")
+                if verbose_level >= 2:
+                    lines.append(f"\U0001f4ac {snippet}")
+                else:
+                    # Level 1: one short line
+                    lines.append(f"\U0001f4ac {snippet[:80]}")
             else:
-                lines.append(f"{icon} {entry['name']}")
+                # Tool call
+                icon = _tool_icon(entry["name"])
+                if verbose_level >= 2 and entry.get("detail"):
+                    lines.append(f"{icon} {entry['name']}: {entry['detail']}")
+                else:
+                    lines.append(f"{icon} {entry['name']}")
 
-        if len(tool_log) > 15:
-            lines.insert(1, f"... ({len(tool_log) - 15} earlier calls)\n")
+        if len(activity_log) > 15:
+            lines.insert(1, f"... ({len(activity_log) - 15} earlier entries)\n")
 
         return "\n".join(lines)
 
@@ -368,11 +379,21 @@ class MessageOrchestrator:
         last_update_time = [0.0]  # mutable container for closure
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
+            # Capture tool calls
             if update_obj.tool_calls:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
-                    tool_log.append({"name": name, "detail": detail})
+                    tool_log.append({"kind": "tool", "name": name, "detail": detail})
+
+            # Capture assistant text (reasoning / commentary)
+            if update_obj.type == "assistant" and update_obj.content:
+                text = update_obj.content.strip()
+                if text and verbose_level >= 1:
+                    # Collapse to first meaningful line, cap length
+                    first_line = text.split("\n", 1)[0].strip()
+                    if first_line:
+                        tool_log.append({"kind": "text", "detail": first_line[:120]})
 
             now = time.time()
             if (now - last_update_time[0]) >= 2.0:
