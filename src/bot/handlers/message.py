@@ -86,13 +86,14 @@ async def _format_progress_update(update_obj) -> Optional[str]:
 
 def _format_error_message(error_str: str) -> str:
     """Format error messages for user-friendly display."""
-    if "usage limit reached" in error_str.lower():
+    error_lower = error_str.lower()
+    if "usage limit reached" in error_lower:
         # Usage limit error - already user-friendly from integration.py
         return error_str
-    elif "tool not allowed" in error_str.lower():
+    elif "tool not allowed" in error_lower:
         # Tool validation error - already handled in facade.py
         return error_str
-    elif "no conversation found" in error_str.lower():
+    elif "no conversation found" in error_lower:
         return (
             f"🔄 <b>Session Not Found</b>\n\n"
             f"The Claude session could not be found or has expired.\n\n"
@@ -101,7 +102,7 @@ def _format_error_message(error_str: str) -> str:
             f"• Try your request again\n"
             f"• Use /status to check your current session"
         )
-    elif "rate limit" in error_str.lower():
+    elif "rate limit" in error_lower:
         return (
             f"⏱️ <b>Rate Limit Reached</b>\n\n"
             f"Too many requests in a short time period.\n\n"
@@ -110,7 +111,7 @@ def _format_error_message(error_str: str) -> str:
             f"• Use simpler requests\n"
             f"• Check your current usage with /status"
         )
-    elif "timeout" in error_str.lower():
+    elif "timeout" in error_lower:
         return (
             f"⏰ <b>Request Timeout</b>\n\n"
             f"Your request took too long to process and timed out.\n\n"
@@ -119,18 +120,46 @@ def _format_error_message(error_str: str) -> str:
             f"• Use simpler commands\n"
             f"• Try again in a moment"
         )
-    else:
-        # Generic error handling
-        # Escape HTML special characters in error message
-        safe_error = escape_html(error_str)
-        # Truncate very long errors
-        if len(safe_error) > 200:
-            safe_error = safe_error[:200] + "..."
-
+    elif "exit code" in error_lower or "command failed" in error_lower:
         return (
-            f"❌ <b>Claude Code Error</b>\n\n"
-            f"Failed to process your request: {safe_error}\n\n"
-            f"Please try again or contact the administrator if the problem persists."
+            "❌ <b>Command Failed</b>\n\n"
+            "Claude ran into a problem executing a command.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Try rephrasing your request\n"
+            "• Use /new to start a fresh session\n"
+            "• Try again in a moment"
+        )
+    elif "process error" in error_lower:
+        return (
+            "❌ <b>Process Error</b>\n\n"
+            "The Claude process encountered an issue.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Try again in a moment\n"
+            "• Use /new to start a fresh session"
+        )
+    elif "json" in error_lower or "decode" in error_lower or "parsing" in error_lower:
+        return (
+            "❌ <b>Response Error</b>\n\n"
+            "Claude's response could not be read properly.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Try your request again\n"
+            "• Use /new to start a fresh session"
+        )
+    elif "connection" in error_lower or "network" in error_lower:
+        return (
+            "❌ <b>Connection Error</b>\n\n"
+            "Could not connect to Claude.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Check your network connection\n"
+            "• Try again in a moment"
+        )
+    else:
+        return (
+            "❌ <b>Something Went Wrong</b>\n\n"
+            "Claude was unable to process your request.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Try again in a moment\n"
+            "• Use /new to start a fresh session"
         )
 
 

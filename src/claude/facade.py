@@ -419,6 +419,15 @@ class ClaudeIntegration:
         """Get session information."""
         return await self.session_manager.get_session_info(session_id)
 
+    async def clear_user_sessions(self, user_id: int) -> int:
+        """Deactivate all active sessions for a user. Returns count deactivated."""
+        sessions = await self.session_manager._get_user_sessions(user_id)
+        for session in sessions:
+            await self.session_manager.remove_session(session.session_id)
+        if sessions:
+            logger.info("Cleared user sessions", user_id=user_id, count=len(sessions))
+        return len(sessions)
+
     async def get_user_sessions(self, user_id: int) -> List[Dict[str, Any]]:
         """Get all sessions for a user."""
         sessions = await self.session_manager._get_user_sessions(user_id)

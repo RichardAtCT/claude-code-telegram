@@ -167,6 +167,7 @@ async def test_agentic_new_resets_session(agentic_settings, deps):
 
     context = MagicMock()
     context.user_data = {"claude_session_id": "old-session-123"}
+    context.bot_data = {}
 
     await orchestrator.agentic_new(update, context)
 

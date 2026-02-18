@@ -261,6 +261,14 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Reset session, one-line confirmation."""
+        user_id = update.effective_user.id
+        claude_integration = context.bot_data.get("claude_integration")
+        if claude_integration:
+            try:
+                await claude_integration.clear_user_sessions(user_id)
+            except Exception as e:
+                logger.warning("Failed to clear sessions on /new", error=str(e))
+
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
 
