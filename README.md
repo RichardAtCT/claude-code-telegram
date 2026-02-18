@@ -240,6 +240,8 @@ PROJECT_THREADS_CHAT_ID=-1001234567890
 
 In strict mode, only `/start` and `/sync_threads` work outside mapped project topics.
 In private mode, `/start` auto-syncs project topics for your private bot chat.
+To use topics with your bot, enable them in BotFather:
+`Bot Settings -> Threaded mode`.
 
 > **Full reference:** See [docs/configuration.md](docs/configuration.md) and [`.env.example`](.env.example).
 
