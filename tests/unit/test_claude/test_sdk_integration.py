@@ -274,8 +274,8 @@ class TestClaudeSDKManager:
 
         # Create an AssistantMessage with a ToolUseBlock
         tool_block = MagicMock(spec=ToolUseBlock)
-        tool_block.tool_name = "Read"
-        tool_block.tool_input = {"file_path": "/test.py"}
+        tool_block.name = "Read"
+        tool_block.input = {"file_path": "/test.py"}
         tool_block.id = "tool_123"
         # Ensure hasattr(block, "text") returns False for ToolUseBlock mock
         del tool_block.text
