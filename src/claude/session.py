@@ -9,7 +9,7 @@ Features:
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
@@ -44,12 +44,12 @@ class ClaudeSession:
 
     def is_expired(self, timeout_hours: int) -> bool:
         """Check if session has expired."""
-        age = datetime.utcnow() - self.last_used
+        age = datetime.now(UTC) - self.last_used
         return age > timedelta(hours=timeout_hours)
 
     def update_usage(self, response: ClaudeResponse) -> None:
         """Update session with usage from response."""
-        self.last_used = datetime.utcnow()
+        self.last_used = datetime.now(UTC)
         self.total_cost += response.cost
         self.total_turns += response.num_turns
         self.message_count += 1
@@ -207,8 +207,8 @@ class SessionManager:
             session_id=temp_session_id,
             user_id=user_id,
             project_path=project_path,
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         # Mark as new session (not from Claude Code yet)

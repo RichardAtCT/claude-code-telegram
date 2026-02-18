@@ -1,6 +1,6 @@
 """Tests for security audit logging."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -13,7 +13,7 @@ class TestAuditEvent:
     def test_event_creation(self):
         """Test audit event creation."""
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=123,
             event_type="test_event",
             success=True,
@@ -29,7 +29,7 @@ class TestAuditEvent:
 
     def test_event_to_dict(self):
         """Test converting event to dictionary."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(UTC)
         event = AuditEvent(
             timestamp=timestamp,
             user_id=123,
@@ -49,7 +49,7 @@ class TestAuditEvent:
     def test_event_to_json(self):
         """Test converting event to JSON."""
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=123,
             event_type="test",
             success=True,
@@ -72,7 +72,7 @@ class TestInMemoryAuditStorage:
     async def test_store_event(self, storage):
         """Test storing audit events."""
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=123,
             event_type="test",
             success=True,
@@ -91,7 +91,7 @@ class TestInMemoryAuditStorage:
         # Store more events than limit
         for i in range(5):
             event = AuditEvent(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 user_id=i,
                 event_type="test",
                 success=True,
@@ -109,7 +109,7 @@ class TestInMemoryAuditStorage:
         # Store multiple events
         for i in range(3):
             event = AuditEvent(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 user_id=i,
                 event_type=f"type_{i}",
                 success=True,
@@ -125,7 +125,7 @@ class TestInMemoryAuditStorage:
         # Store events for different users
         for user_id in [123, 456, 123, 789]:
             event = AuditEvent(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 user_id=user_id,
                 event_type="test",
                 success=True,
@@ -143,7 +143,7 @@ class TestInMemoryAuditStorage:
         # Store events of different types
         for event_type in ["auth", "command", "auth", "file"]:
             event = AuditEvent(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 user_id=123,
                 event_type=event_type,
                 success=True,
@@ -158,7 +158,7 @@ class TestInMemoryAuditStorage:
 
     async def test_get_events_with_time_filter(self, storage):
         """Test getting events filtered by time."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         old_time = now - timedelta(hours=2)
 
         # Store events at different times
@@ -182,7 +182,7 @@ class TestInMemoryAuditStorage:
         # Store multiple events
         for i in range(5):
             event = AuditEvent(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 user_id=i,
                 event_type="test",
                 success=True,
@@ -198,14 +198,14 @@ class TestInMemoryAuditStorage:
         """Test getting security violations."""
         # Store mixed events
         normal_event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=123,
             event_type="command",
             success=True,
             details={},
         )
         violation_event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=456,
             event_type="security_violation",
             success=False,
@@ -223,9 +223,9 @@ class TestInMemoryAuditStorage:
         """Test that events are returned sorted by timestamp (newest first)."""
         # Store events with different timestamps
         times = [
-            datetime.utcnow() - timedelta(hours=2),
-            datetime.utcnow() - timedelta(hours=1),
-            datetime.utcnow(),
+            datetime.now(UTC) - timedelta(hours=2),
+            datetime.now(UTC) - timedelta(hours=1),
+            datetime.now(UTC),
         ]
 
         # Store in random order

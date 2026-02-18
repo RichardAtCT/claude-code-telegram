@@ -8,7 +8,7 @@ routed to registered handlers.
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Type
 
 import structlog
@@ -21,7 +21,7 @@ class Event:
     """Base event class. All events carry an ID, timestamp, and source."""
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     source: str = "unknown"
 
     @property

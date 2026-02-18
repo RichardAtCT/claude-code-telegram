@@ -5,7 +5,7 @@ Using dataclasses for simplicity and type safety.
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, Optional
 
 import aiosqlite
@@ -86,7 +86,7 @@ class SessionModel:
         if not self.last_used:
             return True
 
-        age = datetime.utcnow() - self.last_used
+        age = datetime.now(UTC) - self.last_used
         return age.total_seconds() > (timeout_hours * 3600)
 
 
@@ -266,4 +266,4 @@ class UserTokenModel:
         """Check if token has expired."""
         if not self.expires_at:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(UTC) > self.expires_at
