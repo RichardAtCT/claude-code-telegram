@@ -11,7 +11,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
-from telegram import BotCommand, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -121,13 +121,14 @@ class MessageOrchestrator:
             self._register_classic_handlers(app)
 
     def _register_agentic_handlers(self, app: Application) -> None:
-        """Register minimal agentic handlers: 4 commands + text/file/photo."""
+        """Register minimal agentic handlers: 5 commands + text/file/photo."""
         # Commands
         for cmd, handler in [
             ("start", self.agentic_start),
             ("new", self.agentic_new),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
+            ("repo", self.agentic_repo),
         ]:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
 
@@ -162,7 +163,7 @@ class MessageOrchestrator:
             )
         )
 
-        logger.info("Agentic handlers registered (3 commands + text/file/photo)")
+        logger.info("Agentic handlers registered (5 commands + text/file/photo)")
 
     def _register_classic_handlers(self, app: Application) -> None:
         """Register full classic handler set (moved from core.py)."""
@@ -218,6 +219,7 @@ class MessageOrchestrator:
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("repo", "List repos / switch workspace"),
             ]
         else:
             return [
@@ -843,16 +845,151 @@ class MessageOrchestrator:
                 "Claude photo processing failed", error=str(e), user_id=user_id
             )
 
+    async def agentic_repo(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """List repos in workspace or switch to one.
+
+        /repo          — list subdirectories with git indicators
+        /repo <name>   — switch to that directory, resume session if available
+        """
+        args = update.message.text.split()[1:] if update.message.text else []
+        base = self.settings.approved_directory
+        current_dir = context.user_data.get("current_directory", base)
+
+        if args:
+            # Switch to named repo
+            target_name = args[0]
+            target_path = base / target_name
+            if not target_path.is_dir():
+                await update.message.reply_text(
+                    f"Directory not found: <code>{escape_html(target_name)}</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+            context.user_data["current_directory"] = target_path
+
+            # Try to find a resumable session
+            claude_integration = context.bot_data.get("claude_integration")
+            session_id = None
+            if claude_integration:
+                existing = await claude_integration._find_resumable_session(
+                    update.effective_user.id, target_path
+                )
+                if existing:
+                    session_id = existing.session_id
+            context.user_data["claude_session_id"] = session_id
+
+            is_git = (target_path / ".git").is_dir()
+            git_badge = " (git)" if is_git else ""
+            session_badge = " · session resumed" if session_id else ""
+
+            await update.message.reply_text(
+                f"Switched to <code>{escape_html(target_name)}/</code>"
+                f"{git_badge}{session_badge}",
+                parse_mode="HTML",
+            )
+            return
+
+        # No args — list repos
+        try:
+            entries = sorted(
+                [
+                    d
+                    for d in base.iterdir()
+                    if d.is_dir() and not d.name.startswith(".")
+                ],
+                key=lambda d: d.name,
+            )
+        except OSError as e:
+            await update.message.reply_text(f"Error reading workspace: {e}")
+            return
+
+        if not entries:
+            await update.message.reply_text(
+                f"No repos in <code>{escape_html(str(base))}</code>.\n"
+                'Clone one by telling me, e.g. <i>"clone org/repo"</i>.',
+                parse_mode="HTML",
+            )
+            return
+
+        lines: List[str] = []
+        keyboard_rows: List[list] = []  # type: ignore[type-arg]
+        current_name = current_dir.name if current_dir != base else None
+
+        for d in entries:
+            is_git = (d / ".git").is_dir()
+            icon = "\U0001f4e6" if is_git else "\U0001f4c1"
+            marker = " \u25c0" if d.name == current_name else ""
+            lines.append(f"{icon} <code>{escape_html(d.name)}/</code>{marker}")
+
+        # Build inline keyboard (2 per row)
+        for i in range(0, len(entries), 2):
+            row = []
+            for j in range(2):
+                if i + j < len(entries):
+                    name = entries[i + j].name
+                    row.append(InlineKeyboardButton(name, callback_data=f"cd:{name}"))
+            keyboard_rows.append(row)
+
+        reply_markup = InlineKeyboardMarkup(keyboard_rows)
+
+        await update.message.reply_text(
+            "<b>Repos</b>\n\n" + "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+
     async def _agentic_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle cd: callbacks (pattern-filtered by registration)."""
+        """Handle cd: callbacks — switch directory and resume session if available."""
         query = update.callback_query
         await query.answer()
 
         data = query.data
-        _, param = data.split(":", 1)
+        _, project_name = data.split(":", 1)
 
-        from .handlers.callback import handle_cd_callback
+        base = self.settings.approved_directory
+        new_path = base / project_name
 
-        await handle_cd_callback(query, param, context)
+        if not new_path.is_dir():
+            await query.edit_message_text(
+                f"Directory not found: <code>{escape_html(project_name)}</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        context.user_data["current_directory"] = new_path
+
+        # Look for a resumable session instead of always clearing
+        claude_integration = context.bot_data.get("claude_integration")
+        session_id = None
+        if claude_integration:
+            existing = await claude_integration._find_resumable_session(
+                query.from_user.id, new_path
+            )
+            if existing:
+                session_id = existing.session_id
+        context.user_data["claude_session_id"] = session_id
+
+        is_git = (new_path / ".git").is_dir()
+        git_badge = " (git)" if is_git else ""
+        session_badge = " · session resumed" if session_id else ""
+
+        await query.edit_message_text(
+            f"Switched to <code>{escape_html(project_name)}/</code>"
+            f"{git_badge}{session_badge}",
+            parse_mode="HTML",
+        )
+
+        # Audit log
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=query.from_user.id,
+                command="cd",
+                args=[project_name],
+                success=True,
+            )

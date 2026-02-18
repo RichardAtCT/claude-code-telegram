@@ -22,11 +22,15 @@ class ToolMonitor:
     """Monitor and validate Claude's tool usage."""
 
     def __init__(
-        self, config: Settings, security_validator: Optional[SecurityValidator] = None
+        self,
+        config: Settings,
+        security_validator: Optional[SecurityValidator] = None,
+        agentic_mode: bool = False,
     ):
         """Initialize tool monitor."""
         self.config = config
         self.security_validator = security_validator
+        self.agentic_mode = agentic_mode
         self.tool_usage: Dict[str, int] = defaultdict(int)
         self.security_violations: List[Dict[str, Any]] = []
 
@@ -109,8 +113,9 @@ class ToolMonitor:
                     logger.warning("Invalid file path in tool call", **violation)
                     return False, error
 
-        # Validate shell commands
-        if tool_name in ["bash", "shell", "Bash"]:
+        # Validate shell commands (skip in agentic mode — Claude Code runs
+        # inside its own sandbox, and these patterns block normal gh/git usage)
+        if tool_name in ["bash", "shell", "Bash"] and not self.agentic_mode:
             command = tool_input.get("command", "")
 
             # Check for dangerous commands

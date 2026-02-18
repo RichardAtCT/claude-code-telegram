@@ -137,7 +137,9 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Create Claude integration components with persistent storage
     session_storage = SQLiteSessionStorage(storage.db_manager)
     session_manager = SessionManager(config, session_storage)
-    tool_monitor = ToolMonitor(config, security_validator)
+    tool_monitor = ToolMonitor(
+        config, security_validator, agentic_mode=config.agentic_mode
+    )
 
     # Create Claude manager based on configuration
     if config.use_sdk:
