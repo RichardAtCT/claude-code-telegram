@@ -95,14 +95,8 @@ class ProgressUpdater:
             return
 
         now = time.monotonic()
-        # Only auto-flush if min_interval allows it:
-        # - If no flush has happened yet (_last_flush == 0), only auto-flush
-        #   when min_interval is effectively zero (caller wants immediate updates)
-        # - Otherwise, respect the normal rate limit
-        if self._last_flush == 0.0:
-            if self._min_interval > 0.0:
-                return  # First flush should come from explicit flush()
-        elif now - self._last_flush < self._min_interval:
+        # First flush always fires immediately; subsequent ones are rate-limited
+        if self._last_flush > 0.0 and now - self._last_flush < self._min_interval:
             return  # Rate limited
 
         self._last_flush = now
