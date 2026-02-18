@@ -270,8 +270,8 @@ class MessageOrchestrator:
                 f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
                 "Usage: <code>/verbose 0|1|2</code>\n"
                 "  0 = quiet (final response only)\n"
-                "  1 = normal (show tool names)\n"
-                "  2 = detailed (show tool names + inputs)",
+                "  1 = normal (tools + reasoning)\n"
+                "  2 = detailed (tools with inputs + reasoning)",
                 parse_mode="HTML",
             )
             return

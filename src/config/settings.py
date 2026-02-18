@@ -139,10 +139,14 @@ class Settings(BaseSettings):
         description="Conversational agentic mode (default) vs classic command mode",
     )
 
-    # Output verbosity (0=quiet, 1=normal/tool names, 2=verbose/tool details)
+    # Output verbosity (0=quiet, 1=normal, 2=detailed)
     verbose_level: int = Field(
         1,
-        description="Bot output verbosity: 0=quiet, 1=tool names, 2=tool details",
+        description=(
+            "Bot output verbosity: 0=quiet (final response only), "
+            "1=normal (tool names + reasoning), "
+            "2=detailed (tool inputs + longer reasoning)"
+        ),
         ge=0,
         le=2,
     )
