@@ -309,6 +309,49 @@ async def test_agentic_start_escapes_html_in_name(agentic_settings, deps):
     assert call_kwargs.kwargs.get("parse_mode") == "HTML"
 
 
+async def test_agentic_text_passes_on_stream_callback(agentic_settings, deps):
+    """agentic_text passes an on_stream callback to run_command."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "session-abc"
+    mock_response.content = "Done!"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "fix the bug"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.edit_text = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    # run_command was called with an on_stream keyword argument
+    call_kwargs = claude_integration.run_command.call_args.kwargs
+    assert "on_stream" in call_kwargs
+    assert call_kwargs["on_stream"] is not None
+    assert callable(call_kwargs["on_stream"])
+
+
 async def test_agentic_text_logs_failure_on_error(agentic_settings, deps):
     """Failed Claude runs are logged with success=False."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
