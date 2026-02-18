@@ -389,8 +389,8 @@ class ClaudeSDKManager:
                         elif isinstance(block, ToolUseBlock):
                             tool_calls.append(
                                 {
-                                    "name": getattr(block, "tool_name", "unknown"),
-                                    "input": getattr(block, "tool_input", {}),
+                                    "name": getattr(block, "name", "unknown"),
+                                    "input": getattr(block, "input", {}),
                                     "id": getattr(block, "id", None),
                                 }
                             )
