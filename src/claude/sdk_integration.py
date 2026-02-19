@@ -398,7 +398,7 @@ class ClaudeSDKManager:
                             tool_calls.append(
                                 {
                                     "name": getattr(block, "name", "unknown"),
-                                    "input": getattr(block, "tool_input", {}),
+                                    "input": getattr(block, "input", {}),
                                     "id": getattr(block, "id", None),
                                 }
                             )
@@ -467,7 +467,7 @@ class ClaudeSDKManager:
                                 {
                                     "name": getattr(block, "name", "unknown"),
                                     "timestamp": current_time,
-                                    "input": getattr(block, "tool_input", {}),
+                                    "input": getattr(block, "input", {}),
                                 }
                             )
 
