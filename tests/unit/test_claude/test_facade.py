@@ -155,9 +155,7 @@ class TestForceNewSurvivesFailure:
         session_manager.active_sessions[existing.session_id] = existing
         return existing
 
-    async def test_flag_survives_run_command_failure(
-        self, facade, session_manager
-    ):
+    async def test_flag_survives_run_command_failure(self, facade, session_manager):
         """If run_command raises, the caller should still see
         force_new_session=True so the retry skips auto-resume."""
         project = Path("/test/project")
@@ -188,9 +186,7 @@ class TestForceNewSurvivesFailure:
         # so user_data still has it — simulating the handler contract:
         assert user_data["force_new_session"] is True
 
-    async def test_flag_cleared_after_successful_run(
-        self, facade, session_manager
-    ):
+    async def test_flag_cleared_after_successful_run(self, facade, session_manager):
         """After a successful run_command, the handler clears
         force_new_session so subsequent messages auto-resume normally."""
         project = Path("/test/project")
