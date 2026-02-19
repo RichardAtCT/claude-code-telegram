@@ -27,7 +27,6 @@ ClaudeResponse = Union["CLIClaudeResponse", "SDKClaudeResponse"]
 logger = structlog.get_logger()
 
 
-
 def _to_utc(dt: datetime) -> datetime:
     """Normalize datetime to timezone-aware UTC.
 
