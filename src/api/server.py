@@ -15,6 +15,7 @@ from ..events.bus import EventBus
 from ..events.types import WebhookEvent
 from ..storage.database import DatabaseManager
 from .auth import verify_github_signature, verify_shared_secret
+from .recruitment import register_recruitment_routes
 
 logger = structlog.get_logger()
 
@@ -32,6 +33,9 @@ def create_api_app(
         docs_url="/docs" if settings.development_mode else None,
         redoc_url=None,
     )
+
+    # Static pages
+    register_recruitment_routes(app)
 
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
