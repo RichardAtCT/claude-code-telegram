@@ -336,46 +336,60 @@ class TestToolMonitorConfigBypass:
 
         assert session.user_id == 123
         assert session.project_path == Path("/test/project")
-        assert session.session_id is not None
+        assert session.is_new_session is True
+        assert session.session_id == ""  # Empty until Claude responds
 
     async def test_get_existing_session(self, session_manager):
-        """Test getting existing session."""
-        # Create session
-        session1 = await session_manager.get_or_create_session(
+        """Test getting existing session by ID after it has a real session_id."""
+        # Simulate a session that has already received a real ID from Claude
+        existing = ClaudeSession(
+            session_id="real-session-id",
             user_id=123,
             project_path=Path("/test/project"),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
+        await session_manager.storage.save_session(existing)
+        session_manager.active_sessions["real-session-id"] = existing
 
-        # Get same session
+        # Get same session by ID
         session2 = await session_manager.get_or_create_session(
             user_id=123,
             project_path=Path("/test/project"),
-            session_id=session1.session_id,
+            session_id="real-session-id",
         )
 
-        assert session1.session_id == session2.session_id
+        assert session2.session_id == "real-session-id"
 
     async def test_session_limit_enforcement(self, session_manager):
         """Test session limit enforcement."""
-        # Create maximum number of sessions
-        session1 = await session_manager.get_or_create_session(
-            user_id=123, project_path=Path("/test/project1")
-        )
-        await session_manager.get_or_create_session(
-            user_id=123, project_path=Path("/test/project2")
-        )
+        # Seed sessions that have already received real IDs (simulating
+        # the full create -> Claude responds -> update_session lifecycle)
+        for i, path in enumerate(["/test/project1", "/test/project2"], start=1):
+            s = ClaudeSession(
+                session_id=f"session-{i}",
+                user_id=123,
+                project_path=Path(path),
+                created_at=datetime.now(UTC),
+                last_used=datetime.now(UTC) - timedelta(hours=i),  # older = higher i
+            )
+            await session_manager.storage.save_session(s)
+            session_manager.active_sessions[s.session_id] = s
 
-        # Creating third session should remove oldest
+        # Verify we have 2 sessions
+        assert len(await session_manager._get_user_sessions(123)) == 2
+
+        # Creating third session should remove the oldest (session-2)
         await session_manager.get_or_create_session(
             user_id=123, project_path=Path("/test/project3")
         )
 
-        # Should have only 2 sessions
-        user_sessions = await session_manager._get_user_sessions(123)
-        assert len(user_sessions) == 2
+        # After eviction, user should still have 2 persisted sessions
+        # (session-1 remains, session-2 evicted, session-3 is new/unsaved)
+        persisted = await session_manager._get_user_sessions(123)
+        assert len(persisted) == 1  # Only session-1 persisted
+        assert persisted[0].session_id == "session-1"
 
-        # First session should be gone
-        loaded_session1 = await session_manager.storage.load_session(
-            session1.session_id
-        )
-        assert loaded_session1 is None
+        # session-2 should be gone
+        loaded = await session_manager.storage.load_session("session-2")
+        assert loaded is None
