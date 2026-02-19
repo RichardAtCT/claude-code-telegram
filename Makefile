@@ -1,4 +1,4 @@
-.PHONY: install dev test lint format clean help run
+.PHONY: install dev test lint format clean help run run-remote remote-attach remote-stop
 
 # Default target
 help:
@@ -10,6 +10,9 @@ help:
 	@echo "  format     - Format code"
 	@echo "  clean      - Clean up generated files"
 	@echo "  run        - Run the bot"
+	@echo "  run-remote - Start bot in tmux on remote Mac (unlocks keychain)"
+	@echo "  remote-attach - Attach to running bot tmux session"
+	@echo "  remote-stop   - Stop the bot tmux session"
 
 install:
 	poetry install --no-dev
@@ -43,3 +46,17 @@ run:
 # For debugging
 run-debug:
 	poetry run claude-telegram-bot --debug
+
+# Remote Mac Mini (SSH session)
+run-remote:  ## Start bot on remote Mac in tmux (persists after SSH disconnect)
+	security unlock-keychain ~/Library/Keychains/login.keychain-db
+	tmux new-session -d -s claude-bot 'poetry run claude-telegram-bot'
+	@echo "Bot started in tmux session 'claude-bot'"
+	@echo "  Attach: make remote-attach"
+	@echo "  Stop:   make remote-stop"
+
+remote-attach:  ## Attach to running bot tmux session
+	tmux attach -t claude-bot
+
+remote-stop:  ## Stop the bot tmux session
+	tmux kill-session -t claude-bot
