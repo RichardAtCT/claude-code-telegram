@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /opt/claude-code-telegram/venv/bin/claude-telegram-bot "$@"
