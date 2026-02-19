@@ -53,12 +53,10 @@ class AuthProvider(ABC):
     @abstractmethod
     async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
         """Verify user credentials."""
-        pass
 
     @abstractmethod
     async def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Get user information."""
-        pass
 
 
 class WhitelistAuthProvider(AuthProvider):
@@ -100,17 +98,14 @@ class TokenStorage(ABC):
         self, user_id: int, token_hash: str, expires_at: datetime
     ) -> None:
         """Store token hash for user."""
-        pass
 
     @abstractmethod
     async def get_user_token(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Get token data for user."""
-        pass
 
     @abstractmethod
     async def revoke_token(self, user_id: int) -> None:
         """Revoke token for user."""
-        pass
 
 
 class InMemoryTokenStorage(TokenStorage):

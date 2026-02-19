@@ -2,12 +2,11 @@
 
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from claude_agent_sdk import (
     AssistantMessage,
-    ClaudeAgentOptions,
     ResultMessage,
     TextBlock,
 )
@@ -144,7 +143,7 @@ class TestClaudeSDKManager:
             yield _make_result_message()
 
         with patch("src.claude.sdk_integration.query", side_effect=mock_query):
-            response = await sdk_manager.execute_command(
+            await sdk_manager.execute_command(
                 prompt="Test prompt",
                 working_directory=Path("/test"),
                 stream_callback=stream_callback,

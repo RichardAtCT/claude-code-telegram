@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     )
     anthropic_api_key: Optional[SecretStr] = Field(
         None,
-        description="Anthropic API key for Claude SDK (optional if logged into Claude CLI)",
+        description="Anthropic API key for SDK (optional if CLI logged in)",
     )
     claude_model: str = Field(
         "claude-3-5-sonnet-20241022", description="Claude model to use"
@@ -113,7 +113,7 @@ class Settings(BaseSettings):
     # Sandbox settings
     sandbox_enabled: bool = Field(
         True,
-        description="Enable OS-level bash sandboxing to restrict commands to approved directory",
+        description="Enable OS-level bash sandboxing for approved dir",
     )
     sandbox_excluded_commands: Optional[List[str]] = Field(
         default=["git", "npm", "pip", "poetry", "make", "docker"],
@@ -280,7 +280,7 @@ class Settings(BaseSettings):
         if "mcpServers" not in config_data:
             raise ValueError(
                 "MCP config file must contain a 'mcpServers' key. "
-                'Expected format: {"mcpServers": {"server-name": {"command": "...", ...}}}'
+                'Format: {"mcpServers": {"name": {"command": ...}}}'
             )
         if not isinstance(config_data["mcpServers"], dict):
             raise ValueError(
@@ -358,9 +358,13 @@ class Settings(BaseSettings):
             raise ValueError("mcp_config_path required when enable_mcp is True")
 
         if self.enable_project_threads:
-            if self.project_threads_mode == "group" and self.project_threads_chat_id is None:
+            if (
+                self.project_threads_mode == "group"
+                and self.project_threads_chat_id is None
+            ):
                 raise ValueError(
-                    "project_threads_chat_id required when project_threads_mode is 'group'"
+                    "project_threads_chat_id required when "
+                    "project_threads_mode is 'group'"
                 )
             if not self.projects_config_path:
                 raise ValueError(

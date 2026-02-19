@@ -3,8 +3,6 @@
 import asyncio
 from dataclasses import dataclass
 
-import pytest
-
 from src.events.bus import Event, EventBus
 
 

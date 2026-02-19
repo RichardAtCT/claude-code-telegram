@@ -125,10 +125,7 @@ async def test_sync_deactivates_stale_projects(tmp_path: Path, db_manager) -> No
 
     reduced_file = tmp_path / "projects_reduced.yaml"
     reduced_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: App1\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: App1\n" "    path: app1\n",
         encoding="utf-8",
     )
     reduced_registry = load_project_registry(reduced_file, approved)
@@ -148,7 +145,9 @@ async def test_sync_deactivates_stale_projects(tmp_path: Path, db_manager) -> No
     )
 
 
-async def test_sync_private_topics_unavailable_raises(tmp_path: Path, db_manager) -> None:
+async def test_sync_private_topics_unavailable_raises(
+    tmp_path: Path, db_manager
+) -> None:
     """Private topics unavailable should raise dedicated error."""
     approved = tmp_path / "projects"
     approved.mkdir()
@@ -178,10 +177,7 @@ async def test_sync_renames_existing_topic_and_updates_mapping(
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: Pretty Name\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: Pretty Name\n" "    path: app1\n",
         encoding="utf-8",
     )
     registry = load_project_registry(config_file, approved)
@@ -221,10 +217,7 @@ async def test_sync_rename_failure_keeps_old_mapping_for_retry(
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: Pretty Name\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: Pretty Name\n" "    path: app1\n",
         encoding="utf-8",
     )
     registry = load_project_registry(config_file, approved)
@@ -264,10 +257,7 @@ async def test_sync_reused_mapping_skips_rename_when_name_matches(
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: Pretty Name\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: Pretty Name\n" "    path: app1\n",
         encoding="utf-8",
     )
     registry = load_project_registry(config_file, approved)
@@ -330,10 +320,7 @@ async def test_sync_recreates_active_mapping_when_topic_unusable(
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: App One\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: App One\n" "    path: app1\n",
         encoding="utf-8",
     )
     registry = load_project_registry(config_file, approved)
@@ -374,10 +361,7 @@ async def test_sync_reopen_inactive_mapping(tmp_path: Path, db_manager) -> None:
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: App One\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: App One\n" "    path: app1\n",
         encoding="utf-8",
     )
     registry = load_project_registry(config_file, approved)
@@ -415,10 +399,7 @@ async def test_sync_reopen_unusable_inactive_mapping_recreates(
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app1\n"
-        "    name: App One\n"
-        "    path: app1\n",
+        "projects:\n" "  - slug: app1\n" "    name: App One\n" "    path: app1\n",
         encoding="utf-8",
     )
     registry = load_project_registry(config_file, approved)

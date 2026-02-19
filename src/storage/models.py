@@ -130,8 +130,9 @@ class ProjectThreadModel:
         data = dict(row)
 
         for field in ["created_at", "updated_at"]:
-            if data.get(field):
-                data[field] = datetime.fromisoformat(data[field])
+            val = data.get(field)
+            if val and isinstance(val, str):
+                data[field] = datetime.fromisoformat(val)
         data["is_active"] = bool(data.get("is_active", True))
 
         return cls(**data)

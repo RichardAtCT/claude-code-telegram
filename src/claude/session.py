@@ -212,7 +212,7 @@ class SessionManager:
                 user_id=user_id,
             )
 
-        # Create new session with temporary ID until Claude Code provides real session_id
+        # Create session with temp ID until Claude provides real one
         temp_session_id = f"temp_{str(uuid.uuid4())}"
         new_session = ClaudeSession(
             session_id=temp_session_id,

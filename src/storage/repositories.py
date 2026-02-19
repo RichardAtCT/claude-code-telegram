@@ -47,7 +47,9 @@ class UserRepository:
         async with self.db.get_connection() as conn:
             await conn.execute(
                 """
-                INSERT INTO users (user_id, telegram_username, first_seen, last_active, is_allowed)
+                INSERT INTO users
+                (user_id, telegram_username, first_seen,
+                 last_active, is_allowed)
                 VALUES (?, ?, ?, ?, ?)
             """,
                 (
@@ -70,8 +72,8 @@ class UserRepository:
         async with self.db.get_connection() as conn:
             await conn.execute(
                 """
-                UPDATE users 
-                SET telegram_username = ?, last_active = ?, 
+                UPDATE users
+                SET telegram_username = ?, last_active = ?,
                     total_cost = ?, message_count = ?, session_count = ?
                 WHERE user_id = ?
             """,
@@ -134,7 +136,7 @@ class SessionRepository:
         async with self.db.get_connection() as conn:
             await conn.execute(
                 """
-                INSERT INTO sessions 
+                INSERT INTO sessions
                 (session_id, user_id, project_path, created_at, last_used)
                 VALUES (?, ?, ?, ?, ?)
             """,
@@ -160,8 +162,8 @@ class SessionRepository:
         async with self.db.get_connection() as conn:
             await conn.execute(
                 """
-                UPDATE sessions 
-                SET last_used = ?, total_cost = ?, total_turns = ?, 
+                UPDATE sessions
+                SET last_used = ?, total_cost = ?, total_turns = ?,
                     message_count = ?, is_active = ?
                 WHERE session_id = ?
             """,
@@ -198,8 +200,8 @@ class SessionRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                UPDATE sessions 
-                SET is_active = FALSE 
+                UPDATE sessions
+                SET is_active = FALSE
                 WHERE last_used < datetime('now', '-' || ? || ' days')
                   AND is_active = TRUE
             """,
@@ -216,7 +218,7 @@ class SessionRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM sessions 
+                SELECT * FROM sessions
                 WHERE project_path = ? AND is_active = TRUE
                 ORDER BY last_used DESC
             """,
@@ -288,7 +290,9 @@ class ProjectThreadRepository:
             )
             await conn.commit()
 
-        mapping = await self.get_by_chat_project(chat_id=chat_id, project_slug=project_slug)
+        mapping = await self.get_by_chat_project(
+            chat_id=chat_id, project_slug=project_slug
+        )
         if not mapping:
             raise RuntimeError("Failed to upsert project thread mapping")
         return mapping
@@ -349,9 +353,7 @@ class ProjectThreadRepository:
             rows = await cursor.fetchall()
             return [ProjectThreadModel.from_row(row) for row in rows]
 
-    async def set_active(
-        self, chat_id: int, project_slug: str, is_active: bool
-    ) -> int:
+    async def set_active(self, chat_id: int, project_slug: str, is_active: bool) -> int:
         """Set active flag for a mapping by chat+project."""
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
@@ -392,8 +394,9 @@ class MessageRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                INSERT INTO messages 
-                (session_id, user_id, timestamp, prompt, response, cost, duration_ms, error)
+                INSERT INTO messages
+                (session_id, user_id, timestamp, prompt,
+                 response, cost, duration_ms, error)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
@@ -417,9 +420,9 @@ class MessageRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM messages 
-                WHERE session_id = ? 
-                ORDER BY timestamp DESC 
+                SELECT * FROM messages
+                WHERE session_id = ?
+                ORDER BY timestamp DESC
                 LIMIT ?
             """,
                 (session_id, limit),
@@ -434,9 +437,9 @@ class MessageRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM messages 
-                WHERE user_id = ? 
-                ORDER BY timestamp DESC 
+                SELECT * FROM messages
+                WHERE user_id = ?
+                ORDER BY timestamp DESC
                 LIMIT ?
             """,
                 (user_id, limit),
@@ -449,7 +452,7 @@ class MessageRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM messages 
+                SELECT * FROM messages
                 WHERE timestamp > datetime('now', '-' || ? || ' hours')
                 ORDER BY timestamp DESC
             """,
@@ -475,8 +478,9 @@ class ToolUsageRepository:
 
             cursor = await conn.execute(
                 """
-                INSERT INTO tool_usage 
-                (session_id, message_id, tool_name, tool_input, timestamp, success, error_message)
+                INSERT INTO tool_usage
+                (session_id, message_id, tool_name, tool_input,
+                 timestamp, success, error_message)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
                 (
@@ -497,8 +501,8 @@ class ToolUsageRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM tool_usage 
-                WHERE session_id = ? 
+                SELECT * FROM tool_usage
+                WHERE session_id = ?
                 ORDER BY timestamp DESC
             """,
                 (session_id,),
@@ -526,7 +530,7 @@ class ToolUsageRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     tool_name,
                     COUNT(*) as usage_count,
                     COUNT(DISTINCT session_id) as sessions_used,
@@ -557,7 +561,7 @@ class AuditLogRepository:
 
             cursor = await conn.execute(
                 """
-                INSERT INTO audit_log 
+                INSERT INTO audit_log
                 (user_id, event_type, event_data, success, timestamp, ip_address)
                 VALUES (?, ?, ?, ?, ?, ?)
             """,
@@ -580,9 +584,9 @@ class AuditLogRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM audit_log 
-                WHERE user_id = ? 
-                ORDER BY timestamp DESC 
+                SELECT * FROM audit_log
+                WHERE user_id = ?
+                ORDER BY timestamp DESC
                 LIMIT ?
             """,
                 (user_id, limit),
@@ -595,7 +599,7 @@ class AuditLogRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM audit_log 
+                SELECT * FROM audit_log
                 WHERE timestamp > datetime('now', '-' || ? || ' hours')
                 ORDER BY timestamp DESC
             """,
@@ -622,8 +626,8 @@ class CostTrackingRepository:
                 """
                 INSERT INTO cost_tracking (user_id, date, daily_cost, request_count)
                 VALUES (?, ?, ?, 1)
-                ON CONFLICT(user_id, date) 
-                DO UPDATE SET 
+                ON CONFLICT(user_id, date)
+                DO UPDATE SET
                     daily_cost = daily_cost + ?,
                     request_count = request_count + 1
             """,
@@ -638,7 +642,7 @@ class CostTrackingRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM cost_tracking 
+                SELECT * FROM cost_tracking
                 WHERE user_id = ? AND date >= date('now', '-' || ? || ' days')
                 ORDER BY date DESC
             """,
@@ -652,12 +656,12 @@ class CostTrackingRepository:
         async with self.db.get_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     date,
                     SUM(daily_cost) as total_cost,
                     SUM(request_count) as total_requests,
                     COUNT(DISTINCT user_id) as active_users
-                FROM cost_tracking 
+                FROM cost_tracking
                 WHERE date >= date('now', '-' || ? || ' days')
                 GROUP BY date
                 ORDER BY date DESC
@@ -681,7 +685,7 @@ class AnalyticsRepository:
             # User summary
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     COUNT(DISTINCT session_id) as total_sessions,
                     COUNT(*) as total_messages,
                     SUM(cost) as total_cost,
@@ -699,7 +703,7 @@ class AnalyticsRepository:
             # Daily usage (last 30 days)
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     date(timestamp) as date,
                     COUNT(*) as messages,
                     SUM(cost) as cost,
@@ -717,7 +721,7 @@ class AnalyticsRepository:
             # Most used tools
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     tu.tool_name,
                     COUNT(*) as usage_count
                 FROM tool_usage tu
@@ -744,7 +748,7 @@ class AnalyticsRepository:
             # Overall stats
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     COUNT(DISTINCT user_id) as total_users,
                     COUNT(DISTINCT session_id) as total_sessions,
                     COUNT(*) as total_messages,
@@ -771,7 +775,7 @@ class AnalyticsRepository:
             # Top users by cost
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     u.user_id,
                     u.telegram_username,
                     SUM(m.cost) as total_cost,
@@ -789,7 +793,7 @@ class AnalyticsRepository:
             # Tool usage stats
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     tool_name,
                     COUNT(*) as usage_count,
                     COUNT(DISTINCT session_id) as sessions_used
@@ -805,7 +809,7 @@ class AnalyticsRepository:
             # Daily activity (last 30 days)
             cursor = await conn.execute(
                 """
-                SELECT 
+                SELECT
                     date(timestamp) as date,
                     COUNT(DISTINCT user_id) as active_users,
                     COUNT(*) as total_messages,

@@ -47,7 +47,8 @@ class ClaudeResponse:
 class StreamUpdate:
     """Enhanced streaming update from Claude with richer context."""
 
-    type: str  # 'assistant', 'user', 'system', 'result', 'tool_result', 'error', 'progress'
+    # assistant, user, system, result, tool_result, error, progress
+    type: str
     content: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
     metadata: Optional[Dict] = None

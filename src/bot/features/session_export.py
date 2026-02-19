@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Dict, Optional
 
 from src.storage.facade import Storage
 from src.utils.constants import MAX_SESSION_LENGTH

@@ -1,7 +1,7 @@
 """Tests for storage facade."""
 
 import tempfile
-from datetime import datetime
+from datetime import datetime  # noqa: F401
 from pathlib import Path
 
 import pytest
@@ -45,7 +45,7 @@ class TestStorageFacade:
     async def test_create_session(self, storage):
         """Test creating session."""
         # Create user first
-        user = await storage.get_or_create_user(12346, "sessionuser")
+        await storage.get_or_create_user(12346, "sessionuser")
 
         # Create session
         session = await storage.create_session(
@@ -62,8 +62,8 @@ class TestStorageFacade:
     async def test_save_claude_interaction(self, storage):
         """Test saving Claude interaction."""
         # Setup user and session
-        user = await storage.get_or_create_user(12347, "claudeuser")
-        session = await storage.create_session(12347, "/test/claude", "claude-session")
+        await storage.get_or_create_user(12347, "claudeuser")
+        await storage.create_session(12347, "/test/claude", "claude-session")
 
         # Create Claude response
         claude_response = ClaudeResponse(
@@ -110,26 +110,24 @@ class TestStorageFacade:
     async def test_is_user_allowed(self, storage):
         """Test checking user permissions."""
         # Create allowed user
-        user = await storage.get_or_create_user(12348, "alloweduser")
+        await storage.get_or_create_user(12348, "alloweduser")
         await storage.users.set_user_allowed(12348, True)
 
         # Check permission
         assert await storage.is_user_allowed(12348)
 
         # Create disallowed user
-        user2 = await storage.get_or_create_user(12349, "disalloweduser")
+        await storage.get_or_create_user(12349, "disalloweduser")
         assert not await storage.is_user_allowed(12349)
 
     async def test_get_user_session_summary(self, storage):
         """Test getting user session summary."""
         # Setup user and sessions
-        user = await storage.get_or_create_user(12350, "summaryuser")
+        await storage.get_or_create_user(12350, "summaryuser")
 
         # Create multiple sessions
         for i in range(3):
-            session = await storage.create_session(
-                12350, f"/test/project{i}", f"session-{i}"
-            )
+            await storage.create_session(12350, f"/test/project{i}", f"session-{i}")
 
             # Add some activity
             claude_response = ClaudeResponse(
@@ -160,10 +158,8 @@ class TestStorageFacade:
     async def test_get_session_history(self, storage):
         """Test getting session history."""
         # Setup user and session
-        user = await storage.get_or_create_user(12351, "historyuser")
-        session = await storage.create_session(
-            12351, "/test/history", "history-session"
-        )
+        await storage.get_or_create_user(12351, "historyuser")
+        await storage.create_session(12351, "/test/history", "history-session")
 
         # Add some messages
         for i in range(2):
@@ -193,7 +189,7 @@ class TestStorageFacade:
     async def test_log_security_event(self, storage):
         """Test logging security events."""
         # Setup user
-        user = await storage.get_or_create_user(12352, "securityuser")
+        await storage.get_or_create_user(12352, "securityuser")
 
         # Log security event
         await storage.log_security_event(
@@ -214,15 +210,14 @@ class TestStorageFacade:
     async def test_cleanup_old_data(self, storage):
         """Test cleaning up old data."""
         # Setup user and old session
-        user = await storage.get_or_create_user(12353, "cleanupuser")
-        session = await storage.create_session(
-            12353, "/test/cleanup", "cleanup-session"
-        )
+        await storage.get_or_create_user(12353, "cleanupuser")
+        await storage.create_session(12353, "/test/cleanup", "cleanup-session")
 
         # Manually set old timestamp in database
         async with storage.db_manager.get_connection() as conn:
             await conn.execute(
-                "UPDATE sessions SET last_used = datetime('now', '-35 days') WHERE session_id = ?",
+                "UPDATE sessions SET last_used = datetime('now', '-35 days') "
+                "WHERE session_id = ?",
                 ("cleanup-session",),
             )
             await conn.commit()
@@ -238,10 +233,8 @@ class TestStorageFacade:
     async def test_get_user_dashboard(self, storage):
         """Test getting user dashboard data."""
         # Setup user with activity
-        user = await storage.get_or_create_user(12354, "dashboarduser")
-        session = await storage.create_session(
-            12354, "/test/dashboard", "dashboard-session"
-        )
+        await storage.get_or_create_user(12354, "dashboarduser")
+        await storage.create_session(12354, "/test/dashboard", "dashboard-session")
 
         # Add some activity
         claude_response = ClaudeResponse(
@@ -270,8 +263,8 @@ class TestStorageFacade:
     async def test_get_admin_dashboard(self, storage):
         """Test getting admin dashboard data."""
         # Setup some test data
-        user = await storage.get_or_create_user(12355, "adminuser")
-        session = await storage.create_session(12355, "/test/admin", "admin-session")
+        await storage.get_or_create_user(12355, "adminuser")
+        await storage.create_session(12355, "/test/admin", "admin-session")
 
         claude_response = ClaudeResponse(
             content="Admin response",

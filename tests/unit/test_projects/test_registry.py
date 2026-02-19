@@ -64,10 +64,7 @@ def test_load_project_registry_rejects_outside_approved_dir(tmp_path: Path) -> N
 
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n"
-        "  - slug: app\n"
-        "    name: App\n"
-        "    path: ../outside\n",
+        "projects:\n" "  - slug: app\n" "    name: App\n" "    path: ../outside\n",
         encoding="utf-8",
     )
 

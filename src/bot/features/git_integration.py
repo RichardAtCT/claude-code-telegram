@@ -17,8 +17,6 @@ logger = logging.getLogger(__name__)
 class GitError(Exception):
     """Git operation error."""
 
-    pass
-
 
 @dataclass
 class GitStatus:

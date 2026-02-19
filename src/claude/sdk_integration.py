@@ -12,7 +12,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 from claude_agent_sdk import (
@@ -25,8 +25,6 @@ from claude_agent_sdk import (
     Message,
     ProcessError,
     ResultMessage,
-    TextBlock,
-    ToolResultBlock,
     ToolUseBlock,
     UserMessage,
     query,

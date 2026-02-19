@@ -4,7 +4,7 @@ Provides simple interface for bot handlers.
 """
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 
@@ -353,13 +353,12 @@ class ClaudeIntegration:
         self,
         user_id: int,
         working_directory: Path,
-    ) -> Optional["ClaudeSession"]:
+    ) -> Optional["ClaudeSession"]:  # noqa: F821
         """Find the most recent resumable session for a user in a directory.
 
         Returns the session if one exists that is non-expired and has a real
         (non-temporary) session ID from Claude. Returns None otherwise.
         """
-        from .session import ClaudeSession
 
         sessions = await self.session_manager._get_user_sessions(user_id)
 
@@ -549,7 +548,7 @@ class ClaudeIntegration:
         message = [
             "🚫 **Tool Access Blocked**",
             "",
-            f"Claude tried to use tools that are not currently allowed:",
+            "Claude tried to use tools that are not currently allowed:",
             f"{tool_list}",
             "",
             "**Why this happened:**",

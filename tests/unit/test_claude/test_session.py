@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.claude.sdk_integration import ClaudeResponse
 from src.claude.monitor import ToolMonitor
+from src.claude.sdk_integration import ClaudeResponse
 from src.claude.session import ClaudeSession, InMemorySessionStorage, SessionManager
 from src.config.settings import Settings
 
@@ -306,7 +306,6 @@ class TestToolMonitorConfigBypass:
         assert allowed is False
         assert "Dangerous command pattern detected" in (error or "")
 
-
     @pytest.fixture
     def config(self, tmp_path):
         """Create test config."""
@@ -362,12 +361,12 @@ class TestToolMonitorConfigBypass:
         session1 = await session_manager.get_or_create_session(
             user_id=123, project_path=Path("/test/project1")
         )
-        session2 = await session_manager.get_or_create_session(
+        await session_manager.get_or_create_session(
             user_id=123, project_path=Path("/test/project2")
         )
 
         # Creating third session should remove oldest
-        session3 = await session_manager.get_or_create_session(
+        await session_manager.get_or_create_session(
             user_id=123, project_path=Path("/test/project3")
         )
 

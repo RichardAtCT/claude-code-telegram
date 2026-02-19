@@ -559,6 +559,8 @@ class TestTypingHeartbeat:
 
         sig = inspect.signature(orchestrator._make_stream_callback)
         assert "chat" not in sig.parameters
+
+
 async def test_group_thread_mode_rejects_non_forum_chat(group_thread_settings, deps):
     """Strict thread mode rejects updates outside configured forum chat."""
     orchestrator = MessageOrchestrator(group_thread_settings, deps)
@@ -589,9 +591,7 @@ async def test_group_thread_mode_rejects_non_forum_chat(group_thread_settings, d
     update.effective_message.reply_text.assert_called_once()
 
 
-async def test_thread_mode_loads_and_persists_thread_state(
-    group_thread_settings, deps
-):
+async def test_thread_mode_loads_and_persists_thread_state(group_thread_settings, deps):
     """Thread mode loads per-thread context and writes updates back."""
     orchestrator = MessageOrchestrator(group_thread_settings, deps)
 
@@ -667,9 +667,7 @@ async def test_sync_threads_bypasses_thread_gate(group_thread_settings, deps):
     assert called["value"] is True
 
 
-async def test_private_mode_start_bypasses_thread_gate(
-    private_thread_settings, deps
-):
+async def test_private_mode_start_bypasses_thread_gate(private_thread_settings, deps):
     """Private mode allows /start outside topics."""
     orchestrator = MessageOrchestrator(private_thread_settings, deps)
     called = {"value": False}

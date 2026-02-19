@@ -39,7 +39,9 @@ class ProjectRegistry:
         return self._by_slug.get(slug)
 
 
-def load_project_registry(config_path: Path, approved_directory: Path) -> ProjectRegistry:
+def load_project_registry(
+    config_path: Path, approved_directory: Path
+) -> ProjectRegistry:
     """Load and validate project definitions from YAML."""
     if not config_path.exists():
         raise ValueError(f"Projects config file does not exist: {config_path}")
@@ -86,12 +88,13 @@ def load_project_registry(config_path: Path, approved_directory: Path) -> Projec
             absolute_path.relative_to(approved_root)
         except ValueError as e:
             raise ValueError(
-                f"Project '{slug}' path points outside approved directory: {rel_path_raw}"
+                f"Project '{slug}' path outside approved " f"directory: {rel_path_raw}"
             ) from e
 
         if not absolute_path.exists() or not absolute_path.is_dir():
             raise ValueError(
-                f"Project '{slug}' path does not exist or is not a directory: {absolute_path}"
+                f"Project '{slug}' path does not exist or "
+                f"is not a directory: {absolute_path}"
             )
 
         rel_path_norm = str(rel_path)

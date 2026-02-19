@@ -4,31 +4,21 @@
 class ClaudeError(Exception):
     """Base Claude error."""
 
-    pass
-
 
 class ClaudeTimeoutError(ClaudeError):
     """Operation timed out."""
-
-    pass
 
 
 class ClaudeProcessError(ClaudeError):
     """Process execution failed."""
 
-    pass
-
 
 class ClaudeParsingError(ClaudeError):
     """Failed to parse output."""
 
-    pass
-
 
 class ClaudeSessionError(ClaudeError):
     """Session management error."""
-
-    pass
 
 
 class ClaudeMCPError(ClaudeError):

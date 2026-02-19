@@ -234,7 +234,9 @@ class ProjectThreadManager:
             )
             return "failed"
 
-    async def _reopen_topic_if_possible(self, bot: Bot, mapping: ProjectThreadModel) -> str:
+    async def _reopen_topic_if_possible(
+        self, bot: Bot, mapping: ProjectThreadModel
+    ) -> str:
         """Reopen inactive topic. Returns reopened|unusable|failed."""
         try:
             await bot.reopen_forum_topic(
@@ -287,7 +289,8 @@ class ProjectThreadManager:
         """User guidance when private chat topics are unavailable."""
         return (
             "❌ <b>Private Topics Unavailable</b>\n\n"
-            "This bot requires topics in private chat, but topics are not available.\n\n"
+            "This bot requires topics in private chat, "
+            "but topics are not available.\n\n"
             "Enable topics for this bot chat in Telegram, then run "
             "<code>/sync_threads</code>."
         )
@@ -346,7 +349,8 @@ class ProjectThreadManager:
                 message_thread_id=message_thread_id,
                 text=(
                     f"🧵 <b>{project_name}</b>\n\n"
-                    "This project topic is ready. Send messages here to work on this project."
+                    "This project topic is ready. "
+                    "Send messages here to work on this project."
                 ),
                 parse_mode="HTML",
             )

@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -211,7 +211,6 @@ class ResponseFormatter:
         lines = text.split("\n")
         current_section = {"type": "text", "content": "", "start_line": 0}
         in_code_block = False
-        code_start = 0
 
         for i, line in enumerate(lines):
             # Check for code block markers
@@ -221,7 +220,6 @@ class ResponseFormatter:
                     if current_section["content"].strip():
                         sections.append(current_section)
                     in_code_block = True
-                    code_start = i
                     current_section = {
                         "type": "code_block",
                         "content": line + "\n",

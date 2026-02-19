@@ -71,7 +71,8 @@ class TestDatabaseManager:
         """Test that indexes are created."""
         async with db_manager.get_connection() as conn:
             cursor = await conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"
+                "SELECT name FROM sqlite_master "
+                "WHERE type='index' AND name LIKE 'idx_%'"
             )
             indexes = [row[0] for row in await cursor.fetchall()]
 

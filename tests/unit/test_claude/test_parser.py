@@ -173,7 +173,8 @@ Some plain text
                     "content": [
                         {
                             "type": "text",
-                            "text": "Here's some code:\n\n```python\nprint('hello')\n```",
+                            "text": "Here's some code:\n\n"
+                            "```python\nprint('hello')\n```",
                         },
                         {
                             "type": "tool_use",

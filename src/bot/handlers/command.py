@@ -952,7 +952,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /export command."""
-    user_id = update.effective_user.id
+    update.effective_user.id
     features = context.bot_data.get("features")
 
     # Check if session export is available

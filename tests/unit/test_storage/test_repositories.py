@@ -8,7 +8,6 @@ import pytest
 
 from src.storage.database import DatabaseManager
 from src.storage.models import (
-    AuditLogModel,
     MessageModel,
     ProjectThreadModel,
     SessionModel,
@@ -322,9 +321,7 @@ class TestProjectThreadRepository:
         assert mapping.project_slug == "app1"
         assert mapping.message_thread_id == 321
 
-        lookup = await project_thread_repo.get_by_chat_thread(
-            -1001234567890, 321
-        )
+        lookup = await project_thread_repo.get_by_chat_thread(-1001234567890, 321)
         assert lookup is not None
         assert lookup.project_slug == "app1"
 
