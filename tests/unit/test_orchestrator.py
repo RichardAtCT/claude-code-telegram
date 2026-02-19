@@ -38,8 +38,8 @@ def deps():
     }
 
 
-def test_agentic_registers_4_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose commands."""
+def test_agentic_registers_5_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, status, verbose, repo commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -56,11 +56,12 @@ def test_agentic_registers_4_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 4
+    assert len(cmd_handlers) == 5
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
+    assert frozenset({"repo"}) in commands
 
 
 def test_classic_registers_13_commands(classic_settings, deps):
@@ -110,13 +111,13 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 4 bot commands."""
+    """Agentic mode returns 5 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 4
+    assert len(commands) == 5
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose"]
+    assert cmd_names == ["start", "new", "status", "verbose", "repo"]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
