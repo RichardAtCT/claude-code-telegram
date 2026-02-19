@@ -52,7 +52,7 @@ class TestResponseFormatter:
         formatter = ResponseFormatter(mock_settings)
         assert formatter.settings == mock_settings
         assert formatter.max_message_length == 4000
-        assert formatter.max_code_block_length == 3000
+        assert formatter.max_code_block_length == 15000
 
     def test_format_simple_message(self, formatter):
         """Test formatting simple message."""
@@ -184,15 +184,27 @@ class TestResponseFormatter:
         assert "code_with_underscores" in cleaned
 
     def test_truncate_long_code_block(self, formatter):
-        """Test truncation of very long code blocks."""
-        long_code = "x" * 4000
+        """Test truncation of very long code blocks via _format_code_blocks."""
+        long_code = "x" * 20000
+        # Test _format_code_blocks directly with pre-converted HTML
+        html_block = f'<pre><code class="language-python">{long_code}</code></pre>'
+
+        result = formatter._format_code_blocks(html_block)
+
+        # Should be truncated (code block exceeds 15000-char limit)
+        assert "truncated" in result.lower()
+
+    def test_long_code_block_split_not_truncated(self, formatter):
+        """Test that moderately long code blocks are split, not truncated."""
+        long_code = "x" * 5000
         text = f"```python\n{long_code}\n```"
 
         messages = formatter.format_claude_response(text)
 
-        # Should be truncated
+        # Should be split across messages, not truncated
         assert len(messages) >= 1
-        assert "truncated" in messages[0].text.lower()
+        full_text = "".join(m.text for m in messages)
+        assert "truncated" not in full_text.lower()
 
     def test_quick_actions_keyboard(self, formatter):
         """Test quick actions keyboard generation."""
@@ -426,3 +438,95 @@ class TestCodeHighlighter:
         assert CodeHighlighter.detect_language("test.cpp") == "cpp"
         assert CodeHighlighter.detect_language("test.go") == "go"
         assert CodeHighlighter.detect_language("test.rs") == "rust"
+
+
+TELEGRAM_HARD_LIMIT = 4096
+
+
+class TestOversizedResponseIntegration:
+    """End-to-end tests ensuring no formatted chunk exceeds Telegram's 4096-char limit.
+
+    These exercise the full format_claude_response pipeline: markdown→HTML
+    conversion, HTML escaping, code block handling, semantic chunking, and
+    message splitting.
+    """
+
+    def test_large_plain_text_stays_under_limit(self, formatter):
+        """Plain text response much larger than one message."""
+        # 12 000 chars of prose-like text with paragraph breaks
+        paragraph = "The quick brown fox jumps over the lazy dog. " * 10 + "\n\n"
+        text = paragraph * 30  # ~13 500 chars
+
+        messages = formatter.format_claude_response(text)
+
+        assert len(messages) > 1
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
+            )
+
+    def test_large_code_block_stays_under_limit(self, formatter):
+        """A single huge code block must be split, not just truncated."""
+        # 10 000 chars of code — well above one message but below truncation
+        code_lines = [f"    result += process(item_{i})" for i in range(500)]
+        text = "```python\ndef big_function():\n" + "\n".join(code_lines) + "\n```"
+
+        messages = formatter.format_claude_response(text)
+
+        assert len(messages) > 1
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
+            )
+
+    def test_html_entity_expansion_stays_under_limit(self, formatter):
+        """Characters that expand during HTML escaping (& → &amp; etc.)."""
+        # Each '&' becomes '&amp;' (5 chars), '<' becomes '&lt;' (4 chars)
+        # Build a response heavy with these characters
+        line = "if (a < b && c > d) { e &= f; }\n"
+        text = "```go\n" + line * 200 + "```"
+
+        messages = formatter.format_claude_response(text)
+
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} is {len(msg.text)} chars after HTML escaping "
+                f"(limit {TELEGRAM_HARD_LIMIT})"
+            )
+
+    def test_mixed_content_stays_under_limit(self, formatter):
+        """Mixed markdown: headings, bold, code blocks, file-op lines."""
+        sections = []
+        for n in range(5):
+            sections.append(f"## Section {n}\n\n")
+            sections.append(f"Here is an **explanation** of step {n}.\n\n")
+            code = "\n".join(
+                [f'    print("step {n} line {j}")' for j in range(60)]
+            )
+            sections.append(f"```python\n{code}\n```\n\n")
+            sections.append(f"Creating file `output_{n}.py`\n\n")
+
+        text = "".join(sections)
+
+        messages = formatter.format_claude_response(text)
+
+        assert len(messages) > 1
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
+            )
+        # All content should be present (not silently truncated)
+        full = "".join(m.text for m in messages)
+        assert "Section 0" in full
+        assert "Section 4" in full
+
+    def test_format_code_output_stays_under_limit(self, formatter):
+        """format_code_output (used for tool output) must also respect limit."""
+        output = "x = 1\n" * 2000  # ~12 000 chars
+
+        messages = formatter.format_code_output(output, "python", "Build Output")
+
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
+            )

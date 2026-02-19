@@ -1146,8 +1146,9 @@ async def handle_git_callback(
                     diff_output.replace("➕", "+").replace("➖", "-").replace("📍", "@")
                 )
 
-                # Limit diff output
-                max_length = 2000
+                # Limit diff output (leave room for header + HTML tags within
+                # Telegram's 4096-char message limit)
+                max_length = 3500
                 if len(clean_diff) > max_length:
                     clean_diff = (
                         clean_diff[:max_length] + "\n\n... output truncated ..."
