@@ -68,14 +68,15 @@ context.bot_data["security_validator"]
 
 ### Key Directories
 
-- `src/config/` -- Pydantic Settings v2 config with env detection, feature flags (`features.py`)
-- `src/bot/handlers/` -- Telegram command, message, and callback handlers (classic mode)
+- `src/config/` -- Pydantic Settings v2 config with env detection, feature flags (`features.py`), YAML project loader (`loader.py`)
+- `src/bot/handlers/` -- Telegram command, message, and callback handlers (classic mode + project thread commands)
 - `src/bot/middleware/` -- Auth, rate limit, security input validation
 - `src/bot/features/` -- Git integration, file handling, quick actions, session export
-- `src/bot/orchestrator.py` -- MessageOrchestrator: routes to agentic or classic handlers
+- `src/bot/orchestrator.py` -- MessageOrchestrator: routes to agentic or classic handlers, project-topic routing
 - `src/claude/` -- Claude integration facade, SDK/CLI managers, session management, tool monitoring
-- `src/storage/` -- SQLite via aiosqlite, repository pattern (users, sessions, messages, tool_usage, audit_log, cost_tracking)
-- `src/security/` -- Multi-provider auth (whitelist + token), input validators, rate limiter, audit logging
+- `src/projects/` -- Multi-project support: `registry.py` (YAML project config), `thread_manager.py` (Telegram topic sync/routing)
+- `src/storage/` -- SQLite via aiosqlite, repository pattern (users, sessions, messages, tool_usage, audit_log, cost_tracking, project_threads)
+- `src/security/` -- Multi-provider auth (whitelist + token), input validators (with optional `disable_security_patterns`), rate limiter, audit logging
 - `src/events/` -- EventBus (async pub/sub), event types, AgentHandler, EventSecurityMiddleware
 - `src/api/` -- FastAPI webhook server, GitHub HMAC-SHA256 + Bearer token auth
 - `src/scheduler/` -- APScheduler cron jobs, persistent storage in SQLite
@@ -85,7 +86,9 @@ context.bot_data["security_validator"]
 
 5-layer defense: authentication (whitelist/token) -> directory isolation (APPROVED_DIRECTORY + path traversal prevention) -> input validation (blocks `..`, `;`, `&&`, `$()`, etc.) -> rate limiting (token bucket) -> audit logging.
 
-`SecurityValidator` blocks access to secrets (`.env`, `.ssh`, `id_rsa`, `.pem`) and dangerous shell patterns.
+`SecurityValidator` blocks access to secrets (`.env`, `.ssh`, `id_rsa`, `.pem`) and dangerous shell patterns. Can be relaxed with `DISABLE_SECURITY_PATTERNS=true` (trusted environments only).
+
+`ToolMonitor` validates Claude's tool calls against allowlist/disallowlist, file path boundaries, and dangerous bash patterns. Tool name validation can be bypassed with `DISABLE_TOOL_VALIDATION=true`.
 
 Webhook authentication: GitHub HMAC-SHA256 signature verification, generic Bearer token for other providers, atomic deduplication via `webhook_events` table.
 
@@ -95,22 +98,31 @@ Settings loaded from environment variables via Pydantic Settings. Required: `TEL
 
 Agentic platform settings: `AGENTIC_MODE` (default true), `ENABLE_API_SERVER`, `API_SERVER_PORT` (default 8080), `GITHUB_WEBHOOK_SECRET`, `WEBHOOK_API_SECRET`, `ENABLE_SCHEDULER`, `NOTIFICATION_CHAT_IDS`.
 
+Security relaxation (trusted environments only): `DISABLE_SECURITY_PATTERNS` (default false), `DISABLE_TOOL_VALIDATION` (default false).
+
+Multi-project topics: `ENABLE_PROJECT_THREADS` (default false), `PROJECT_THREADS_MODE` (`private`|`group`), `PROJECT_THREADS_CHAT_ID` (required for group mode), `PROJECTS_CONFIG_PATH` (path to YAML project registry). See `config/projects.example.yaml`.
+
 Output verbosity: `VERBOSE_LEVEL` (default 1, range 0-2). Controls how much of Claude's background activity is shown to the user in real-time. 0 = quiet (only final response, typing indicator still active), 1 = normal (tool names + reasoning snippets shown during execution), 2 = detailed (tool names with input summaries + longer reasoning text). Users can override per-session via `/verbose 0|1|2`. A persistent typing indicator is refreshed every ~2 seconds at all levels.
 
 Feature flags in `src/config/features.py` control: MCP, git integration, file uploads, quick actions, session export, image uploads, conversation mode, agentic mode, API server, scheduler.
 
+### DateTime Convention
+
+All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow()`). SQLite adapters auto-convert TIMESTAMP/DATETIME columns to `datetime` objects via `detect_types=PARSE_DECLTYPES`. Model `from_row()` methods must guard `fromisoformat()` calls with `isinstance(val, str)` checks.
+
 ## Code Style
 
-- Black (88 char line length), isort (black profile), flake8, mypy strict
+- Black (88 char line length), isort (black profile), flake8, mypy strict, autoflake for unused imports
 - pytest-asyncio with `asyncio_mode = "auto"`
 - structlog for all logging (JSON in prod, console in dev)
 - Type hints required on all functions (`disallow_untyped_defs = true`)
+- Use `datetime.now(UTC)` not `datetime.utcnow()` (deprecated)
 
 ## Adding a New Bot Command
 
 ### Agentic mode
 
-Agentic mode has minimal commands (`/start`, `/new`, `/status`, `/verbose`). To add a new command:
+Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
 
 1. Add handler function in `src/bot/orchestrator.py`
 2. Register in `MessageOrchestrator._register_agentic_handlers()`
