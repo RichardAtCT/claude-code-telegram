@@ -123,6 +123,40 @@ class TestClaudeSession:
         assert restored.message_count == original.message_count
         assert restored.tools_used == original.tools_used
 
+    def test_from_dict_normalizes_legacy_naive_timestamps(self):
+        """Legacy naive timestamps should be normalized to UTC-aware datetimes."""
+        data = {
+            "session_id": "test-session",
+            "user_id": 123,
+            "project_path": "/test/path",
+            "created_at": "2026-02-18T10:00:00",
+            "last_used": "2026-02-18T10:30:00",
+            "total_cost": 0.0,
+            "total_turns": 0,
+            "message_count": 0,
+            "tools_used": [],
+        }
+
+        restored = ClaudeSession.from_dict(data)
+
+        assert restored.created_at.tzinfo is not None
+        assert restored.last_used.tzinfo is not None
+        assert restored.created_at.tzinfo == UTC
+        assert restored.last_used.tzinfo == UTC
+
+    def test_is_expired_handles_legacy_naive_last_used(self):
+        """Expiry check should not crash on naive legacy timestamps."""
+        naive_old = datetime.now() - timedelta(hours=30)
+        session = ClaudeSession(
+            session_id="legacy-session",
+            user_id=123,
+            project_path=Path("/test/path"),
+            created_at=naive_old,
+            last_used=naive_old,
+        )
+
+        assert session.is_expired(24) is True
+
 
 class TestInMemorySessionStorage:
     """Test in-memory session storage."""

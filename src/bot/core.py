@@ -126,22 +126,37 @@ class ClaudeCodeBot:
         logger.info("Middleware added to bot")
 
     def _create_middleware_handler(self, middleware_func: Callable) -> Callable:
-        """Create middleware handler that injects dependencies."""
+        """Create middleware handler that injects dependencies.
+
+        When middleware rejects a request (returns without calling the handler),
+        ApplicationHandlerStop is raised to prevent subsequent handler groups
+        from processing the update.
+        """
+        from telegram.ext import ApplicationHandlerStop
 
         async def middleware_wrapper(
             update: Update, context: ContextTypes.DEFAULT_TYPE
-        ):
+        ) -> None:
             # Inject dependencies into context
             for key, value in self.deps.items():
                 context.bot_data[key] = value
             context.bot_data["settings"] = self.settings
 
-            # Create a dummy handler that does nothing (middleware will handle everything)
-            async def dummy_handler(event, data):
-                return None
+            # Track whether the middleware allowed the request through
+            handler_called = False
+
+            async def dummy_handler(event: Any, data: Any) -> None:
+                nonlocal handler_called
+                handler_called = True
 
             # Call middleware with Telegram-style parameters
-            return await middleware_func(dummy_handler, update, context.bot_data)
+            await middleware_func(dummy_handler, update, context.bot_data)
+
+            # If middleware didn't call the handler, it rejected the request.
+            # Raise ApplicationHandlerStop to prevent subsequent handler groups
+            # (including the main message handlers) from processing this update.
+            if not handler_called:
+                raise ApplicationHandlerStop()
 
         return middleware_wrapper
 

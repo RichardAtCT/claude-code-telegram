@@ -268,6 +268,100 @@ class TestClaudeSDKManager:
         assert captured_options[0].mcp_servers == {}
 
 
+class TestClaudeSandboxSettings:
+    """Test sandbox and system_prompt settings on ClaudeAgentOptions."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        """Create test config with sandbox enabled."""
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            use_sdk=True,
+            claude_timeout_seconds=2,
+            sandbox_enabled=True,
+            sandbox_excluded_commands=["git", "npm"],
+        )
+
+    @pytest.fixture
+    def sdk_manager(self, config):
+        return ClaudeSDKManager(config)
+
+    async def test_sandbox_settings_passed_to_options(self, sdk_manager, tmp_path):
+        """Test that sandbox settings are set on ClaudeAgentOptions."""
+        captured_options = []
+
+        async def mock_query(prompt, options):
+            captured_options.append(options)
+            yield _make_assistant_message("Test response")
+            yield _make_result_message(total_cost_usd=0.01)
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        opts = captured_options[0]
+        assert opts.sandbox == {
+            "enabled": True,
+            "autoAllowBashIfSandboxed": True,
+            "excludedCommands": ["git", "npm"],
+        }
+
+    async def test_system_prompt_set_with_working_directory(
+        self, sdk_manager, tmp_path
+    ):
+        """Test that system_prompt references the working directory."""
+        captured_options = []
+
+        async def mock_query(prompt, options):
+            captured_options.append(options)
+            yield _make_assistant_message("Test response")
+            yield _make_result_message(total_cost_usd=0.01)
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        opts = captured_options[0]
+        assert str(tmp_path) in opts.system_prompt
+        assert "relative paths" in opts.system_prompt.lower()
+
+    async def test_sandbox_disabled_when_config_false(self, tmp_path):
+        """Test sandbox is disabled when sandbox_enabled=False."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            use_sdk=True,
+            claude_timeout_seconds=2,
+            sandbox_enabled=False,
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+
+        async def mock_query(prompt, options):
+            captured_options.append(options)
+            yield _make_assistant_message("Test response")
+            yield _make_result_message(total_cost_usd=0.01)
+
+        with patch("src.claude.sdk_integration.query", side_effect=mock_query):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].sandbox["enabled"] is False
+
+
 class TestClaudeMCPErrors:
     """Test MCP-specific error handling."""
 

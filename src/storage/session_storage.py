@@ -3,7 +3,7 @@
 Replaces the in-memory session storage with SQLite persistence.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -36,7 +36,7 @@ class SQLiteSessionStorage(SessionStorage):
 
             if not user_exists:
                 # Create user record
-                now = datetime.utcnow()
+                now = datetime.now(UTC)
                 await conn.execute(
                     """
                     INSERT INTO users (user_id, telegram_username, first_seen, last_active, is_allowed)

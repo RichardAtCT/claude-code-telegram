@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "claude-code-telegram"
-version = "0.1.0"
+version = "1.1.0"
 description = "Telegram bot for remote Claude Code access with comprehensive configuration management"
 authors = ["Richard Atkinson <richardatk01@gmail.com>"]
 license = "MIT"
@@ -34,7 +34,7 @@ python-dotenv = "^1.0.0"
 aiofiles = "^24.1.0"
 aiosqlite = "^0.21.0"
 anthropic = "^0.40.0"
-claude-agent-sdk = "^0.1.30"
+claude-agent-sdk = "^0.1.38"
 fastapi = "^0.115.0"
 uvicorn = {version = "^0.34.0", extras = ["standard"]}
 apscheduler = "^3.10"

@@ -192,6 +192,10 @@ async def handle_text_message(
         # Get existing session ID
         session_id = context.user_data.get("claude_session_id")
 
+        # Check if /new was used — skip auto-resume for this first message.
+        # Flag is only cleared after a successful run so retries keep the intent.
+        force_new = bool(context.user_data.get("force_new_session"))
+
         # Enhanced stream updates handler with progress tracking
         async def stream_handler(update_obj):
             try:
@@ -209,7 +213,12 @@ async def handle_text_message(
                 user_id=user_id,
                 session_id=session_id,
                 on_stream=stream_handler,
+                force_new=force_new,
             )
+
+            # New session created successfully — clear the one-shot flag
+            if force_new:
+                context.user_data["force_new_session"] = False
 
             # Update session ID
             context.user_data["claude_session_id"] = claude_response.session_id

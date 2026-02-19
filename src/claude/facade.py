@@ -55,6 +55,7 @@ class ClaudeIntegration:
         user_id: int,
         session_id: Optional[str] = None,
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
+        force_new: bool = False,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -63,11 +64,13 @@ class ClaudeIntegration:
             working_directory=str(working_directory),
             session_id=session_id,
             prompt_length=len(prompt),
+            force_new=force_new,
         )
 
         # If no session_id provided, try to find an existing session for this
-        # user+directory combination (auto-resume)
-        if not session_id:
+        # user+directory combination (auto-resume).
+        # Skip auto-resume when force_new is set (e.g. after /new command).
+        if not session_id and not force_new:
             existing_session = await self._find_resumable_session(
                 user_id, working_directory
             )
@@ -120,7 +123,7 @@ class ClaudeIntegration:
                         )
 
                         # For critical tools, we should fail fast
-                        if tool_name in ["Task", "Read", "Write", "Edit"]:
+                        if tool_name in ["Task", "Read", "Write", "Edit", "Bash"]:
                             # Create comprehensive error message
                             admin_instructions = self._get_admin_instructions(
                                 list(blocked_tools)
@@ -296,6 +299,7 @@ class ClaudeIntegration:
                     or "JSON decode error" in error_str
                     or "TaskGroup" in error_str
                     or "ExceptionGroup" in error_str
+                    or "Unknown message type" in error_str
                 ):
                     self._sdk_failed_count += 1
                     logger.warning(

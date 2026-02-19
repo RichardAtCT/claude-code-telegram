@@ -1,6 +1,6 @@
 """Tests for authentication system."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -22,8 +22,8 @@ class TestUserSession:
         session = UserSession(
             user_id=123,
             auth_provider="TestProvider",
-            created_at=datetime.utcnow(),
-            last_activity=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_activity=datetime.now(UTC),
         )
 
         assert session.user_id == 123
@@ -32,7 +32,7 @@ class TestUserSession:
 
     def test_session_expiry(self):
         """Test session expiry logic."""
-        old_time = datetime.utcnow() - timedelta(hours=25)
+        old_time = datetime.now(UTC) - timedelta(hours=25)
         session = UserSession(
             user_id=123,
             auth_provider="TestProvider",
@@ -44,7 +44,7 @@ class TestUserSession:
 
     def test_session_refresh(self):
         """Test session refresh."""
-        old_time = datetime.utcnow() - timedelta(hours=1)
+        old_time = datetime.now(UTC) - timedelta(hours=1)
         session = UserSession(
             user_id=123,
             auth_provider="TestProvider",
@@ -98,7 +98,7 @@ class TestInMemoryTokenStorage:
         """Test storing and retrieving tokens."""
         user_id = 123
         token_hash = "test_hash"
-        expires_at = datetime.utcnow() + timedelta(days=1)
+        expires_at = datetime.now(UTC) + timedelta(days=1)
 
         await storage.store_token(user_id, token_hash, expires_at)
 
@@ -111,7 +111,7 @@ class TestInMemoryTokenStorage:
         """Test that expired tokens are cleaned up."""
         user_id = 123
         token_hash = "test_hash"
-        expires_at = datetime.utcnow() - timedelta(days=1)  # Expired
+        expires_at = datetime.now(UTC) - timedelta(days=1)  # Expired
 
         await storage.store_token(user_id, token_hash, expires_at)
 
@@ -122,7 +122,7 @@ class TestInMemoryTokenStorage:
         """Test token revocation."""
         user_id = 123
         token_hash = "test_hash"
-        expires_at = datetime.utcnow() + timedelta(days=1)
+        expires_at = datetime.now(UTC) + timedelta(days=1)
 
         await storage.store_token(user_id, token_hash, expires_at)
         await storage.revoke_token(user_id)
@@ -268,7 +268,7 @@ class TestAuthenticationManager:
 
         # Manually expire session
         session = auth_manager.get_session(user_id)
-        session.last_activity = datetime.utcnow() - timedelta(hours=25)
+        session.last_activity = datetime.now(UTC) - timedelta(hours=25)
 
         # Should no longer be authenticated
         assert not auth_manager.is_authenticated(user_id)

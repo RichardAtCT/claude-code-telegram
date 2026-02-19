@@ -106,8 +106,18 @@ class Settings(BaseSettings):
         description="List of allowed Claude tools",
     )
     claude_disallowed_tools: Optional[List[str]] = Field(
-        default=["git commit", "git push"],
+        default=[],
         description="List of explicitly disallowed Claude tools/commands",
+    )
+
+    # Sandbox settings
+    sandbox_enabled: bool = Field(
+        True,
+        description="Enable OS-level bash sandboxing to restrict commands to approved directory",
+    )
+    sandbox_excluded_commands: Optional[List[str]] = Field(
+        default=["git", "npm", "pip", "poetry", "make", "docker"],
+        description="Commands that run outside the sandbox (need system access)",
     )
 
     # Rate limiting
@@ -149,6 +159,18 @@ class Settings(BaseSettings):
     agentic_mode: bool = Field(
         True,
         description="Conversational agentic mode (default) vs classic command mode",
+    )
+
+    # Output verbosity (0=quiet, 1=normal, 2=detailed)
+    verbose_level: int = Field(
+        1,
+        description=(
+            "Bot output verbosity: 0=quiet (final response only), "
+            "1=normal (tool names + reasoning), "
+            "2=detailed (tool inputs + longer reasoning)"
+        ),
+        ge=0,
+        le=2,
     )
 
     # Monitoring

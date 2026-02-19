@@ -177,6 +177,15 @@ class ClaudeSDKManager:
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
                 cli_path=cli_path,
+                sandbox={
+                    "enabled": self.config.sandbox_enabled,
+                    "autoAllowBashIfSandboxed": True,
+                    "excludedCommands": self.config.sandbox_excluded_commands or [],
+                },
+                system_prompt=(
+                    f"All file operations must stay within {working_directory}. "
+                    "Use relative paths."
+                ),
             )
 
             # Pass MCP server configuration if enabled
@@ -380,18 +389,29 @@ class ClaudeSDKManager:
             if isinstance(message, AssistantMessage):
                 # Extract content from assistant message
                 content = getattr(message, "content", [])
+                text_parts = []
+                tool_calls = []
+
                 if content and isinstance(content, list):
-                    # Extract text from TextBlock objects
-                    text_parts = []
                     for block in content:
-                        if hasattr(block, "text"):
+                        if isinstance(block, ToolUseBlock):
+                            tool_calls.append(
+                                {
+                                    "name": getattr(block, "name", "unknown"),
+                                    "input": getattr(block, "input", {}),
+                                    "id": getattr(block, "id", None),
+                                }
+                            )
+                        elif hasattr(block, "text"):
                             text_parts.append(block.text)
-                    if text_parts:
-                        update = StreamUpdate(
-                            type="assistant",
-                            content="\n".join(text_parts),
-                        )
-                        await stream_callback(update)
+
+                if text_parts or tool_calls:
+                    update = StreamUpdate(
+                        type="assistant",
+                        content=("\n".join(text_parts) if text_parts else None),
+                        tool_calls=tool_calls if tool_calls else None,
+                    )
+                    await stream_callback(update)
                 elif content:
                     # Fallback for non-list content
                     update = StreamUpdate(
@@ -399,9 +419,6 @@ class ClaudeSDKManager:
                         content=str(content),
                     )
                     await stream_callback(update)
-
-                # Check for tool calls (if available in the message structure)
-                # Note: This depends on the actual claude-agent-sdk message structure
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
@@ -448,9 +465,9 @@ class ClaudeSDKManager:
                         if isinstance(block, ToolUseBlock):
                             tools_used.append(
                                 {
-                                    "name": getattr(block, "tool_name", "unknown"),
+                                    "name": getattr(block, "name", "unknown"),
                                     "timestamp": current_time,
-                                    "input": getattr(block, "tool_input", {}),
+                                    "input": getattr(block, "input", {}),
                                 }
                             )
 
