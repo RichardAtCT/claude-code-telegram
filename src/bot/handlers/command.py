@@ -127,6 +127,7 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Clear existing session data - this is the explicit way to reset context
     context.user_data["claude_session_id"] = None
     context.user_data["session_started"] = True
+    context.user_data["force_new_session"] = True
 
     cleared_info = ""
     if old_session_id:
