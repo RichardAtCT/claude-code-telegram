@@ -49,6 +49,18 @@ class Settings(BaseSettings):
         None, description="Secret for auth tokens"
     )
 
+    # Security relaxation (for trusted environments)
+    disable_security_patterns: bool = Field(
+        False,
+        description=(
+            "Disable dangerous pattern validation (pipes, redirections, etc.)"
+        ),
+    )
+    disable_tool_validation: bool = Field(
+        False,
+        description="Allow all Claude tools by bypassing tool validation checks",
+    )
+
     # Claude settings
     claude_binary_path: Optional[str] = Field(
         None, description="Path to Claude CLI binary (deprecated)"
@@ -94,7 +106,7 @@ class Settings(BaseSettings):
         description="List of allowed Claude tools",
     )
     claude_disallowed_tools: Optional[List[str]] = Field(
-        default=["git commit", "git push"],
+        default=[],
         description="List of explicitly disallowed Claude tools/commands",
     )
 

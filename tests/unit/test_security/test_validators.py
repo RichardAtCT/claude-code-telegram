@@ -28,6 +28,15 @@ class TestSecurityValidator:
         """Test validator initialization."""
         assert validator.approved_directory == temp_approved_dir.resolve()
 
+    def test_validator_initialization_with_pattern_checks_disabled(
+        self, temp_approved_dir
+    ):
+        """Validator should allow disabling dangerous pattern checks."""
+        validator = SecurityValidator(
+            temp_approved_dir, disable_security_patterns=True
+        )
+        assert validator.disable_security_patterns is True
+
     def test_valid_relative_path(self, validator, temp_approved_dir):
         """Test validation of valid relative paths."""
         # Create a test subdirectory
@@ -110,6 +119,19 @@ class TestSecurityValidator:
             valid, path, error = validator.validate_path(pattern)
             assert valid is False
             assert "forbidden pattern" in error
+
+    def test_dangerous_patterns_can_be_disabled(self, temp_approved_dir):
+        """Dangerous pattern checks can be disabled for trusted environments."""
+        validator = SecurityValidator(
+            temp_approved_dir, disable_security_patterns=True
+        )
+
+        # Pattern check is bypassed; traversal protections still apply separately.
+        valid, path, error = validator.validate_path("safe|name")
+
+        assert valid is True
+        assert path == (temp_approved_dir / "safe|name").resolve()
+        assert error is None
 
     def test_filename_validation_valid(self, validator):
         """Test validation of valid filenames."""

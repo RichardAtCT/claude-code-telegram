@@ -9,7 +9,7 @@ Features:
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
@@ -25,6 +25,17 @@ if TYPE_CHECKING:
 ClaudeResponse = Union["CLIClaudeResponse", "SDKClaudeResponse"]
 
 logger = structlog.get_logger()
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Normalize datetime to timezone-aware UTC.
+
+    Backward compatibility: legacy persisted sessions may contain naive
+    timestamps; treat naive values as UTC.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 @dataclass
@@ -44,12 +55,12 @@ class ClaudeSession:
 
     def is_expired(self, timeout_hours: int) -> bool:
         """Check if session has expired."""
-        age = datetime.utcnow() - self.last_used
+        age = datetime.now(UTC) - _to_utc(self.last_used)
         return age > timedelta(hours=timeout_hours)
 
     def update_usage(self, response: ClaudeResponse) -> None:
         """Update session with usage from response."""
-        self.last_used = datetime.utcnow()
+        self.last_used = _to_utc(datetime.now(UTC))
         self.total_cost += response.cost
         self.total_turns += response.num_turns
         self.message_count += 1
@@ -82,8 +93,8 @@ class ClaudeSession:
             session_id=data["session_id"],
             user_id=data["user_id"],
             project_path=Path(data["project_path"]),
-            created_at=datetime.fromisoformat(data["created_at"]),
-            last_used=datetime.fromisoformat(data["last_used"]),
+            created_at=_to_utc(datetime.fromisoformat(data["created_at"])),
+            last_used=_to_utc(datetime.fromisoformat(data["last_used"])),
             total_cost=data.get("total_cost", 0.0),
             total_turns=data.get("total_turns", 0),
             message_count=data.get("message_count", 0),
@@ -207,8 +218,8 @@ class SessionManager:
             session_id=temp_session_id,
             user_id=user_id,
             project_path=project_path,
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         # Mark as new session (not from Claude Code yet)

@@ -1,13 +1,35 @@
 """Test Claude session management."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from src.claude.sdk_integration import ClaudeResponse
+from src.claude.monitor import ToolMonitor
 from src.claude.session import ClaudeSession, InMemorySessionStorage, SessionManager
 from src.config.settings import Settings
+
+
+class _MonitorConfigStub:
+    """Minimal config object for ToolMonitor tests."""
+
+    def __init__(self, disable_tool_validation: bool):
+        self.disable_tool_validation = disable_tool_validation
+        self.claude_allowed_tools = ["Read"]
+        self.claude_disallowed_tools = ["Bash"]
+
+
+class _ValidatorStub:
+    """Minimal security validator stub for ToolMonitor tests."""
+
+    def __init__(self, should_allow_path: bool = True):
+        self.should_allow_path = should_allow_path
+
+    def validate_path(self, file_path: str, working_directory: Path):
+        if self.should_allow_path:
+            return True, working_directory / file_path, None
+        return False, None, "invalid path"
 
 
 class TestClaudeSession:
@@ -19,8 +41,8 @@ class TestClaudeSession:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         assert session.session_id == "test-session"
@@ -33,7 +55,7 @@ class TestClaudeSession:
 
     def test_session_expiry(self):
         """Test session expiry logic."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         old_time = now - timedelta(hours=25)
 
         session = ClaudeSession(
@@ -54,8 +76,8 @@ class TestClaudeSession:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         response = ClaudeResponse(
@@ -81,8 +103,8 @@ class TestClaudeSession:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
             total_cost=0.05,
             total_turns=2,
             message_count=1,
@@ -101,6 +123,40 @@ class TestClaudeSession:
         assert restored.message_count == original.message_count
         assert restored.tools_used == original.tools_used
 
+    def test_from_dict_normalizes_legacy_naive_timestamps(self):
+        """Legacy naive timestamps should be normalized to UTC-aware datetimes."""
+        data = {
+            "session_id": "test-session",
+            "user_id": 123,
+            "project_path": "/test/path",
+            "created_at": "2026-02-18T10:00:00",
+            "last_used": "2026-02-18T10:30:00",
+            "total_cost": 0.0,
+            "total_turns": 0,
+            "message_count": 0,
+            "tools_used": [],
+        }
+
+        restored = ClaudeSession.from_dict(data)
+
+        assert restored.created_at.tzinfo is not None
+        assert restored.last_used.tzinfo is not None
+        assert restored.created_at.tzinfo == UTC
+        assert restored.last_used.tzinfo == UTC
+
+    def test_is_expired_handles_legacy_naive_last_used(self):
+        """Expiry check should not crash on naive legacy timestamps."""
+        naive_old = datetime.now() - timedelta(hours=30)
+        session = ClaudeSession(
+            session_id="legacy-session",
+            user_id=123,
+            project_path=Path("/test/path"),
+            created_at=naive_old,
+            last_used=naive_old,
+        )
+
+        assert session.is_expired(24) is True
+
 
 class TestInMemorySessionStorage:
     """Test in-memory session storage."""
@@ -117,8 +173,8 @@ class TestInMemorySessionStorage:
             session_id="test-session",
             user_id=123,
             project_path=Path("/test/path"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
     async def test_save_and_load_session(self, storage, sample_session):
@@ -154,22 +210,22 @@ class TestInMemorySessionStorage:
             session_id="session1",
             user_id=123,
             project_path=Path("/test/path1"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         session2 = ClaudeSession(
             session_id="session2",
             user_id=123,
             project_path=Path("/test/path2"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         session3 = ClaudeSession(
             session_id="session3",
             user_id=456,
             project_path=Path("/test/path3"),
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
 
         await storage.save_session(session1)
@@ -189,6 +245,67 @@ class TestInMemorySessionStorage:
 
 class TestSessionManager:
     """Test session manager."""
+
+
+class TestToolMonitorConfigBypass:
+    """Test ToolMonitor behavior when tool validation is disabled."""
+
+    async def test_validate_tool_call_bypasses_allowlist_when_disabled(self):
+        monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=True), None)
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="TotallyCustomTool",
+            tool_input={},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is True
+        assert error is None
+        assert monitor.tool_usage["TotallyCustomTool"] == 1
+
+    async def test_validate_tool_call_enforces_allowlist_when_enabled(self):
+        monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=False), None)
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="TotallyCustomTool",
+            tool_input={},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is False
+        assert "Tool not allowed" in (error or "")
+
+    async def test_disable_tool_validation_still_rejects_invalid_file_path(self):
+        validator = _ValidatorStub(should_allow_path=False)
+        monitor = ToolMonitor(
+            _MonitorConfigStub(disable_tool_validation=True), validator
+        )
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="Read",
+            tool_input={"file_path": "../secret"},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is False
+        assert error == "invalid path"
+
+    async def test_disable_tool_validation_still_rejects_dangerous_bash(self):
+        monitor = ToolMonitor(_MonitorConfigStub(disable_tool_validation=True), None)
+
+        allowed, error = await monitor.validate_tool_call(
+            tool_name="Bash",
+            tool_input={"command": "echo test > /tmp/out"},
+            working_directory=Path("/tmp"),
+            user_id=123,
+        )
+
+        assert allowed is False
+        assert "Dangerous command pattern detected" in (error or "")
+
 
     @pytest.fixture
     def config(self, tmp_path):

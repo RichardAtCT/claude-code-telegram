@@ -8,6 +8,8 @@ Features:
 """
 
 import asyncio
+import sqlite3
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, List, Tuple
@@ -16,6 +18,16 @@ import aiosqlite
 import structlog
 
 logger = structlog.get_logger()
+
+
+# Python 3.12+: sqlite3's default datetime adapter is deprecated.
+# Register explicit adapters/converters once at import time to avoid warnings
+# and keep consistent ISO-8601 persistence for datetime values.
+sqlite3.register_adapter(datetime, lambda value: value.isoformat())
+sqlite3.register_converter("TIMESTAMP", lambda b: datetime.fromisoformat(b.decode()))
+sqlite3.register_converter("DATETIME", lambda b: datetime.fromisoformat(b.decode()))
+# Keep DATE columns as raw ISO strings (matches existing model expectations).
+sqlite3.register_converter("DATE", lambda b: b.decode())
 
 # Initial schema migration
 INITIAL_SCHEMA = """
@@ -158,7 +170,9 @@ class DatabaseManager:
 
     async def _run_migrations(self):
         """Run database migrations."""
-        async with aiosqlite.connect(self.database_path) as conn:
+        async with aiosqlite.connect(
+            self.database_path, detect_types=sqlite3.PARSE_DECLTYPES
+        ) as conn:
             conn.row_factory = aiosqlite.Row
 
             # Enable foreign keys
@@ -304,7 +318,9 @@ class DatabaseManager:
 
         async with self._pool_lock:
             for _ in range(self._pool_size):
-                conn = await aiosqlite.connect(self.database_path)
+                conn = await aiosqlite.connect(
+                    self.database_path, detect_types=sqlite3.PARSE_DECLTYPES
+                )
                 conn.row_factory = aiosqlite.Row
                 await conn.execute("PRAGMA foreign_keys = ON")
                 self._connection_pool.append(conn)
@@ -316,7 +332,9 @@ class DatabaseManager:
             if self._connection_pool:
                 conn = self._connection_pool.pop()
             else:
-                conn = await aiosqlite.connect(self.database_path)
+                conn = await aiosqlite.connect(
+                    self.database_path, detect_types=sqlite3.PARSE_DECLTYPES
+                )
                 conn.row_factory = aiosqlite.Row
                 await conn.execute("PRAGMA foreign_keys = ON")
 

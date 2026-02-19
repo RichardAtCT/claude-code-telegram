@@ -134,13 +134,18 @@ class ToolMonitor:
     """Monitor and validate Claude's tool usage."""
 
     def __init__(
-        self, config: Settings, security_validator: Optional[SecurityValidator] = None
+        self,
+        config: Settings,
+        security_validator: Optional[SecurityValidator] = None,
+        agentic_mode: bool = False,
     ):
         """Initialize tool monitor."""
         self.config = config
         self.security_validator = security_validator
+        self.agentic_mode = agentic_mode
         self.tool_usage: Dict[str, int] = defaultdict(int)
         self.security_violations: List[Dict[str, Any]] = []
+        self.disable_tool_validation = getattr(config, "disable_tool_validation", False)
 
     async def validate_tool_call(
         self,
@@ -157,9 +162,19 @@ class ToolMonitor:
             user_id=user_id,
         )
 
+        # When disabled, skip only allowlist/disallowlist name checks.
+        # Keep path and command safety validation active.
+        if self.disable_tool_validation:
+            logger.debug(
+                "Tool name validation disabled; skipping allow/disallow checks",
+                tool_name=tool_name,
+                user_id=user_id,
+            )
+
         # Check if tool is allowed
         if (
-            hasattr(self.config, "claude_allowed_tools")
+            not self.disable_tool_validation
+            and hasattr(self.config, "claude_allowed_tools")
             and self.config.claude_allowed_tools
         ):
             if tool_name not in self.config.claude_allowed_tools:
@@ -175,7 +190,8 @@ class ToolMonitor:
 
         # Check if tool is explicitly disallowed
         if (
-            hasattr(self.config, "claude_disallowed_tools")
+            not self.disable_tool_validation
+            and hasattr(self.config, "claude_disallowed_tools")
             and self.config.claude_disallowed_tools
         ):
             if tool_name in self.config.claude_disallowed_tools:
@@ -221,8 +237,9 @@ class ToolMonitor:
                     logger.warning("Invalid file path in tool call", **violation)
                     return False, error
 
-        # Validate shell commands
-        if tool_name in ["bash", "shell", "Bash"]:
+        # Validate shell commands (skip in agentic mode — Claude Code runs
+        # inside its own sandbox, and these patterns block normal gh/git usage)
+        if tool_name in ["bash", "shell", "Bash"] and not self.agentic_mode:
             command = tool_input.get("command", "")
 
             # Check for dangerous commands

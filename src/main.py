@@ -128,7 +128,10 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         raise ConfigurationError("No authentication providers configured")
 
     auth_manager = AuthenticationManager(providers)
-    security_validator = SecurityValidator(config.approved_directory)
+    security_validator = SecurityValidator(
+        config.approved_directory,
+        disable_security_patterns=config.disable_security_patterns,
+    )
     rate_limiter = RateLimiter(config)
 
     # Create audit storage and logger
@@ -138,7 +141,9 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Create Claude integration components with persistent storage
     session_storage = SQLiteSessionStorage(storage.db_manager)
     session_manager = SessionManager(config, session_storage)
-    tool_monitor = ToolMonitor(config, security_validator)
+    tool_monitor = ToolMonitor(
+        config, security_validator, agentic_mode=config.agentic_mode
+    )
 
     # Create Claude manager based on configuration
     if config.use_sdk:

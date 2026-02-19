@@ -7,7 +7,7 @@ Features:
 """
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict, List, Optional
 
 import structlog
@@ -53,8 +53,8 @@ class UserRepository:
                 (
                     user.user_id,
                     user.telegram_username,
-                    user.first_seen or datetime.utcnow(),
-                    user.last_active or datetime.utcnow(),
+                    user.first_seen or datetime.now(UTC),
+                    user.last_active or datetime.now(UTC),
                     user.is_allowed,
                 ),
             )
@@ -77,7 +77,7 @@ class UserRepository:
             """,
                 (
                     user.telegram_username,
-                    user.last_active or datetime.utcnow(),
+                    user.last_active or datetime.now(UTC),
                     user.total_cost,
                     user.message_count,
                     user.session_count,
@@ -615,7 +615,7 @@ class CostTrackingRepository:
     async def update_daily_cost(self, user_id: int, cost: float, date: str = None):
         """Update daily cost for user."""
         if not date:
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+            date = datetime.now(UTC).strftime("%Y-%m-%d")
 
         async with self.db.get_connection() as conn:
             await conn.execute(

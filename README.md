@@ -80,7 +80,7 @@ The bot supports two interaction modes:
 
 The default conversational mode. Just talk to Claude naturally -- no special commands required.
 
-**Commands:** `/start`, `/new`, `/status`, `/verbose`  
+**Commands:** `/start`, `/new`, `/status`, `/verbose`, `/repo`
 If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
 
 ```
@@ -110,6 +110,30 @@ Use `/verbose 0|1|2` to control how much background activity is shown:
 | **0** (quiet) | Final response only (typing indicator stays active) |
 | **1** (normal, default) | Tool names + reasoning snippets in real-time |
 | **2** (detailed) | Tool names with inputs + longer reasoning text |
+
+#### GitHub Workflow
+
+Claude Code already knows how to use `gh` CLI and `git`. Authenticate on your server with `gh auth login`, then work with repos conversationally:
+
+```
+You: List my repos related to monitoring
+Bot: [Claude runs gh repo list, shows results]
+
+You: Clone the uptime one
+Bot: [Claude runs gh repo clone, clones into workspace]
+
+You: /repo
+Bot: 📦 uptime-monitor/  ◀
+     📁 other-project/
+
+You: Show me the open issues
+Bot: [Claude runs gh issue list]
+
+You: Create a fix branch and push it
+Bot: [Claude creates branch, commits, pushes]
+```
+
+Use `/repo` to list cloned repos in your workspace, or `/repo <name>` to switch directories (sessions auto-resume).
 
 ### Classic Mode
 

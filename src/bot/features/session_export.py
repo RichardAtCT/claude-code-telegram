@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Dict, Optional
 
@@ -87,7 +87,7 @@ class SessionExporter:
             raise ValueError(f"Unsupported export format: {format}")
 
         # Create filename
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"session_{session_id[:8]}_{timestamp}.{extension}"
 
         return ExportedSession(
@@ -96,7 +96,7 @@ class SessionExporter:
             filename=filename,
             mime_type=mime_type,
             size_bytes=len(content.encode()),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
         )
 
     async def _export_markdown(self, session: dict, messages: list) -> str:

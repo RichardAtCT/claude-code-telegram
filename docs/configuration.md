@@ -46,6 +46,18 @@ ENABLE_TOKEN_AUTH=false
 AUTH_TOKEN_SECRET=your-secret-key-here
 ```
 
+#### Security Relaxation (Trusted Environments Only)
+
+```bash
+# Disable dangerous pattern validation in SecurityValidator (default: false)
+# WARNING: This allows characters such as pipes and redirections in validated paths.
+DISABLE_SECURITY_PATTERNS=false
+
+# Disable ToolMonitor allowlist/disallowlist checks (default: false)
+# WARNING: This only skips tool-name allow/disallow checks; path and Bash safety checks still apply.
+DISABLE_TOOL_VALIDATION=false
+```
+
 #### Claude Configuration
 
 ```bash
