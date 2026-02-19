@@ -515,10 +515,9 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
-        # Check if /new was used — skip auto-resume for this first message
+        # Check if /new was used — skip auto-resume for this first message.
+        # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(context.user_data.get("force_new_session"))
-        if force_new:
-            context.user_data["force_new_session"] = False
 
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
@@ -540,6 +539,10 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
             )
+
+            # New session created successfully — clear the one-shot flag
+            if force_new:
+                context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
 
@@ -715,10 +718,9 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
-        # Check if /new was used — skip auto-resume for this first message
+        # Check if /new was used — skip auto-resume for this first message.
+        # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(context.user_data.get("force_new_session"))
-        if force_new:
-            context.user_data["force_new_session"] = False
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -736,6 +738,10 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
             )
+
+            if force_new:
+                context.user_data["force_new_session"] = False
+
             context.user_data["claude_session_id"] = claude_response.session_id
 
             from .handlers.message import _update_working_directory_from_claude_response
@@ -808,10 +814,9 @@ class MessageOrchestrator:
             )
             session_id = context.user_data.get("claude_session_id")
 
-            # Check if /new was used — skip auto-resume for this first message
+            # Check if /new was used — skip auto-resume for this first message.
+            # Flag is only cleared after a successful run so retries keep the intent.
             force_new = bool(context.user_data.get("force_new_session"))
-            if force_new:
-                context.user_data["force_new_session"] = False
 
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
@@ -831,6 +836,10 @@ class MessageOrchestrator:
                 )
             finally:
                 heartbeat.cancel()
+
+            if force_new:
+                context.user_data["force_new_session"] = False
+
             context.user_data["claude_session_id"] = claude_response.session_id
 
             from .utils.formatting import ResponseFormatter
