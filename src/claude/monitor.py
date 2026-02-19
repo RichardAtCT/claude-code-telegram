@@ -40,7 +40,6 @@ _READ_ONLY_COMMANDS: Set[str] = {
     "tail",
     "less",
     "more",
-    "find",
     "which",
     "whoami",
     "pwd",
@@ -62,6 +61,9 @@ _READ_ONLY_COMMANDS: Set[str] = {
     "dirname",
     "basename",
 }
+
+# Actions / expressions that make ``find`` a filesystem-modifying command
+_FIND_MUTATING_ACTIONS: Set[str] = {"-delete", "-exec", "-execdir", "-ok", "-okdir"}
 
 
 def check_bash_directory_boundary(
@@ -90,11 +92,17 @@ def check_bash_directory_boundary(
     if base_command in _READ_ONLY_COMMANDS:
         return True, None
 
-    # Only check filesystem-modifying commands
-    if base_command not in _FS_MODIFYING_COMMANDS:
+    # Handle ``find`` specially: only dangerous when it contains mutating actions
+    if base_command == "find":
+        has_mutating_action = any(t in _FIND_MUTATING_ACTIONS for t in tokens[1:])
+        if not has_mutating_action:
+            return True, None
+        # Fall through to path checking below
+    elif base_command not in _FS_MODIFYING_COMMANDS:
+        # Only check filesystem-modifying commands
         return True, None
 
-    # Check each argument for absolute paths outside the boundary
+    # Check each argument for paths outside the boundary
     resolved_approved = approved_directory.resolve()
 
     for token in tokens[1:]:
@@ -102,13 +110,15 @@ def check_bash_directory_boundary(
         if token.startswith("-"):
             continue
 
-        # Only check absolute paths — relative paths resolve from cwd
-        # which is already set to the approved directory
-        if not token.startswith("/"):
-            continue
+        # Resolve both absolute and relative paths against the working
+        # directory so that traversal sequences like ``../../evil`` are
+        # caught instead of being silently allowed.
+        if token.startswith("/"):
+            resolved = Path(token).resolve()
+        else:
+            resolved = (working_directory / token).resolve()
 
         try:
-            resolved = Path(token).resolve()
             resolved.relative_to(resolved_approved)
         except ValueError:
             return False, (

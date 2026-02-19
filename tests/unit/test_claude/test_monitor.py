@@ -51,12 +51,38 @@ class TestCheckBashDirectoryBoundary:
         assert not valid
         assert "/tmp/file.txt" in error
 
-    def test_relative_paths_always_pass(self) -> None:
+    def test_relative_paths_inside_approved_pass(self) -> None:
         valid, error = check_bash_directory_boundary(
             "mkdir -p subdir/nested", self.cwd, self.approved
         )
         assert valid
         assert error is None
+
+    def test_relative_path_traversal_escaping_approved_dir(self) -> None:
+        """mkdir ../../evil from /root/projects/myapp resolves to /root/evil."""
+        valid, error = check_bash_directory_boundary(
+            "mkdir ../../evil", self.cwd, self.approved
+        )
+        assert not valid
+        assert "directory boundary violation" in error.lower()
+        assert "../../evil" in error
+
+    def test_relative_path_traversal_staying_inside_approved_dir(self) -> None:
+        """mkdir ../sibling from /root/projects/myapp -> /root/projects/sibling (ok)."""
+        valid, error = check_bash_directory_boundary(
+            "mkdir ../sibling", self.cwd, self.approved
+        )
+        assert valid
+        assert error is None
+
+    def test_relative_path_dot_dot_at_boundary_root(self) -> None:
+        """mkdir .. from approved root itself should be blocked."""
+        cwd_at_root = Path("/root/projects")
+        valid, error = check_bash_directory_boundary(
+            "touch ../outside.txt", cwd_at_root, self.approved
+        )
+        assert not valid
+        assert "directory boundary violation" in error.lower()
 
     def test_read_only_commands_pass(self) -> None:
         for cmd in ["cat /etc/hosts", "ls /tmp", "head /var/log/syslog"]:
@@ -104,6 +130,59 @@ class TestCheckBashDirectoryBoundary:
         )
         assert not valid
         assert "/tmp/link" in error
+
+    # --- find command handling ---
+
+    def test_find_without_mutating_flags_passes(self) -> None:
+        """Plain find (read-only) should pass regardless of search path."""
+        valid, error = check_bash_directory_boundary(
+            "find /tmp -name '*.log'", self.cwd, self.approved
+        )
+        assert valid
+        assert error is None
+
+    def test_find_delete_outside_approved_dir(self) -> None:
+        """find /tmp -delete should be blocked because /tmp is outside."""
+        valid, error = check_bash_directory_boundary(
+            "find /tmp -name '*.log' -delete", self.cwd, self.approved
+        )
+        assert not valid
+        assert "directory boundary violation" in error.lower()
+        assert "/tmp" in error
+
+    def test_find_exec_outside_approved_dir(self) -> None:
+        """find /var -exec rm {} ; should be blocked."""
+        valid, error = check_bash_directory_boundary(
+            "find /var -exec rm {} ;", self.cwd, self.approved
+        )
+        assert not valid
+        assert "/var" in error
+
+    def test_find_delete_inside_approved_dir(self) -> None:
+        """find inside approved dir with -delete should pass."""
+        valid, error = check_bash_directory_boundary(
+            "find /root/projects/myapp -name '*.pyc' -delete",
+            self.cwd,
+            self.approved,
+        )
+        assert valid
+        assert error is None
+
+    def test_find_delete_relative_path_inside(self) -> None:
+        """find . -delete from inside approved dir should pass."""
+        valid, error = check_bash_directory_boundary(
+            "find . -name '*.pyc' -delete", self.cwd, self.approved
+        )
+        assert valid
+        assert error is None
+
+    def test_find_execdir_outside_approved_dir(self) -> None:
+        """find with -execdir outside approved dir should be blocked."""
+        valid, error = check_bash_directory_boundary(
+            "find /etc -execdir cat {} ;", self.cwd, self.approved
+        )
+        assert not valid
+        assert "/etc" in error
 
 
 class TestToolMonitorBashBoundary:
