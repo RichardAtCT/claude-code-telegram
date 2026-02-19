@@ -273,6 +273,13 @@ class DatabaseManager:
                 PRAGMA journal_mode=WAL;
                 """,
             ),
+            (
+                4,
+                """
+                -- Add worktree_path column for per-session worktree isolation
+                ALTER TABLE sessions ADD COLUMN worktree_path TEXT;
+                """,
+            ),
         ]
 
     async def _init_pool(self):

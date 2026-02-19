@@ -59,6 +59,7 @@ class SessionModel:
     total_turns: int = 0
     message_count: int = 0
     is_active: bool = True
+    worktree_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -78,6 +79,10 @@ class SessionModel:
         for field in ["created_at", "last_used"]:
             if data.get(field):
                 data[field] = datetime.fromisoformat(data[field])
+
+        # Handle databases migrated before worktree_path existed
+        if "worktree_path" not in data:
+            data["worktree_path"] = None
 
         return cls(**data)
 

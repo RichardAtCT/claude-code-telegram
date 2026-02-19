@@ -17,6 +17,7 @@ from src.claude import (
     ClaudeProcessManager,
     SessionManager,
     ToolMonitor,
+    WorktreeManager,
 )
 from src.claude.sdk_integration import ClaudeSDKManager
 from src.config.features import FeatureFlags
@@ -136,7 +137,20 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     # Create Claude integration components with persistent storage
     session_storage = SQLiteSessionStorage(storage.db_manager)
-    session_manager = SessionManager(config, session_storage)
+
+    # Create worktree manager if enabled
+    worktree_manager: Optional[WorktreeManager] = None
+    if config.enable_worktrees:
+        worktree_manager = WorktreeManager(config)
+        logger.info(
+            "Git worktree isolation enabled",
+            base_dir=str(worktree_manager.base_dir),
+            branch_prefix=config.worktree_branch_prefix,
+        )
+
+    session_manager = SessionManager(
+        config, session_storage, worktree_manager=worktree_manager
+    )
     tool_monitor = ToolMonitor(config, security_validator)
 
     # Create Claude manager based on configuration
@@ -156,6 +170,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         sdk_manager=sdk_manager,
         session_manager=session_manager,
         tool_monitor=tool_monitor,
+        worktree_manager=worktree_manager,
     )
 
     # --- Event bus and agentic platform components ---

@@ -161,6 +161,30 @@ class Settings(BaseSettings):
         le=2,
     )
 
+    # Worktree isolation
+    enable_worktrees: bool = Field(
+        False,
+        description="Create a git worktree per session for filesystem isolation",
+    )
+    worktree_base_dir: Optional[Path] = Field(
+        None,
+        description="Base directory for worktrees (default: <approved_dir>/.worktrees)",
+    )
+    worktree_branch_prefix: str = Field(
+        "session",
+        description="Prefix for auto-created worktree branches (e.g. session/<id>)",
+    )
+    worktree_cleanup_on_expire: bool = Field(
+        True,
+        description="Automatically remove worktrees when sessions expire",
+    )
+    worktree_max_per_user: int = Field(
+        5,
+        description="Maximum concurrent worktrees per user",
+        ge=1,
+        le=50,
+    )
+
     # Monitoring
     log_level: str = Field("INFO", description="Logging level")
     enable_telemetry: bool = Field(False, description="Enable anonymous telemetry")

@@ -63,6 +63,7 @@ class SQLiteSessionStorage(SessionStorage):
         # Ensure user exists before creating session
         await self._ensure_user_exists(session.user_id)
 
+        wt_path = str(session.worktree_path) if session.worktree_path else None
         session_model = SessionModel(
             session_id=session.session_id,
             user_id=session.user_id,
@@ -72,14 +73,16 @@ class SQLiteSessionStorage(SessionStorage):
             total_cost=session.total_cost,
             total_turns=session.total_turns,
             message_count=session.message_count,
+            worktree_path=wt_path,
         )
 
         async with self.db_manager.get_connection() as conn:
             # Try to update first
             cursor = await conn.execute(
                 """
-                UPDATE sessions 
-                SET last_used = ?, total_cost = ?, total_turns = ?, message_count = ?
+                UPDATE sessions
+                SET last_used = ?, total_cost = ?, total_turns = ?,
+                    message_count = ?, worktree_path = ?
                 WHERE session_id = ?
             """,
                 (
@@ -87,6 +90,7 @@ class SQLiteSessionStorage(SessionStorage):
                     session_model.total_cost,
                     session_model.total_turns,
                     session_model.message_count,
+                    session_model.worktree_path,
                     session_model.session_id,
                 ),
             )
@@ -95,10 +99,10 @@ class SQLiteSessionStorage(SessionStorage):
             if cursor.rowcount == 0:
                 await conn.execute(
                     """
-                    INSERT INTO sessions 
-                    (session_id, user_id, project_path, created_at, last_used, 
-                     total_cost, total_turns, message_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO sessions
+                    (session_id, user_id, project_path, created_at, last_used,
+                     total_cost, total_turns, message_count, worktree_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         session_model.session_id,
@@ -109,6 +113,7 @@ class SQLiteSessionStorage(SessionStorage):
                         session_model.total_cost,
                         session_model.total_turns,
                         session_model.message_count,
+                        session_model.worktree_path,
                     ),
                 )
 
@@ -134,6 +139,7 @@ class SQLiteSessionStorage(SessionStorage):
             session_model = SessionModel.from_row(row)
 
             # Convert to ClaudeSession
+            wt = session_model.worktree_path
             claude_session = ClaudeSession(
                 session_id=session_model.session_id,
                 user_id=session_model.user_id,
@@ -144,6 +150,7 @@ class SQLiteSessionStorage(SessionStorage):
                 total_turns=session_model.total_turns,
                 message_count=session_model.message_count,
                 tools_used=[],  # Tools are tracked separately in tool_usage table
+                worktree_path=Path(wt) if wt else None,
             )
 
             logger.debug(
@@ -181,6 +188,7 @@ class SQLiteSessionStorage(SessionStorage):
             sessions = []
             for row in rows:
                 session_model = SessionModel.from_row(row)
+                wt = session_model.worktree_path
                 claude_session = ClaudeSession(
                     session_id=session_model.session_id,
                     user_id=session_model.user_id,
@@ -191,6 +199,7 @@ class SQLiteSessionStorage(SessionStorage):
                     total_turns=session_model.total_turns,
                     message_count=session_model.message_count,
                     tools_used=[],  # Tools are tracked separately
+                    worktree_path=Path(wt) if wt else None,
                 )
                 sessions.append(claude_session)
 
@@ -207,6 +216,7 @@ class SQLiteSessionStorage(SessionStorage):
             sessions = []
             for row in rows:
                 session_model = SessionModel.from_row(row)
+                wt = session_model.worktree_path
                 claude_session = ClaudeSession(
                     session_id=session_model.session_id,
                     user_id=session_model.user_id,
@@ -217,6 +227,7 @@ class SQLiteSessionStorage(SessionStorage):
                     total_turns=session_model.total_turns,
                     message_count=session_model.message_count,
                     tools_used=[],  # Tools are tracked separately
+                    worktree_path=Path(wt) if wt else None,
                 )
                 sessions.append(claude_session)
 

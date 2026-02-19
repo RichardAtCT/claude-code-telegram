@@ -17,6 +17,7 @@ from .session import (
     SessionManager,
     SessionStorage,
 )
+from .worktree import WorktreeError, WorktreeManager
 
 __all__ = [
     # Exceptions
@@ -38,4 +39,7 @@ __all__ = [
     "ToolMonitor",
     "OutputParser",
     "ResponseFormatter",
+    # Worktree
+    "WorktreeManager",
+    "WorktreeError",
 ]

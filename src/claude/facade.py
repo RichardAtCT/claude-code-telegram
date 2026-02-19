@@ -14,6 +14,7 @@ from .integration import ClaudeProcessManager, ClaudeResponse, StreamUpdate
 from .monitor import ToolMonitor
 from .sdk_integration import ClaudeSDKManager
 from .session import SessionManager
+from .worktree import WorktreeManager
 
 logger = structlog.get_logger()
 
@@ -28,6 +29,7 @@ class ClaudeIntegration:
         sdk_manager: Optional[ClaudeSDKManager] = None,
         session_manager: Optional[SessionManager] = None,
         tool_monitor: Optional[ToolMonitor] = None,
+        worktree_manager: Optional[WorktreeManager] = None,
     ):
         """Initialize Claude integration facade."""
         self.config = config
@@ -46,6 +48,7 @@ class ClaudeIntegration:
 
         self.session_manager = session_manager
         self.tool_monitor = tool_monitor
+        self.worktree_manager = worktree_manager
         self._sdk_failed_count = 0  # Track SDK failures for adaptive fallback
 
     async def run_command(
@@ -84,6 +87,33 @@ class ClaudeIntegration:
         session = await self.session_manager.get_or_create_session(
             user_id, working_directory, session_id
         )
+
+        # --- Worktree resolution ---
+        # If worktrees are enabled and the directory is a git repo, resolve
+        # the effective working directory to an isolated worktree.
+        effective_dir = working_directory
+        if self.config.enable_worktrees and self.worktree_manager:
+            try:
+                if await self.worktree_manager.is_git_repo(working_directory):
+                    effective_dir = await self.worktree_manager.get_or_create_worktree(
+                        repo_path=working_directory,
+                        session_id=session.session_id,
+                    )
+                    # Persist the worktree path on the session
+                    session.worktree_path = effective_dir
+                    await self.session_manager.storage.save_session(session)
+                    logger.info(
+                        "Using worktree for session",
+                        session_id=session.session_id,
+                        worktree_path=str(effective_dir),
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Worktree creation failed, using original directory",
+                    error=str(e),
+                    working_directory=str(working_directory),
+                )
+                effective_dir = working_directory
 
         # Track streaming updates and validate tool calls
         tools_validated = True
@@ -157,7 +187,7 @@ class ClaudeIntegration:
             try:
                 response = await self._execute_with_fallback(
                     prompt=prompt,
-                    working_directory=working_directory,
+                    working_directory=effective_dir,
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=stream_handler,
@@ -183,7 +213,7 @@ class ClaudeIntegration:
                     )
                     response = await self._execute_with_fallback(
                         prompt=prompt,
-                        working_directory=working_directory,
+                        working_directory=effective_dir,
                         session_id=None,
                         continue_session=False,
                         stream_callback=stream_handler,

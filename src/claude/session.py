@@ -20,6 +20,7 @@ from ..config.settings import Settings
 if TYPE_CHECKING:
     from .integration import ClaudeResponse as CLIClaudeResponse
     from .sdk_integration import ClaudeResponse as SDKClaudeResponse
+    from .worktree import WorktreeManager
 
 # Union type for both CLI and SDK responses
 ClaudeResponse = Union["CLIClaudeResponse", "SDKClaudeResponse"]
@@ -41,6 +42,7 @@ class ClaudeSession:
     message_count: int = 0
     tools_used: List[str] = field(default_factory=list)
     is_new_session: bool = False  # True if session hasn't been sent to Claude Code yet
+    worktree_path: Optional[Path] = None  # Isolated worktree directory for this session
 
     def is_expired(self, timeout_hours: int) -> bool:
         """Check if session has expired."""
@@ -63,7 +65,7 @@ class ClaudeSession:
 
     def to_dict(self) -> Dict:
         """Convert session to dictionary for storage."""
-        return {
+        result = {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "project_path": str(self.project_path),
@@ -74,10 +76,14 @@ class ClaudeSession:
             "message_count": self.message_count,
             "tools_used": self.tools_used,
         }
+        if self.worktree_path is not None:
+            result["worktree_path"] = str(self.worktree_path)
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict) -> "ClaudeSession":
         """Create session from dictionary."""
+        wt = data.get("worktree_path")
         return cls(
             session_id=data["session_id"],
             user_id=data["user_id"],
@@ -88,6 +94,7 @@ class ClaudeSession:
             total_turns=data.get("total_turns", 0),
             message_count=data.get("message_count", 0),
             tools_used=data.get("tools_used", []),
+            worktree_path=Path(wt) if wt else None,
         )
 
 
@@ -154,11 +161,17 @@ class InMemorySessionStorage(SessionStorage):
 class SessionManager:
     """Manage Claude Code sessions."""
 
-    def __init__(self, config: Settings, storage: SessionStorage):
+    def __init__(
+        self,
+        config: Settings,
+        storage: SessionStorage,
+        worktree_manager: Optional["WorktreeManager"] = None,
+    ):
         """Initialize session manager."""
         self.config = config
         self.storage = storage
         self.active_sessions: Dict[str, ClaudeSession] = {}
+        self.worktree_manager = worktree_manager
 
     async def get_or_create_session(
         self,
@@ -280,7 +293,7 @@ class SessionManager:
         logger.info("Session removed", session_id=session_id)
 
     async def cleanup_expired_sessions(self) -> int:
-        """Remove expired sessions."""
+        """Remove expired sessions and their worktrees."""
         logger.info("Starting session cleanup")
 
         all_sessions = await self.storage.get_all_sessions()
@@ -288,6 +301,22 @@ class SessionManager:
 
         for session in all_sessions:
             if session.is_expired(self.config.session_timeout_hours):
+                # Remove worktree if this session had one
+                if (
+                    self.worktree_manager
+                    and self.config.worktree_cleanup_on_expire
+                    and session.worktree_path
+                ):
+                    try:
+                        await self.worktree_manager.remove_worktree(
+                            session.project_path, session.session_id
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to remove worktree during cleanup",
+                            session_id=session.session_id,
+                            error=str(e),
+                        )
                 await self.remove_session(session.session_id)
                 expired_count += 1
 
