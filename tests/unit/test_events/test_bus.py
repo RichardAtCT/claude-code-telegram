@@ -9,7 +9,7 @@ from src.events.bus import Event, EventBus
 
 
 @dataclass
-class TestEvent(Event):
+class BusTestEvent(Event):
     """Test event subclass."""
 
     data: str = ""
@@ -35,10 +35,10 @@ class TestEventBus:
         async def handler(event: Event) -> None:
             received.append(event)
 
-        bus.subscribe(TestEvent, handler)
+        bus.subscribe(BusTestEvent, handler)
         await bus.start()
 
-        event = TestEvent(data="hello")
+        event = BusTestEvent(data="hello")
         await bus.publish(event)
 
         # Give the processor time to dispatch
@@ -46,7 +46,7 @@ class TestEventBus:
         await bus.stop()
 
         assert len(received) == 1
-        assert isinstance(received[0], TestEvent)
+        assert isinstance(received[0], BusTestEvent)
         assert received[0].data == "hello"
 
     async def test_handler_receives_only_subscribed_type(self) -> None:
@@ -61,11 +61,11 @@ class TestEventBus:
         async def other_handler(event: Event) -> None:
             received_other.append(event)
 
-        bus.subscribe(TestEvent, test_handler)
+        bus.subscribe(BusTestEvent, test_handler)
         bus.subscribe(OtherEvent, other_handler)
         await bus.start()
 
-        await bus.publish(TestEvent(data="a"))
+        await bus.publish(BusTestEvent(data="a"))
         await bus.publish(OtherEvent(value=42))
 
         await asyncio.sleep(0.1)
@@ -87,7 +87,7 @@ class TestEventBus:
         bus.subscribe_all(global_handler)
         await bus.start()
 
-        await bus.publish(TestEvent(data="x"))
+        await bus.publish(BusTestEvent(data="x"))
         await bus.publish(OtherEvent(value=1))
 
         await asyncio.sleep(0.1)
@@ -106,11 +106,11 @@ class TestEventBus:
         async def good_handler(event: Event) -> None:
             received.append(event)
 
-        bus.subscribe(TestEvent, bad_handler)
-        bus.subscribe(TestEvent, good_handler)
+        bus.subscribe(BusTestEvent, bad_handler)
+        bus.subscribe(BusTestEvent, good_handler)
         await bus.start()
 
-        await bus.publish(TestEvent(data="test"))
+        await bus.publish(BusTestEvent(data="test"))
         await asyncio.sleep(0.1)
         await bus.stop()
 
@@ -119,10 +119,10 @@ class TestEventBus:
 
     async def test_event_has_id_and_timestamp(self) -> None:
         """Events get auto-generated ID and timestamp."""
-        event = TestEvent(data="hi")
+        event = BusTestEvent(data="hi")
         assert event.id
         assert event.timestamp
-        assert event.event_type == "TestEvent"
+        assert event.event_type == "BusTestEvent"
 
     async def test_multiple_handlers_for_same_type(self) -> None:
         """Multiple handlers can subscribe to the same event type."""
@@ -135,11 +135,11 @@ class TestEventBus:
         async def handler_b(event: Event) -> None:
             results.append("b")
 
-        bus.subscribe(TestEvent, handler_a)
-        bus.subscribe(TestEvent, handler_b)
+        bus.subscribe(BusTestEvent, handler_a)
+        bus.subscribe(BusTestEvent, handler_b)
         await bus.start()
 
-        await bus.publish(TestEvent())
+        await bus.publish(BusTestEvent())
         await asyncio.sleep(0.1)
         await bus.stop()
 

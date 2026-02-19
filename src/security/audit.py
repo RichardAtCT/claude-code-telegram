@@ -9,7 +9,7 @@ Features:
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import structlog
@@ -149,7 +149,7 @@ class AuditLogger:
         risk_level = "medium" if not success else "low"
 
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             event_type="auth_attempt",
             success=success,
@@ -177,7 +177,7 @@ class AuditLogger:
     ) -> None:
         """Log session-related events."""
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             event_type="session",
             success=success,
@@ -202,7 +202,7 @@ class AuditLogger:
         risk_level = self._assess_command_risk(command, args)
 
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             event_type="command",
             success=success,
@@ -239,7 +239,7 @@ class AuditLogger:
         risk_level = self._assess_file_access_risk(file_path, action)
 
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             event_type="file_access",
             success=success,
@@ -263,7 +263,7 @@ class AuditLogger:
         risk_level = risk_mapping.get(severity, "high")
 
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             event_type="security_violation",
             success=False,  # Security violations are always failures
@@ -295,7 +295,7 @@ class AuditLogger:
     ) -> None:
         """Log rate limit exceeded."""
         event = AuditEvent(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             event_type="rate_limit_exceeded",
             success=False,
@@ -394,7 +394,7 @@ class AuditLogger:
         self, user_id: int, hours: int = 24
     ) -> Dict[str, Any]:
         """Get activity summary for user."""
-        start_time = datetime.utcnow() - timedelta(hours=hours)
+        start_time = datetime.now(UTC) - timedelta(hours=hours)
         events = await self.storage.get_events(
             user_id=user_id, start_time=start_time, limit=1000
         )
@@ -443,7 +443,7 @@ class AuditLogger:
     async def get_security_dashboard(self) -> Dict[str, Any]:
         """Get security dashboard data."""
         # Get recent events (last 24 hours)
-        start_time = datetime.utcnow() - timedelta(hours=24)
+        start_time = datetime.now(UTC) - timedelta(hours=24)
         recent_events = await self.storage.get_events(start_time=start_time, limit=1000)
 
         # Get security violations

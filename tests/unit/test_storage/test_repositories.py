@@ -1,7 +1,7 @@
 """Tests for repository implementations."""
 
 import tempfile
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -79,8 +79,8 @@ class TestUserRepository:
         user = UserModel(
             user_id=12345,
             telegram_username="testuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
 
@@ -100,8 +100,8 @@ class TestUserRepository:
         user = UserModel(
             user_id=12346,
             telegram_username="testuser2",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=False,
             total_cost=10.5,
             message_count=5,
@@ -125,8 +125,8 @@ class TestUserRepository:
         allowed_user = UserModel(
             user_id=12347,
             telegram_username="allowed",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(allowed_user)
@@ -135,8 +135,8 @@ class TestUserRepository:
         disallowed_user = UserModel(
             user_id=12348,
             telegram_username="disallowed",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=False,
         )
         await user_repo.create_user(disallowed_user)
@@ -156,8 +156,8 @@ class TestSessionRepository:
         user = UserModel(
             user_id=12349,
             telegram_username="sessionuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -167,8 +167,8 @@ class TestSessionRepository:
             session_id="test-session-123",
             user_id=12349,
             project_path="/test/project",
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
             total_cost=5.0,
             total_turns=3,
             message_count=2,
@@ -189,8 +189,8 @@ class TestSessionRepository:
         user = UserModel(
             user_id=12350,
             telegram_username="multisessionuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -201,8 +201,8 @@ class TestSessionRepository:
                 session_id=f"test-session-{i}",
                 user_id=12350,
                 project_path=f"/test/project{i}",
-                created_at=datetime.utcnow(),
-                last_used=datetime.utcnow(),
+                created_at=datetime.now(UTC),
+                last_used=datetime.now(UTC),
             )
             await session_repo.create_session(session)
 
@@ -217,8 +217,8 @@ class TestSessionRepository:
         user = UserModel(
             user_id=12351,
             telegram_username="cleanupuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -228,8 +228,8 @@ class TestSessionRepository:
             session_id="old-session",
             user_id=12351,
             project_path="/test/old",
-            created_at=datetime.utcnow() - timedelta(days=35),
-            last_used=datetime.utcnow() - timedelta(days=35),
+            created_at=datetime.now(UTC) - timedelta(days=35),
+            last_used=datetime.now(UTC) - timedelta(days=35),
         )
         await session_repo.create_session(old_session)
 
@@ -238,8 +238,8 @@ class TestSessionRepository:
             session_id="recent-session",
             user_id=12351,
             project_path="/test/recent",
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         await session_repo.create_session(recent_session)
 
@@ -262,8 +262,8 @@ class TestMessageRepository:
         user = UserModel(
             user_id=12352,
             telegram_username="messageuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -272,8 +272,8 @@ class TestMessageRepository:
             session_id="message-session",
             user_id=12352,
             project_path="/test/messages",
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         await session_repo.create_session(session)
 
@@ -281,7 +281,7 @@ class TestMessageRepository:
         message = MessageModel(
             session_id="message-session",
             user_id=12352,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             prompt="Test prompt",
             response="Test response",
             cost=0.05,
@@ -307,8 +307,8 @@ class TestToolUsageRepository:
         user = UserModel(
             user_id=12353,
             telegram_username="tooluser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -317,8 +317,8 @@ class TestToolUsageRepository:
             session_id="tool-session",
             user_id=12353,
             project_path="/test/tools",
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         await session_repo.create_session(session)
 
@@ -327,7 +327,7 @@ class TestToolUsageRepository:
             session_id="tool-session",
             tool_name="Read",
             tool_input={"file_path": "/test/file.py"},
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             success=True,
         )
 
@@ -346,8 +346,8 @@ class TestToolUsageRepository:
         user = UserModel(
             user_id=12354,
             telegram_username="statsuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -356,8 +356,8 @@ class TestToolUsageRepository:
             session_id="stats-session",
             user_id=12354,
             project_path="/test/stats",
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         await session_repo.create_session(session)
 
@@ -367,7 +367,7 @@ class TestToolUsageRepository:
             tool_usage = ToolUsageModel(
                 session_id="stats-session",
                 tool_name=tool,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 success=True,
             )
             await tool_repo.save_tool_usage(tool_usage)
@@ -393,8 +393,8 @@ class TestAnalyticsRepository:
         user = UserModel(
             user_id=12355,
             telegram_username="analyticsuser",
-            first_seen=datetime.utcnow(),
-            last_active=datetime.utcnow(),
+            first_seen=datetime.now(UTC),
+            last_active=datetime.now(UTC),
             is_allowed=True,
         )
         await user_repo.create_user(user)
@@ -403,8 +403,8 @@ class TestAnalyticsRepository:
             session_id="analytics-session",
             user_id=12355,
             project_path="/test/analytics",
-            created_at=datetime.utcnow(),
-            last_used=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
         await session_repo.create_session(session)
 
@@ -413,7 +413,7 @@ class TestAnalyticsRepository:
             message = MessageModel(
                 session_id="analytics-session",
                 user_id=12355,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(UTC),
                 prompt=f"Test prompt {i}",
                 response=f"Test response {i}",
                 cost=0.1,
