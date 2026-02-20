@@ -377,10 +377,6 @@ class ClaudeIntegration:
         """Shutdown integration and cleanup resources."""
         logger.info("Shutting down Claude integration")
 
-        # Kill any active processes
-        await self.sdk_manager.kill_all_processes()
-
-        # Clean up expired sessions
         await self.cleanup_expired_sessions()
 
         logger.info("Claude integration shutdown complete")

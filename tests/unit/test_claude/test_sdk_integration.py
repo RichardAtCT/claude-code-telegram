@@ -241,11 +241,6 @@ class TestClaudeSDKManager:
                     working_directory=Path("/test"),
                 )
 
-    async def test_kill_all_processes(self, sdk_manager):
-        """Test killing all processes is a no-op."""
-        await sdk_manager.kill_all_processes()
-        # No error, just a no-op
-
     def test_get_active_process_count(self, sdk_manager):
         """Test active process count is always 0."""
         assert sdk_manager.get_active_process_count() == 0
@@ -425,6 +420,35 @@ class TestClaudeSandboxSettings:
         opts = captured_options[0]
         assert str(tmp_path) in opts.system_prompt
         assert "relative paths" in opts.system_prompt.lower()
+
+    async def test_disallowed_tools_passed_to_options(self, tmp_path):
+        """Test that disallowed_tools from config are passed to ClaudeAgentOptions."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_disallowed_tools=["WebFetch", "WebSearch"],
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].disallowed_tools == ["WebFetch", "WebSearch"]
 
     async def test_sandbox_disabled_when_config_false(self, tmp_path):
         """Test sandbox is disabled when sandbox_enabled=False."""

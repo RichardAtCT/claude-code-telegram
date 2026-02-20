@@ -471,10 +471,6 @@ class ClaudeSDKManager:
             )
             return {}
 
-    async def kill_all_processes(self) -> None:
-        """Kill all active processes (no-op for SDK client model)."""
-        logger.info("SDK kill_all_processes called (no-op, per-request clients)")
-
     def get_active_process_count(self) -> int:
         """Get number of active sessions (always 0, per-request clients)."""
         return 0
