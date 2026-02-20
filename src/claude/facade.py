@@ -234,14 +234,14 @@ class ClaudeIntegration:
 
             # Update session (this may change the session_id for new sessions)
             old_session_id = session.session_id
+            was_new_session = session.is_new_session
             await self.session_manager.update_session(session.session_id, response)
 
-            # For new sessions, get the updated session_id from the session manager
-            if hasattr(session, "is_new_session") and response.session_id:
-                # The session_id has been updated to Claude's session_id
+            # For new sessions, use Claude's real session_id
+            if was_new_session and response.session_id:
                 final_session_id = response.session_id
             else:
-                # Use the original session_id for continuing sessions
+                # For continuing sessions, keep the existing session_id
                 final_session_id = old_session_id
 
             # Ensure response has the correct session_id
@@ -312,13 +312,14 @@ class ClaudeIntegration:
                     # Use subprocess fallback
                     try:
                         logger.info("Executing with subprocess fallback")
-                        # Don't pass SDK session_id to subprocess - start fresh
-                        # SDK and subprocess have separate session management
+                        # Pass session_id through — if the previous call also
+                        # used subprocess (e.g. repeated SDK failures), the CLI
+                        # can resume the conversation with --resume.
                         response = await self.process_manager.execute_command(
                             prompt=prompt,
                             working_directory=working_directory,
-                            session_id=None,  # Start new session in subprocess
-                            continue_session=False,  # Fresh start
+                            session_id=session_id,
+                            continue_session=continue_session,
                             stream_callback=stream_callback,
                         )
                         logger.info("Subprocess fallback succeeded")
