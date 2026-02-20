@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from src.claude.monitor import (
     _is_claude_internal_path,
     check_bash_directory_boundary,

@@ -11,7 +11,6 @@ from typing import Optional, Set, Tuple
 
 import structlog
 
-
 # Subdirectories under ~/.claude/ that Claude Code uses internally.
 # File operations targeting these paths are allowed even when they fall
 # outside the project's approved directory.

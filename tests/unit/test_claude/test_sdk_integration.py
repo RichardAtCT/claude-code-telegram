@@ -471,6 +471,35 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].disallowed_tools == ["WebFetch", "WebSearch"]
 
+    async def test_allowed_tools_passed_to_options(self, tmp_path):
+        """Test that allowed_tools from config are passed to ClaudeAgentOptions."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_allowed_tools=["Read", "Write", "Bash"],
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].allowed_tools == ["Read", "Write", "Bash"]
+
     async def test_sandbox_disabled_when_config_false(self, tmp_path):
         """Test sandbox is disabled when sandbox_enabled=False."""
         config = Settings(
@@ -670,6 +699,31 @@ class TestCanUseToolCallback:
 
         assert len(captured_options) == 1
         assert captured_options[0].can_use_tool is not None
+
+    async def test_no_callback_without_security_validator(self, tmp_path):
+        """Verify can_use_tool is None when no SecurityValidator is provided."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(prompt="Test", working_directory=tmp_path)
+
+        assert len(captured_options) == 1
+        assert captured_options[0].can_use_tool is None
 
 
 class TestSessionIdFallback:
