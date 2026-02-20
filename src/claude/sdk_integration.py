@@ -172,6 +172,7 @@ class ClaudeSDKManager:
                 max_turns=self.config.claude_max_turns,
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
+                disallowed_tools=self.config.claude_disallowed_tools,
                 cli_path=cli_path,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
@@ -469,10 +470,6 @@ class ClaudeSDKManager:
                 "Failed to load MCP config", path=str(config_path), error=str(e)
             )
             return {}
-
-    async def kill_all_processes(self) -> None:
-        """Kill all active processes (no-op for SDK client model)."""
-        logger.info("SDK kill_all_processes called (no-op, per-request clients)")
 
     def get_active_process_count(self) -> int:
         """Get number of active sessions (always 0, per-request clients)."""

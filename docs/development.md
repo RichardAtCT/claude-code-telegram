@@ -332,8 +332,7 @@ TELEGRAM_BOT_TOKEN=test_token_for_development
 TELEGRAM_BOT_USERNAME=test_bot
 APPROVED_DIRECTORY=/path/to/your/test/projects
 
-# Claude Integration (choose one authentication method)
-USE_SDK=true                      # Use SDK (recommended for development)
+# Claude Authentication (choose one method)
 # Option 1: Use existing Claude CLI auth (no API key needed)
 # Option 2: Direct API key
 # ANTHROPIC_API_KEY=sk-ant-api03-your-development-key

@@ -43,7 +43,6 @@ def config(tmp_path):
         approved_directory=tmp_path,
         session_timeout_hours=24,
         max_sessions_per_user=5,
-        use_sdk=False,
     )
 
 
@@ -56,8 +55,8 @@ def session_manager(config):
 
 @pytest.fixture
 def facade(config, session_manager):
-    """Create facade with mocked process manager and tool monitor."""
-    process_manager = MagicMock()
+    """Create facade with mocked SDK manager and tool monitor."""
+    sdk_manager = MagicMock()
     tool_monitor = MagicMock()
     tool_monitor.validate_tool_call = AsyncMock(return_value=(True, None))
     tool_monitor.get_tool_stats = MagicMock(return_value={})
@@ -65,8 +64,7 @@ def facade(config, session_manager):
 
     integration = ClaudeIntegration(
         config=config,
-        process_manager=process_manager,
-        sdk_manager=None,
+        sdk_manager=sdk_manager,
         session_manager=session_manager,
         tool_monitor=tool_monitor,
     )
@@ -119,7 +117,7 @@ class TestForceNewSkipsAutoResume:
         ) as spy:
             with patch.object(
                 facade,
-                "_execute_with_fallback",
+                "_execute",
                 return_value=_make_mock_response(),
             ):
                 await facade.run_command(
@@ -170,7 +168,7 @@ class TestForceNewSurvivesFailure:
 
         with patch.object(
             facade,
-            "_execute_with_fallback",
+            "_execute",
             side_effect=RuntimeError("network timeout"),
         ):
             with pytest.raises(RuntimeError, match="network timeout"):
@@ -198,7 +196,7 @@ class TestForceNewSurvivesFailure:
 
         with patch.object(
             facade,
-            "_execute_with_fallback",
+            "_execute",
             return_value=_make_mock_response(),
         ):
             await facade.run_command(
@@ -233,7 +231,7 @@ class TestForceNewSurvivesFailure:
         ) as spy1:
             with patch.object(
                 facade,
-                "_execute_with_fallback",
+                "_execute",
                 side_effect=RuntimeError("backend down"),
             ):
                 with pytest.raises(RuntimeError):
@@ -256,7 +254,7 @@ class TestForceNewSurvivesFailure:
         ) as spy2:
             with patch.object(
                 facade,
-                "_execute_with_fallback",
+                "_execute",
                 return_value=_make_mock_response(),
             ):
                 await facade.run_command(
@@ -287,7 +285,7 @@ class TestEmptySessionIdWarning:
 
         with patch.object(
             facade,
-            "_execute_with_fallback",
+            "_execute",
             return_value=mock_response,
         ):
             result = await facade.run_command(

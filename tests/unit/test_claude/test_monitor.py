@@ -194,7 +194,6 @@ class TestToolMonitorBashBoundary:
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
-            use_sdk=True,
         )
 
     @pytest.fixture
