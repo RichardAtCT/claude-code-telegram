@@ -245,6 +245,13 @@ class SessionManager:
             # Assign the real session ID from Claude
             if response.session_id:
                 session.session_id = response.session_id
+            else:
+                logger.warning(
+                    "Claude returned no session_id for new session; "
+                    "session will not be resumable",
+                    user_id=session.user_id,
+                    project_path=str(session.project_path),
+                )
             session.is_new_session = False
 
             logger.info(

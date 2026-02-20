@@ -384,8 +384,8 @@ class TestToolMonitorConfigBypass:
             user_id=123, project_path=Path("/test/project3")
         )
 
-        # After eviction, user should still have 2 persisted sessions
-        # (session-1 remains, session-2 evicted, session-3 is new/unsaved)
+        # After eviction, only session-1 remains persisted
+        # (session-2 evicted, session-3 is new/unsaved so not yet in storage)
         persisted = await session_manager._get_user_sessions(123)
         assert len(persisted) == 1  # Only session-1 persisted
         assert persisted[0].session_id == "session-1"
@@ -393,3 +393,47 @@ class TestToolMonitorConfigBypass:
         # session-2 should be gone
         loaded = await session_manager.storage.load_session("session-2")
         assert loaded is None
+
+
+class TestUpdateSessionNewWithoutId:
+    """Edge case: Claude returns no session_id for a brand-new session."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            session_timeout_hours=24,
+            max_sessions_per_user=2,
+        )
+
+    @pytest.fixture
+    def session_manager(self, config):
+        return SessionManager(config, InMemorySessionStorage())
+
+    async def test_warns_and_does_not_persist(self, session_manager):
+        """When Claude returns no session_id, session is not persisted."""
+        session = await session_manager.get_or_create_session(
+            user_id=999, project_path=Path("/test/no-id")
+        )
+        assert session.is_new_session is True
+
+        # Simulate Claude returning empty session_id
+        response = ClaudeResponse(
+            content="hello",
+            session_id="",
+            cost=0.001,
+            duration_ms=50,
+            num_turns=1,
+        )
+
+        await session_manager.update_session(session, response)
+
+        # Session should be marked as no longer new
+        assert session.is_new_session is False
+
+        # Session should NOT be persisted (empty session_id)
+        assert len(session_manager.active_sessions) == 0
+        persisted = await session_manager._get_user_sessions(999)
+        assert len(persisted) == 0
