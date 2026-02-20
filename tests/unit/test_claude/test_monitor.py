@@ -190,6 +190,57 @@ class TestCheckBashDirectoryBoundary:
         assert not valid
         assert "/etc" in error
 
+    # --- cd and command chaining handling ---
+
+    def test_cd_outside_approved_directory(self) -> None:
+        """cd to an outside directory should be blocked."""
+        valid, error = check_bash_directory_boundary(
+            "cd /tmp", self.cwd, self.approved
+        )
+        assert not valid
+        assert "directory boundary violation" in error.lower()
+        assert "/tmp" in error
+
+    def test_cd_inside_approved_directory(self) -> None:
+        """cd to an inside directory should pass."""
+        valid, error = check_bash_directory_boundary(
+            "cd subdir", self.cwd, self.approved
+        )
+        assert valid
+        assert error is None
+
+    def test_chained_commands_outside_blocked(self) -> None:
+        """Any command in a chain targeting outside should be blocked."""
+        # Chained with &&
+        valid, error = check_bash_directory_boundary(
+            "ls && rm /etc/passwd", self.cwd, self.approved
+        )
+        assert not valid
+        assert "/etc/passwd" in error
+
+        # Chained with ;
+        valid, error = check_bash_directory_boundary(
+            "mkdir newdir; mv file.txt /tmp/", self.cwd, self.approved
+        )
+        assert not valid
+        assert "/tmp/" in error
+
+    def test_chained_commands_inside_pass(self) -> None:
+        """Chain of valid commands should pass."""
+        valid, error = check_bash_directory_boundary(
+            "cd subdir && touch file.txt && ls -la", self.cwd, self.approved
+        )
+        assert valid
+        assert error is None
+
+    def test_chained_cd_outside_blocked(self) -> None:
+        """cd /tmp && something should be blocked."""
+        valid, error = check_bash_directory_boundary(
+            "cd /tmp && ls", self.cwd, self.approved
+        )
+        assert not valid
+        assert "/tmp" in error
+
 
 class TestToolMonitorBashBoundary:
     """Test that validate_tool_call wires up the bash directory boundary check."""
