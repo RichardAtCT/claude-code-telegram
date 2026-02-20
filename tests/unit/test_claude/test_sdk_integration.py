@@ -80,7 +80,6 @@ class TestClaudeSDKManager:
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
-            use_sdk=True,
             claude_timeout_seconds=2,  # Short timeout for testing
         )
 
@@ -99,7 +98,6 @@ class TestClaudeSDKManager:
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
             anthropic_api_key="test-api-key",
-            use_sdk=True,
             claude_timeout_seconds=2,
         )
 
@@ -264,7 +262,6 @@ class TestClaudeSDKManager:
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
-            use_sdk=True,
             claude_timeout_seconds=2,
             enable_mcp=True,
             mcp_config_path=str(mcp_config_file),
@@ -371,7 +368,6 @@ class TestClaudeSandboxSettings:
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
-            use_sdk=True,
             claude_timeout_seconds=2,
             sandbox_enabled=True,
             sandbox_excluded_commands=["git", "npm"],
@@ -436,7 +432,6 @@ class TestClaudeSandboxSettings:
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
-            use_sdk=True,
             claude_timeout_seconds=2,
             sandbox_enabled=False,
         )
@@ -471,7 +466,6 @@ class TestClaudeMCPErrors:
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
-            use_sdk=True,
             claude_timeout_seconds=2,
         )
 

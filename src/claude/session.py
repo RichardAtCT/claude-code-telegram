@@ -10,18 +10,12 @@ Features:
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import structlog
 
 from ..config.settings import Settings
-
-if TYPE_CHECKING:
-    from .integration import ClaudeResponse as CLIClaudeResponse
-    from .sdk_integration import ClaudeResponse as SDKClaudeResponse
-
-# Union type for both CLI and SDK responses
-ClaudeResponse = Union["CLIClaudeResponse", "SDKClaudeResponse"]
+from .sdk_integration import ClaudeResponse
 
 logger = structlog.get_logger()
 

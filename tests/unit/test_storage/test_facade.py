@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.claude.integration import ClaudeResponse
+from src.claude.sdk_integration import ClaudeResponse
 from src.storage.facade import Storage
 
 

@@ -26,13 +26,11 @@ poetry run mypy src
 
 ## Architecture
 
-### Dual Claude Integration (SDK primary, CLI fallback)
+### Claude SDK Integration
 
-`ClaudeIntegration` (facade in `src/claude/facade.py`) wraps two backends:
-- **`ClaudeSDKManager`** (`src/claude/sdk_integration.py`) -- Primary. Uses `claude-agent-sdk` async `query()` with streaming. Session IDs come from Claude's `ResultMessage`, not generated locally.
-- **`ClaudeProcessManager`** (`src/claude/integration.py`) -- Legacy CLI subprocess fallback. Used when SDK fails with JSON decode or TaskGroup errors.
+`ClaudeIntegration` (facade in `src/claude/facade.py`) wraps `ClaudeSDKManager` (`src/claude/sdk_integration.py`), which uses `claude-agent-sdk` with `ClaudeSDKClient` for async streaming. Session IDs come from Claude's `ResultMessage`, not generated locally.
 
-Sessions auto-resume: per user+directory, persisted in SQLite, temporary IDs (`temp_*`) are never sent to Claude for resume.
+Sessions auto-resume: per user+directory, persisted in SQLite.
 
 ### Request Flow
 
@@ -41,7 +39,7 @@ Sessions auto-resume: per user+directory, persisted in SQLite, temporary IDs (`t
 ```
 Telegram message -> Security middleware (group -3) -> Auth middleware (group -2)
 -> Rate limit (group -1) -> MessageOrchestrator.agentic_text() (group 10)
--> ClaudeIntegration.run_command() -> SDK (with CLI fallback)
+-> ClaudeIntegration.run_command() -> SDK
 -> Response parsed -> Stored in SQLite -> Sent back to Telegram
 ```
 
@@ -94,7 +92,7 @@ Webhook authentication: GitHub HMAC-SHA256 signature verification, generic Beare
 
 ### Configuration
 
-Settings loaded from environment variables via Pydantic Settings. Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `APPROVED_DIRECTORY`. Key optional: `ALLOWED_USERS` (comma-separated Telegram IDs), `USE_SDK` (default true), `ANTHROPIC_API_KEY`, `ENABLE_MCP`, `MCP_CONFIG_PATH`.
+Settings loaded from environment variables via Pydantic Settings. Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `APPROVED_DIRECTORY`. Key optional: `ALLOWED_USERS` (comma-separated Telegram IDs), `ANTHROPIC_API_KEY`, `ENABLE_MCP`, `MCP_CONFIG_PATH`.
 
 Agentic platform settings: `AGENTIC_MODE` (default true), `ENABLE_API_SERVER`, `API_SERVER_PORT` (default 8080), `GITHUB_WEBHOOK_SECRET`, `WEBHOOK_API_SECRET`, `ENABLE_SCHEDULER`, `NOTIFICATION_CHAT_IDS`.
 

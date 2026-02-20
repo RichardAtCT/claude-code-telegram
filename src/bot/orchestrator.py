@@ -23,7 +23,7 @@ from telegram.ext import (
 )
 
 from ..claude.exceptions import ClaudeToolValidationError
-from ..claude.integration import StreamUpdate
+from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
 from .utils.html_format import escape_html

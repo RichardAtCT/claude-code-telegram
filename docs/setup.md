@@ -11,11 +11,11 @@
 
 ### 2. Claude Authentication Setup
 
-The bot supports two Claude integration modes. Choose the one that fits your needs:
+The bot uses the Claude Code Python SDK. Choose your authentication method:
 
-#### Option A: SDK with CLI Authentication (Recommended)
+#### Option A: CLI Authentication (Recommended)
 
-Uses the Python SDK with your existing Claude CLI credentials.
+Uses the SDK with your existing Claude CLI credentials.
 
 ```bash
 # 1. Install Claude CLI (https://claude.ai/code)
@@ -26,32 +26,17 @@ claude auth login
 claude auth status
 # Should show: "You are authenticated"
 
-# 4. Configure bot
-USE_SDK=true
-# Leave ANTHROPIC_API_KEY empty
+# No ANTHROPIC_API_KEY needed — SDK uses CLI credentials
 ```
 
-#### Option B: SDK with Direct API Key
+#### Option B: Direct API Key
 
-Uses the Python SDK with a direct API key, no CLI needed.
+Uses the SDK with a direct API key, no CLI auth needed.
 
 ```bash
 # 1. Get your API key from https://console.anthropic.com/
 # 2. Configure bot
-USE_SDK=true
 ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
-```
-
-#### Option C: CLI Subprocess Mode (Legacy)
-
-Uses the Claude CLI as a subprocess. Only use for compatibility with older setups.
-
-```bash
-# 1. Install and authenticate Claude CLI
-claude auth login
-
-# 2. Configure bot
-USE_SDK=false
 ```
 
 ### 3. Install the Bot
@@ -76,7 +61,6 @@ TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 TELEGRAM_BOT_USERNAME=your_bot_username
 APPROVED_DIRECTORY=/path/to/your/projects
 ALLOWED_USERS=123456789  # Your Telegram user ID
-USE_SDK=true
 ```
 
 ### 5. Get Your Telegram User ID
@@ -182,12 +166,11 @@ NOTIFICATION_CHAT_IDS=123456789,987654321
 
 ### Authentication Methods Comparison
 
-| Feature | SDK + CLI Auth | SDK + API Key | CLI Subprocess |
-|---------|----------------|---------------|----------------|
-| Performance | Best | Best | Slower |
-| CLI Required | Yes | No | Yes |
-| Streaming | Yes | Yes | Limited |
-| Error Handling | Best | Best | Basic |
+| Feature | SDK + CLI Auth | SDK + API Key |
+|---------|----------------|---------------|
+| Performance | Best | Best |
+| CLI Required | Yes | No |
+| Streaming | Yes | Yes |
 
 ### Security Configuration
 

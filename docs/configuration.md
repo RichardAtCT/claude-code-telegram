@@ -61,9 +61,8 @@ DISABLE_TOOL_VALIDATION=false
 #### Claude Configuration
 
 ```bash
-# Integration Method
-USE_SDK=true                          # Use Python SDK (default) or CLI subprocess
-ANTHROPIC_API_KEY=sk-ant-api03-...    # Optional: API key for SDK integration
+# Authentication
+ANTHROPIC_API_KEY=sk-ant-api03-...    # Optional: API key for SDK (uses CLI auth if omitted)
 
 # Maximum conversation turns before requiring new session
 CLAUDE_MAX_TURNS=10
@@ -313,34 +312,17 @@ The configuration system performs extensive validation:
 
 ## Claude Integration Options
 
-### SDK vs CLI Mode
-
-1. **SDK Mode (Default)**: Uses the Claude Code Python SDK for direct API integration
-   - Better performance and streaming support
-   - Can use existing Claude CLI authentication or API key
-
-2. **CLI Mode**: Uses Claude Code CLI subprocess
-   - Requires Claude Code CLI installation
-   - Legacy mode for compatibility
-
 ### Authentication Options
 
 #### Option 1: Use Existing Claude CLI Authentication (Recommended)
 ```bash
-USE_SDK=true
 # No ANTHROPIC_API_KEY needed - SDK will use CLI credentials
+# Ensure Claude CLI is installed and authenticated: claude auth login
 ```
 
 #### Option 2: Direct API Key
 ```bash
-USE_SDK=true
 ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
-```
-
-#### Option 3: CLI Mode (Legacy)
-```bash
-USE_SDK=false
-# Requires Claude CLI to be installed and authenticated
 ```
 
 ## Troubleshooting

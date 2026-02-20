@@ -1,8 +1,9 @@
 # SDK Duplication & Over-Complication Review
 
 **Date:** 2026-02-19
-**SDK Version:** `claude-agent-sdk v0.1.31`
-**Codebase Module:** `src/claude/` (2,774 lines across 8 files)
+**Last Updated:** 2026-02-20 (post CLI backend removal)
+**SDK Version:** `claude-agent-sdk ^0.1.38`
+**Codebase Module:** `src/claude/` (~1,500 lines across 6 files)
 
 This document captures the findings from a deep review of the `src/claude/` module
 against the actual capabilities of the Claude Agent SDK. The goal is to identify
@@ -28,6 +29,7 @@ The SDK reference used: https://platform.claude.com/docs/en/agent-sdk/python
 11. [Estimated Line Reduction](#estimated-line-reduction)
 12. [Recommended Refactor Order](#recommended-refactor-order)
 13. [Migration Risks](#migration-risks)
+14. [Progress Log](#progress-log)
 
 ---
 
@@ -49,6 +51,7 @@ impact issues are:
 ## Finding 1: Using `query()` Instead of `ClaudeSDKClient`
 
 **Impact: HIGH** | **Files: `session.py`, `facade.py`, `sdk_integration.py`**
+**Status: PARTIALLY COMPLETE** (PR #56, merged 2026-02-20)
 
 ### What the SDK provides
 
@@ -108,7 +111,25 @@ With `ClaudeSDKClient`:
 - Only need thin persistence: store `{user_id, directory, session_id}` in SQLite
   so we can resume across bot restarts via `options.resume`
 
-### Lines affected
+### What PR #56 achieved
+
+- **Migrated from `query()` to `ClaudeSDKClient`** — `sdk_integration.py` now
+  uses `async with ClaudeSDKClient(options) as client` for each request
+- **Eliminated `temp_*` session IDs** — new sessions use `session_id=""` with
+  deferred storage save until Claude responds with a real ID
+- **Removed session ID swapping** — `update_session()` now takes a
+  `ClaudeSession` object directly
+- **Simplified facade** — post-execution flow no longer does delete-old/save-new
+
+### What remains
+
+- `SessionManager` is still 342 lines (target: ~90 lines of thin persistence)
+- `SessionStorage` ABC and `InMemorySessionStorage` still exist
+- Auto-resume search and stale session retry logic still present in facade
+- Not yet using `ClaudeSDKClient` for multi-turn within a single connection
+  (currently creates a new client per request)
+
+### Original lines affected estimate
 
 - `session.py`: ~250 of 340 lines removable (keep `ClaudeSession` dataclass as
   thin storage model, remove `SessionStorage` ABC, `InMemorySessionStorage`,
@@ -210,59 +231,19 @@ the tool call has already been sent to Claude by the time we check it. The SDK's
 ## Finding 3: Dual Backend (SDK + CLI Subprocess)
 
 **Impact: HIGH** | **Files: `integration.py`, `parser.py`, `facade.py`**
+**Status: COMPLETE** (branch `finding3/remove-cli-subprocess-backend`, 2026-02-20)
 
-### The current architecture
+### Resolution
 
-```
-facade.py (ClaudeIntegration)
-├── sdk_integration.py (ClaudeSDKManager)     -- Primary, 513 lines
-├── integration.py (ClaudeProcessManager)     -- Fallback, 594 lines
-└── parser.py (OutputParser)                  -- CLI JSON parsing, 338 lines
-```
-
-The facade (`_execute_with_fallback`, lines 267-347) tries the SDK first and
-falls back to the CLI subprocess if it catches:
-- `"Failed to decode JSON"` / `"JSON decode error"`
-- `"TaskGroup"` / `"ExceptionGroup"`
-- `"Unknown message type"`
-
-### Why this is problematic
-
-1. **Code duplication** — both backends implement the same abstractions:
-
-   | Concept | SDK (`sdk_integration.py`) | CLI (`integration.py`) |
-   |---------|--------------------------|----------------------|
-   | `ClaudeResponse` dataclass | Lines 107-118 | Lines 33-43 |
-   | `StreamUpdate` dataclass | Lines 121-128 | Lines 47-89 |
-   | Text extraction | Lines 435-451 | Lines 388-416 |
-   | Tool extraction | Lines 453-474 | Lines 528-544 |
-   | Command building | SDK options | Lines 219-267 |
-   | Stream parsing | Typed messages | Lines 299-386 (raw JSON) |
-
-2. **Incompatible sessions** — fallback starts a fresh session (line 317:
-   `session_id=None`), so context is lost on fallback.
-
-3. **SDK bugs aren't our problem** — catching `CLIJSONDecodeError` and
-   `ExceptionGroup` means we're papering over SDK bugs rather than reporting
-   them. The SDK is actively maintained (v0.1.38 is latest, we're on v0.1.31).
-
-4. **`OutputParser` exists only for CLI** — all 338 lines of `parser.py` parse
-   raw JSON output from the subprocess. The SDK returns typed Python objects.
-
-### What the refactor looks like
-
-- Delete `integration.py` (594 lines)
-- Delete `parser.py` (338 lines)
-- Remove fallback logic from `facade.py` (~80 lines)
-- Remove `ClaudeResponse`/`StreamUpdate` from `integration.py` (use SDK's types
-  or a single shared definition)
-- Upgrade to latest `claude-agent-sdk` to get fixes for JSON/TaskGroup issues
-
-### Lines affected
-
-- `integration.py`: All 594 lines removable
-- `parser.py`: All 338 lines removable
-- `facade.py`: ~80 lines of fallback logic removable
+- Deleted `integration.py` (594 lines) and `parser.py` (338 lines)
+- Deleted `tests/unit/test_claude/test_parser.py` (127 lines)
+- Removed fallback logic from `facade.py` (`_execute_with_fallback` → `_execute`)
+- Removed `process_manager` parameter from `ClaudeIntegration.__init__()`
+- Removed `use_sdk` config flag from `Settings`
+- Removed `_sdk_failed_count` tracker
+- Single `ClaudeResponse`/`StreamUpdate` definition in `sdk_integration.py`
+- Updated all imports across `src/` and `tests/` to use `sdk_integration`
+- ~1,060 net lines removed
 
 ---
 
@@ -302,32 +283,13 @@ None of these **enforce** a limit. They only report after the fact.
 ## Finding 5: Manual `disallowed_tools` Checking
 
 **Impact: MEDIUM** | **Files: `monitor.py`**
+**Status: COMPLETE** (branch `finding3/remove-cli-subprocess-backend`, 2026-02-20)
 
-### What the SDK provides
+### Resolution
 
-```python
-options = ClaudeAgentOptions(
-    disallowed_tools=["WebFetch", "WebSearch"],  # Native support
-)
-```
-
-The SDK enforces this before any tool executes.
-
-### What we do instead
-
-`ToolMonitor.validate_tool_call()` (monitor.py:176-190) manually checks:
-
-```python
-if hasattr(self.config, "claude_disallowed_tools") and self.config.claude_disallowed_tools:
-    if tool_name in self.config.claude_disallowed_tools:
-        return False, f"Tool explicitly disallowed: {tool_name}"
-```
-
-This is a reactive check during streaming, not a preventive block.
-
-### Recommendation
-
-Pass `config.claude_disallowed_tools` directly to `ClaudeAgentOptions.disallowed_tools`.
+`disallowed_tools` is now passed directly to `ClaudeAgentOptions` in
+`sdk_integration.py`, so the SDK enforces it before any tool executes.
+The `ToolMonitor` still has its own runtime check as a redundant safety layer.
 
 ---
 
@@ -409,6 +371,7 @@ its own internal discovery.
 ## Finding 8: Manual Content Extraction vs `ResultMessage.result`
 
 **Impact: LOW** | **Files: `sdk_integration.py`**
+**Status: COMPLETE** (PR #56, merged 2026-02-20)
 
 ### The current approach
 
@@ -430,11 +393,17 @@ for message in messages:
 Use `ResultMessage.result` directly. Fall back to content extraction only if
 `result` is `None`.
 
+### Resolution
+
+PR #56 now uses `ResultMessage.result` as the primary content source with
+fallback to `_extract_content_from_messages()` when `result` is `None`.
+
 ---
 
 ## Finding 9: Dead In-Memory Session State
 
 **Impact: LOW** | **Files: `sdk_integration.py`**
+**Status: COMPLETE** (PR #56, merged 2026-02-20)
 
 ### The current approach
 
@@ -456,22 +425,29 @@ dict length.
 
 Remove `active_sessions`, `_update_session()`, and related methods (~20 lines).
 
+### Resolution
+
+PR #56 removed `active_sessions` dict and `_update_session()` from
+`ClaudeSDKManager`. The in-memory session state no longer exists.
+
 ---
 
 ## Estimated Line Reduction
 
-| File | Current Lines | Removable | Reason |
-|------|:---:|:---:|--------|
-| `integration.py` | 594 | **594** | Entire CLI subprocess backend |
-| `parser.py` | 338 | **338** | Only used by CLI subprocess |
-| `session.py` | 340 | **~250** | Keep thin persistence model |
-| `monitor.py` | 333 | **~280** | Replace with `can_use_tool` |
-| `facade.py` | 568 | **~300** | Remove fallback, interception, admin messages |
-| `sdk_integration.py` | 513 | **~100** | Remove CLI discovery, dead state, content extraction |
-| `exceptions.py` | 50 | **~20** | Remove `ClaudeToolValidationError` |
-| **Total** | **2,774** | **~1,880** | **~68% reduction** |
+| File | Original | Current | Still Removable | Reason |
+|------|:---:|:---:|:---:|--------|
+| ~~`integration.py`~~ | ~~594~~ | **0** | — | ✅ Deleted |
+| ~~`parser.py`~~ | ~~338~~ | **0** | — | ✅ Deleted |
+| `session.py` | 340 | 342 | **~250** | Keep thin persistence model |
+| `monitor.py` | 333 | 349 | **~280** | Replace with `can_use_tool` |
+| `facade.py` | 568 | ~340 | **~150** | Remove interception, admin messages |
+| `sdk_integration.py` | 513 | 480 | **~60** | Remove CLI discovery |
+| `exceptions.py` | 50 | 40 | **~10** | Remove `ClaudeToolValidationError` |
+| **Total** | **2,774** | **~1,550** | **~750** | **~48% remaining reduction** |
 
-Post-refactor, the `src/claude/` module should be roughly **~900 lines** with
+**Completed so far:** ~1,220 net lines removed across PR #56 and F3/F5 work.
+
+Post-refactor, the `src/claude/` module should be roughly **~800 lines** with
 clearer responsibilities:
 
 - `sdk_integration.py` — Thin wrapper around `ClaudeSDKClient`, builds options,
@@ -489,30 +465,20 @@ step should be a separate PR that can be tested independently.
 
 ### Phase 1: Low-Risk Cleanup (no behavioral changes)
 
-1. **Remove dead in-memory state** from `ClaudeSDKManager`
-   - Delete `active_sessions`, `_update_session()`, `kill_all_processes()` body
-   - ~20 lines, zero risk
+1. ~~**Remove dead in-memory state** from `ClaudeSDKManager`~~
+   ✅ **DONE** (PR #56) — `active_sessions` and `_update_session()` removed.
 
-2. **Use `ResultMessage.result`** for content extraction
-   - Add fallback to `_extract_content_from_messages()` only if `result` is None
-   - ~10 lines changed, easy to verify
+2. ~~**Use `ResultMessage.result`** for content extraction~~
+   ✅ **DONE** (PR #56) — Uses `ResultMessage.result` with fallback.
 
-3. **Pass `disallowed_tools` to SDK options**
-   - Add `disallowed_tools=self.config.claude_disallowed_tools` to options
-   - Keep `ToolMonitor` check as redundant safety for now
-   - ~5 lines added
+3. ~~**Pass `disallowed_tools` to SDK options**~~
+   ✅ **DONE** (F3/F5 branch) — Added to `ClaudeAgentOptions()`.
 
 ### Phase 2: Remove CLI Subprocess Backend
 
-4. **Delete `integration.py` and `parser.py`**
-   - Remove `ClaudeProcessManager` and `OutputParser`
-   - Remove fallback logic from `facade.py._execute_with_fallback()`
-   - Remove `process_manager` from `ClaudeIntegration.__init__()`
-   - ~1,012 lines removed
-   - **Risk**: If SDK has bugs, there's no fallback. Mitigate by upgrading to
-     latest SDK version first.
-   - **Prerequisite**: Upgrade `claude-agent-sdk` from 0.1.31 to latest.
-     Run tests. Verify SDK works reliably without fallback.
+4. ~~**Delete `integration.py` and `parser.py`**~~
+   ✅ **DONE** (F3/F5 branch) — Deleted both files, removed fallback logic,
+   removed `use_sdk` config flag, updated all imports. ~1,060 lines removed.
 
 ### Phase 3: Replace `ToolMonitor` with `can_use_tool`
 
@@ -535,17 +501,14 @@ step should be a separate PR that can be tested independently.
 ### Phase 4: Switch to `ClaudeSDKClient`
 
 7. **Replace `query()` with `ClaudeSDKClient`**
-   - Refactor `ClaudeSDKManager` to create/manage `ClaudeSDKClient` instances
-   - Remove temporary session ID generation
-   - Remove session ID swapping logic
-   - Simplify `SessionManager` to thin persistence
-   - ~300 lines removed, ~50 lines added
-   - **Risk**: Highest-risk change. `ClaudeSDKClient` has different lifecycle
-     semantics. Mitigate by:
-     - Building a prototype first
-     - Testing multi-turn conversations thoroughly
-     - Verifying session resume across bot restarts
-     - Keeping `options.resume` for cross-restart persistence
+   ⚡ **PARTIALLY DONE** (PR #56) — Core migration complete:
+   - ✅ `ClaudeSDKManager` now uses `ClaudeSDKClient` per request
+   - ✅ Temporary `temp_*` session IDs eliminated
+   - ✅ Session ID swapping logic removed
+   - ❌ `SessionManager` not yet slimmed to thin persistence (~342 lines remain)
+   - ❌ `SessionStorage` ABC / `InMemorySessionStorage` still present
+   - ❌ Not yet using persistent `ClaudeSDKClient` connections for multi-turn
+   - Remaining: ~200 lines removable from session.py + facade.py
 
 8. **Add `max_budget_usd`**
    - Add config setting and pass to options
@@ -598,6 +561,21 @@ Before any refactor:
 - Ensure existing tests pass
 - Add integration tests for the SDK path (if not already present)
 - Add tests for `can_use_tool` callback behavior
+
+---
+
+## Progress Log
+
+| Date | PR | Findings Addressed | Summary |
+|------|:---:|:---:|---------|
+| 2026-02-20 | [#56](https://github.com/RichardAtCT/claude-code-telegram/pull/56) | F1 (partial), F8, F9 | Migrated `query()` → `ClaudeSDKClient`, eliminated `temp_*` IDs and session swapping, uses `ResultMessage.result`, removed dead `active_sessions` state |
+| 2026-02-20 | TBD | F3 (complete), F5 (complete) | Deleted CLI subprocess backend (`integration.py`, `parser.py`), removed `use_sdk` flag, passed `disallowed_tools` to SDK, ~1,060 lines removed |
+
+### Next Steps
+
+The recommended next action is **Phase 3** (replace `ToolMonitor` with SDK's
+`can_use_tool` callback) — the highest-impact remaining work (~400 lines).
+After that, slim down `SessionManager` (Phase 4, step 7 remainder).
 
 ---
 
