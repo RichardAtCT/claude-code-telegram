@@ -130,6 +130,106 @@ class InMemoryAuditStorage(AuditStorage):
         )
 
 
+class SQLiteAuditStorage(AuditStorage):
+    """SQLite-backed audit storage for production use."""
+
+    def __init__(self, db_manager: "DatabaseManager"):
+        self.db = db_manager
+
+    async def store_event(self, event: AuditEvent) -> None:
+        """Store event in SQLite."""
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO audit_log
+                (user_id, event_type, event_data, success, timestamp, ip_address)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.user_id,
+                    event.event_type,
+                    json.dumps(event.details),
+                    event.success,
+                    event.timestamp.isoformat(),
+                    event.ip_address,
+                ),
+            )
+            await conn.commit()
+
+        # Log high-risk events immediately
+        if event.risk_level in ["high", "critical"]:
+            logger.warning(
+                "High-risk security event",
+                event_type=event.event_type,
+                user_id=event.user_id,
+                risk_level=event.risk_level,
+                details=event.details,
+            )
+
+    async def get_events(
+        self,
+        user_id: Optional[int] = None,
+        event_type: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> List[AuditEvent]:
+        """Get filtered events from SQLite."""
+        conditions = []
+        params: list = []
+
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
+        if event_type is not None:
+            conditions.append("event_type = ?")
+            params.append(event_type)
+        if start_time is not None:
+            conditions.append("timestamp >= ?")
+            params.append(start_time.isoformat())
+        if end_time is not None:
+            conditions.append("timestamp <= ?")
+            params.append(end_time.isoformat())
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f"SELECT * FROM audit_log {where} ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+
+        events = []
+        for row in rows:
+            details = {}
+            if row["event_data"]:
+                try:
+                    details = json.loads(row["event_data"])
+                except (json.JSONDecodeError, TypeError):
+                    details = {"raw": str(row["event_data"])}
+
+            events.append(
+                AuditEvent(
+                    timestamp=datetime.fromisoformat(str(row["timestamp"])),
+                    user_id=row["user_id"],
+                    event_type=row["event_type"],
+                    success=bool(row["success"]),
+                    details=details,
+                    ip_address=row["ip_address"],
+                    risk_level=details.get("risk_level", "low"),
+                )
+            )
+        return events
+
+    async def get_security_violations(
+        self, user_id: Optional[int] = None, limit: int = 100
+    ) -> List[AuditEvent]:
+        """Get security violations from SQLite."""
+        return await self.get_events(
+            user_id=user_id, event_type="security_violation", limit=limit
+        )
+
+
 class AuditLogger:
     """Security audit logger."""
 

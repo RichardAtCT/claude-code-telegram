@@ -72,12 +72,79 @@ class ImageHandler:
         )
 
     def _detect_image_type(self, image_bytes: bytes) -> str:
-        """Detect type of image"""
-        # Simple heuristic based on image characteristics
-        # In practice, could use ML model for better detection
+        """Detect type of image using format and dimension heuristics."""
+        fmt = self._detect_format(image_bytes)
+        width, height = self._get_dimensions(image_bytes, fmt)
 
-        # For now, return generic type
-        return "screenshot"
+        if width == 0 or height == 0:
+            return "generic"
+
+        aspect = width / height
+
+        # Very wide images are likely diagrams or flowcharts
+        if aspect > 2.5:
+            return "diagram"
+
+        # Very tall images are likely mobile screenshots or scrolling captures
+        if aspect < 0.4:
+            return "screenshot"
+
+        # Common desktop/mobile screenshot aspect ratios (16:9, 16:10, 9:16, etc.)
+        if 1.2 < aspect < 2.0 and width >= 800:
+            return "screenshot"
+
+        # Phone-portrait screenshots
+        if 0.4 <= aspect <= 0.65 and height >= 1000:
+            return "screenshot"
+
+        # Square-ish images with moderate resolution are often UI mockups
+        if 0.8 <= aspect <= 1.25 and width >= 400:
+            return "ui_mockup"
+
+        # Small images are likely icons or thumbnails
+        if width < 256 and height < 256:
+            return "generic"
+
+        return "generic"
+
+    @staticmethod
+    def _get_dimensions(image_bytes: bytes, fmt: str) -> tuple:
+        """Extract width and height from image bytes without PIL."""
+        try:
+            if fmt == "png" and len(image_bytes) >= 24:
+                # PNG: width at offset 16 (4 bytes BE), height at offset 20 (4 bytes BE)
+                w = int.from_bytes(image_bytes[16:20], "big")
+                h = int.from_bytes(image_bytes[20:24], "big")
+                return w, h
+            elif fmt == "jpeg" and len(image_bytes) > 2:
+                # JPEG: scan for SOF0/SOF2 markers (0xFF 0xC0 / 0xFF 0xC2)
+                i = 2
+                while i < len(image_bytes) - 9:
+                    if image_bytes[i] != 0xFF:
+                        i += 1
+                        continue
+                    marker = image_bytes[i + 1]
+                    if marker in (0xC0, 0xC2):
+                        h = int.from_bytes(image_bytes[i + 5 : i + 7], "big")
+                        w = int.from_bytes(image_bytes[i + 7 : i + 9], "big")
+                        return w, h
+                    # Skip to next marker
+                    length = int.from_bytes(image_bytes[i + 2 : i + 4], "big")
+                    i += 2 + length
+            elif fmt == "gif" and len(image_bytes) >= 10:
+                # GIF: width at offset 6 (2 bytes LE), height at offset 8 (2 bytes LE)
+                w = int.from_bytes(image_bytes[6:8], "little")
+                h = int.from_bytes(image_bytes[8:10], "little")
+                return w, h
+            elif fmt == "webp" and len(image_bytes) >= 30:
+                # WebP VP8: dimensions at offset 26-30
+                if image_bytes[12:16] == b"VP8 " and len(image_bytes) >= 30:
+                    w = int.from_bytes(image_bytes[26:28], "little") & 0x3FFF
+                    h = int.from_bytes(image_bytes[28:30], "little") & 0x3FFF
+                    return w, h
+        except Exception:
+            pass
+        return 0, 0
 
     def _detect_format(self, image_bytes: bytes) -> str:
         """Detect image format from magic bytes"""

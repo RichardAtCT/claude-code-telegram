@@ -702,7 +702,7 @@ class MessageOrchestrator:
         # Rate limit check
         rate_limiter = context.bot_data.get("rate_limiter")
         if rate_limiter:
-            allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.001)
+            allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.0)
             if not allowed:
                 await update.message.reply_text(f"⏱️ {limit_message}")
                 return
@@ -755,6 +755,10 @@ class MessageOrchestrator:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+
+            # Track actual cost post-execution
+            if rate_limiter and claude_response.cost and claude_response.cost > 0:
+                await rate_limiter.check_rate_limit(user_id, claude_response.cost, 0)
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
