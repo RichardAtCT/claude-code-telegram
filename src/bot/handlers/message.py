@@ -257,10 +257,12 @@ async def handle_text_message(
                 user_id=user_id,
                 blocked_tools=e.blocked_tools,
             )
-            # Error message already formatted, create FormattedMessage
+            # Error message already formatted (markdown-ish), ensure HTML safety
             from ..utils.formatting import FormattedMessage
 
-            formatted_messages = [FormattedMessage(str(e), parse_mode="HTML")]
+            formatted_messages = [
+                FormattedMessage(escape_html(str(e)), parse_mode="HTML")
+            ]
         except Exception as e:
             logger.error("Claude integration failed", error=str(e), user_id=user_id)
             # Format error and create FormattedMessage
@@ -301,7 +303,11 @@ async def handle_text_message(
                             update.message.message_id if i == 0 else None
                         ),
                     )
-                except Exception:
+                except Exception as plain_text_error:
+                    logger.error(
+                        "Failed to send plain text fallback response",
+                        error=str(plain_text_error),
+                    )
                     await update.message.reply_text(
                         "❌ Failed to send response. Please try again.",
                         reply_to_message_id=(
@@ -373,8 +379,8 @@ async def handle_text_message(
         # Clean up progress message if it exists
         try:
             await progress_msg.delete()
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug("Failed to delete progress message", error=str(delete_error))
 
         error_msg = f"❌ <b>Error processing message</b>\n\n{escape_html(str(e))}"
         await update.message.reply_text(error_msg, parse_mode="HTML")
@@ -396,6 +402,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.effective_user.id
     document = update.message.document
     settings: Settings = context.bot_data["settings"]
+
+    # Initialize prompt to avoid UnboundLocalError
+    prompt: str = ""
 
     # Get services
     security_validator: Optional[SecurityValidator] = context.bot_data.get(
@@ -605,8 +614,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as e:
         try:
             await progress_msg.delete()
-        except Exception:
-            pass
+        except Exception as delete_error:
+            logger.debug("Failed to delete progress message", error=str(delete_error))
 
         error_msg = f"❌ <b>Error processing file</b>\n\n{escape_html(str(e))}"
         await update.message.reply_text(error_msg, parse_mode="HTML")
