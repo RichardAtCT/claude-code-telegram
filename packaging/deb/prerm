@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  upgrade)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop claude-code-telegram.service >/dev/null 2>&1 || true
+    fi
+    ;;
+  remove|deconfigure)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop claude-code-telegram.service >/dev/null 2>&1 || true
+      systemctl disable claude-code-telegram.service >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+exit 0

@@ -1,4 +1,4 @@
-.PHONY: install dev test lint format clean help run run-remote remote-attach remote-stop
+.PHONY: install dev test lint format clean help run run-remote remote-attach remote-stop deb
 
 # Default target
 help:
@@ -13,6 +13,7 @@ help:
 	@echo "  run-remote - Start bot in tmux on remote Mac (unlocks keychain)"
 	@echo "  remote-attach - Attach to running bot tmux session"
 	@echo "  remote-stop   - Stop the bot tmux session"
+	@echo "  deb        - Build Debian package"
 
 install:
 	poetry install --no-dev
@@ -60,3 +61,6 @@ remote-attach:  ## Attach to running bot tmux session
 
 remote-stop:  ## Stop the bot tmux session
 	tmux kill-session -t claude-bot
+
+deb:
+	./scripts/build-deb.sh

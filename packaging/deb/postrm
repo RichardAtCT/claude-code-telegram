@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+SERVICE_USER="claude-telegram"
+
+case "${1:-}" in
+  purge)
+    rm -rf /opt/claude-code-telegram
+    rm -rf /etc/claude-code-telegram
+    rm -rf /var/lib/claude-code-telegram
+    rm -rf /var/log/claude-code-telegram
+
+    if command -v deluser >/dev/null 2>&1; then
+      deluser --system "$SERVICE_USER" >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+exit 0

@@ -1,0 +1,22 @@
+[Unit]
+Description=Claude Code Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=claude-telegram
+Group=claude-telegram
+EnvironmentFile=-/etc/claude-code-telegram/claude-code-telegram.env
+WorkingDirectory=/var/lib/claude-code-telegram
+ExecStart=/usr/bin/claude-code-telegram
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/claude-code-telegram /var/log/claude-code-telegram
+
+[Install]
+WantedBy=multi-user.target

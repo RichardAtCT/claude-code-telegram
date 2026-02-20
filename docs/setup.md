@@ -41,10 +41,21 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 
 ### 3. Install the Bot
 
+#### Option A: Source install
+
 ```bash
 git clone https://github.com/RichardAtCT/claude-code-telegram.git
 cd claude-code-telegram
 make dev
+```
+
+#### Option B: APT install
+
+See [APT repository setup](apt-repository.md) to add the GitHub Pages repository, then:
+
+```bash
+sudo apt update
+sudo apt install claude-code-telegram
 ```
 
 ### 4. Configure Environment
@@ -71,9 +82,18 @@ ALLOWED_USERS=123456789  # Your Telegram user ID
 
 ### 6. Run the Bot
 
+For source installs:
+
 ```bash
 make run-debug    # Recommended for first run
 make run          # Production
+```
+
+For APT installs:
+
+```bash
+sudo systemctl enable --now claude-code-telegram
+sudo systemctl status claude-code-telegram
 ```
 
 ### 7. Test the Bot

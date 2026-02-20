@@ -38,12 +38,25 @@ Bot: Running pytest...
 - **Claude Code CLI** -- [Install from here](https://claude.ai/code)
 - **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
 
+> Prefer APT installation? See [docs/apt-repository.md](docs/apt-repository.md).
+
 ### 2. Install
+
+#### Option A: Source install (recommended for development)
 
 ```bash
 git clone https://github.com/RichardAtCT/claude-code-telegram.git
 cd claude-code-telegram
 make dev
+```
+
+#### Option B: APT install (recommended for servers)
+
+After adding the GitHub Pages APT repository (see [docs/apt-repository.md](docs/apt-repository.md)):
+
+```bash
+sudo apt update
+sudo apt install claude-code-telegram
 ```
 
 ### 3. Configure
@@ -63,9 +76,18 @@ ALLOWED_USERS=123456789  # Your Telegram user ID
 
 ### 4. Run
 
+For source installs:
+
 ```bash
 make run          # Production
 make run-debug    # With debug logging
+```
+
+For APT installs:
+
+```bash
+sudo systemctl enable --now claude-code-telegram
+sudo systemctl status claude-code-telegram
 ```
 
 Message your bot on Telegram to get started.

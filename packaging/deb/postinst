@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+PKG_NAME="claude-code-telegram"
+SERVICE_USER="claude-telegram"
+APP_DIR="/opt/claude-code-telegram"
+VENV_DIR="$APP_DIR/venv"
+WHEEL_DIR="/usr/share/$PKG_NAME/wheels"
+CONFIG_DIR="/etc/claude-code-telegram"
+ENV_FILE="$CONFIG_DIR/claude-code-telegram.env"
+STATE_DIR="/var/lib/claude-code-telegram"
+PROJECTS_DIR="$STATE_DIR/projects"
+LOG_DIR="/var/log/claude-code-telegram"
+
+case "${1:-}" in
+  configure)
+    if ! getent group "$SERVICE_USER" >/dev/null 2>&1; then
+      addgroup --system "$SERVICE_USER"
+    fi
+
+    if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+      adduser --system --ingroup "$SERVICE_USER" --home "$STATE_DIR" --no-create-home --disabled-login --gecos "Claude Code Telegram service user" "$SERVICE_USER"
+    fi
+
+    install -d -m 0755 "$APP_DIR"
+    install -d -m 0755 "$CONFIG_DIR"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$PROJECTS_DIR"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$LOG_DIR"
+
+    if [ ! -f "$ENV_FILE" ]; then
+      install -m 0640 "/usr/share/doc/$PKG_NAME/claude-code-telegram.env.example" "$ENV_FILE"
+      chown root:"$SERVICE_USER" "$ENV_FILE"
+    fi
+
+    if [ ! -d "$VENV_DIR" ]; then
+      python3 -m venv "$VENV_DIR"
+    fi
+
+    "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null
+
+    WHEEL_PATH="$(find "$WHEEL_DIR" -maxdepth 1 -type f -name 'claude_code_telegram-*.whl' | head -n 1)"
+    if [ -z "$WHEEL_PATH" ]; then
+      echo "No claude-code-telegram wheel found in $WHEEL_DIR" >&2
+      exit 1
+    fi
+
+    "$VENV_DIR/bin/pip" install --upgrade "$WHEEL_PATH"
+
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$APP_DIR"
+
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+
+    echo "Claude Code Telegram installed."
+    echo "1) Edit $ENV_FILE"
+    echo "2) sudo systemctl enable --now claude-code-telegram"
+    ;;
+esac
+
+exit 0
