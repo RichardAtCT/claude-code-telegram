@@ -336,46 +336,104 @@ class TestToolMonitorConfigBypass:
 
         assert session.user_id == 123
         assert session.project_path == Path("/test/project")
-        assert session.session_id is not None
+        assert session.is_new_session is True
+        assert session.session_id == ""  # Empty until Claude responds
 
     async def test_get_existing_session(self, session_manager):
-        """Test getting existing session."""
-        # Create session
-        session1 = await session_manager.get_or_create_session(
+        """Test getting existing session by ID after it has a real session_id."""
+        # Simulate a session that has already received a real ID from Claude
+        existing = ClaudeSession(
+            session_id="real-session-id",
             user_id=123,
             project_path=Path("/test/project"),
+            created_at=datetime.now(UTC),
+            last_used=datetime.now(UTC),
         )
+        await session_manager.storage.save_session(existing)
+        session_manager.active_sessions["real-session-id"] = existing
 
-        # Get same session
+        # Get same session by ID
         session2 = await session_manager.get_or_create_session(
             user_id=123,
             project_path=Path("/test/project"),
-            session_id=session1.session_id,
+            session_id="real-session-id",
         )
 
-        assert session1.session_id == session2.session_id
+        assert session2.session_id == "real-session-id"
 
     async def test_session_limit_enforcement(self, session_manager):
         """Test session limit enforcement."""
-        # Create maximum number of sessions
-        session1 = await session_manager.get_or_create_session(
-            user_id=123, project_path=Path("/test/project1")
-        )
-        await session_manager.get_or_create_session(
-            user_id=123, project_path=Path("/test/project2")
-        )
+        # Seed sessions that have already received real IDs (simulating
+        # the full create -> Claude responds -> update_session lifecycle)
+        for i, path in enumerate(["/test/project1", "/test/project2"], start=1):
+            s = ClaudeSession(
+                session_id=f"session-{i}",
+                user_id=123,
+                project_path=Path(path),
+                created_at=datetime.now(UTC),
+                last_used=datetime.now(UTC) - timedelta(hours=i),  # older = higher i
+            )
+            await session_manager.storage.save_session(s)
+            session_manager.active_sessions[s.session_id] = s
 
-        # Creating third session should remove oldest
+        # Verify we have 2 sessions
+        assert len(await session_manager._get_user_sessions(123)) == 2
+
+        # Creating third session should remove the oldest (session-2)
         await session_manager.get_or_create_session(
             user_id=123, project_path=Path("/test/project3")
         )
 
-        # Should have only 2 sessions
-        user_sessions = await session_manager._get_user_sessions(123)
-        assert len(user_sessions) == 2
+        # After eviction, only session-1 remains persisted
+        # (session-2 evicted, session-3 is new/unsaved so not yet in storage)
+        persisted = await session_manager._get_user_sessions(123)
+        assert len(persisted) == 1  # Only session-1 persisted
+        assert persisted[0].session_id == "session-1"
 
-        # First session should be gone
-        loaded_session1 = await session_manager.storage.load_session(
-            session1.session_id
+        # session-2 should be gone
+        loaded = await session_manager.storage.load_session("session-2")
+        assert loaded is None
+
+
+class TestUpdateSessionNewWithoutId:
+    """Edge case: Claude returns no session_id for a brand-new session."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            session_timeout_hours=24,
+            max_sessions_per_user=2,
         )
-        assert loaded_session1 is None
+
+    @pytest.fixture
+    def session_manager(self, config):
+        return SessionManager(config, InMemorySessionStorage())
+
+    async def test_warns_and_does_not_persist(self, session_manager):
+        """When Claude returns no session_id, session is not persisted."""
+        session = await session_manager.get_or_create_session(
+            user_id=999, project_path=Path("/test/no-id")
+        )
+        assert session.is_new_session is True
+
+        # Simulate Claude returning empty session_id
+        response = ClaudeResponse(
+            content="hello",
+            session_id="",
+            cost=0.001,
+            duration_ms=50,
+            num_turns=1,
+        )
+
+        await session_manager.update_session(session, response)
+
+        # Session should be marked as no longer new
+        assert session.is_new_session is False
+
+        # Session should NOT be persisted (empty session_id)
+        assert len(session_manager.active_sessions) == 0
+        persisted = await session_manager._get_user_sessions(999)
+        assert len(persisted) == 0

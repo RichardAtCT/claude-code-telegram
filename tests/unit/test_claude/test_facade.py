@@ -272,3 +272,30 @@ class TestForceNewSurvivesFailure:
         if force_new:
             user_data["force_new_session"] = False
         assert user_data["force_new_session"] is False
+
+
+class TestEmptySessionIdWarning:
+    """Verify facade warns when final session_id is empty."""
+
+    async def test_empty_session_id_warning_in_facade(self, facade, session_manager):
+        """When Claude returns no session_id, facade logs a warning."""
+        project = Path("/test/project")
+        user_id = 456
+
+        # Return a response with empty session_id
+        mock_response = _make_mock_response(session_id="")
+
+        with patch.object(
+            facade,
+            "_execute_with_fallback",
+            return_value=mock_response,
+        ):
+            result = await facade.run_command(
+                prompt="hello",
+                working_directory=project,
+                user_id=user_id,
+                session_id=None,
+            )
+
+        # Session ID should be empty on the response
+        assert not result.session_id

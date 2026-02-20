@@ -149,13 +149,12 @@ class ClaudeIntegration:
 
         # Execute command
         try:
-            # Continue session if we have a real (non-temporary) session ID
+            # Continue session if we have an existing session with a real ID
             is_new = getattr(session, "is_new_session", False)
-            has_real_session = not is_new and not session.session_id.startswith("temp_")
-            should_continue = has_real_session
+            should_continue = not is_new and bool(session.session_id)
 
-            # For new sessions, don't pass the temporary session_id to Claude Code
-            claude_session_id = session.session_id if has_real_session else None
+            # For new sessions, don't pass session_id to Claude Code
+            claude_session_id = session.session_id if should_continue else None
 
             try:
                 response = await self._execute_with_fallback(
@@ -232,20 +231,17 @@ class ClaudeIntegration:
                         f"Details: {'; '.join(validation_errors)}"
                     )
 
-            # Update session (this may change the session_id for new sessions)
-            old_session_id = session.session_id
-            await self.session_manager.update_session(session.session_id, response)
+            # Update session (assigns real session_id for new sessions)
+            await self.session_manager.update_session(session, response)
 
-            # For new sessions, get the updated session_id from the session manager
-            if hasattr(session, "is_new_session") and response.session_id:
-                # The session_id has been updated to Claude's session_id
-                final_session_id = response.session_id
-            else:
-                # Use the original session_id for continuing sessions
-                final_session_id = old_session_id
+            # Ensure response has the session's final ID
+            response.session_id = session.session_id
 
-            # Ensure response has the correct session_id
-            response.session_id = final_session_id
+            if not response.session_id:
+                logger.warning(
+                    "No session_id after execution; session cannot be resumed",
+                    user_id=user_id,
+                )
 
             logger.info(
                 "Claude command completed",
@@ -366,7 +362,7 @@ class ClaudeIntegration:
             s
             for s in sessions
             if s.project_path == working_directory
-            and not s.session_id.startswith("temp_")
+            and bool(s.session_id)
             and not s.is_expired(self.config.session_timeout_hours)
         ]
 
@@ -393,12 +389,11 @@ class ClaudeIntegration:
         # Get user's sessions
         sessions = await self.session_manager._get_user_sessions(user_id)
 
-        # Find most recent session in this directory (exclude temporary sessions)
+        # Find most recent session in this directory (exclude sessions without IDs)
         matching_sessions = [
             s
             for s in sessions
-            if s.project_path == working_directory
-            and not s.session_id.startswith("temp_")
+            if s.project_path == working_directory and bool(s.session_id)
         ]
 
         if not matching_sessions:
