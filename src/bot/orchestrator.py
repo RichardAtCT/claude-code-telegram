@@ -1022,6 +1022,30 @@ class MessageOrchestrator:
             current_dir = context.user_data.get(
                 "current_directory", self.settings.approved_directory
             )
+
+            # Save image to workspace so Claude can read it
+            import os
+            import tempfile
+
+            img_format = processed_image.metadata.get("format", "png")
+            img_ext = "jpg" if img_format == "jpeg" else img_format
+            fd, img_path = tempfile.mkstemp(
+                suffix=f".{img_ext}", prefix="upload_", dir=str(current_dir)
+            )
+            with os.fdopen(fd, "wb") as f:
+                import base64
+
+                f.write(base64.b64decode(processed_image.base64_data))
+
+            # Rewrite prompt to reference the saved file
+            caption = update.message.caption or "Please analyze this image."
+            processed_image = type(processed_image)(
+                prompt=f"{caption}\n\nThe image has been saved to: {img_path}",
+                image_type=processed_image.image_type,
+                base64_data=processed_image.base64_data,
+                size=processed_image.size,
+                metadata=processed_image.metadata,
+            )
             session_id = context.user_data.get("claude_session_id")
 
             # Check if /new was used — skip auto-resume for this first message.
