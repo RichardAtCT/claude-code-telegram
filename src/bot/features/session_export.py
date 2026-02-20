@@ -111,7 +111,7 @@ class SessionExporter:
         lines = []
 
         # Header
-        lines.append(f"# Claude Code Session Export")
+        lines.append("# Claude Code Session Export")
         lines.append(f"\n**Session ID:** `{session['id']}`")
         lines.append(f"**Created:** {session['created_at']}")
         if session.get("updated_at"):

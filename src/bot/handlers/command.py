@@ -1175,7 +1175,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # Format status message
         relative_path = current_dir.relative_to(settings.approved_directory)
-        status_message = f"🔗 <b>Git Repository Status</b>\n\n"
+        status_message = "🔗 <b>Git Repository Status</b>\n\n"
         status_message += f"📂 Directory: <code>{relative_path}/</code>\n"
         status_message += f"🌿 Branch: <code>{git_status.branch}</code>\n"
 
@@ -1186,7 +1186,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # Show file changes
         if not git_status.is_clean:
-            status_message += f"\n<b>Changes:</b>\n"
+            status_message += "\n<b>Changes:</b>\n"
             if git_status.modified:
                 status_message += f"📝 Modified: {len(git_status.modified)} files\n"
             if git_status.added:

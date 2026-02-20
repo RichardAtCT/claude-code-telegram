@@ -35,7 +35,10 @@ jobs:
         run: poetry lock && poetry install
 
       - name: Lint
-        run: make lint
+        run: |
+          poetry run black --check src tests
+          poetry run isort --check-only src tests
+          poetry run flake8 src tests
 
       - name: Test
         run: make test

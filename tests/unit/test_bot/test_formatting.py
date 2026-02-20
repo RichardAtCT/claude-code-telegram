@@ -461,9 +461,9 @@ class TestOversizedResponseIntegration:
 
         assert len(messages) > 1
         for i, msg in enumerate(messages):
-            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
-                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
-            )
+            assert (
+                len(msg.text) <= TELEGRAM_HARD_LIMIT
+            ), f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
 
     def test_large_code_block_stays_under_limit(self, formatter):
         """A single huge code block must be split, not just truncated."""
@@ -475,9 +475,9 @@ class TestOversizedResponseIntegration:
 
         assert len(messages) > 1
         for i, msg in enumerate(messages):
-            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
-                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
-            )
+            assert (
+                len(msg.text) <= TELEGRAM_HARD_LIMIT
+            ), f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
 
     def test_html_entity_expansion_stays_under_limit(self, formatter):
         """Characters that expand during HTML escaping (& → &amp; etc.)."""
@@ -500,9 +500,7 @@ class TestOversizedResponseIntegration:
         for n in range(5):
             sections.append(f"## Section {n}\n\n")
             sections.append(f"Here is an **explanation** of step {n}.\n\n")
-            code = "\n".join(
-                [f'    print("step {n} line {j}")' for j in range(60)]
-            )
+            code = "\n".join([f'    print("step {n} line {j}")' for j in range(60)])
             sections.append(f"```python\n{code}\n```\n\n")
             sections.append(f"Creating file `output_{n}.py`\n\n")
 
@@ -512,9 +510,9 @@ class TestOversizedResponseIntegration:
 
         assert len(messages) > 1
         for i, msg in enumerate(messages):
-            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
-                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
-            )
+            assert (
+                len(msg.text) <= TELEGRAM_HARD_LIMIT
+            ), f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
         # All content should be present (not silently truncated)
         full = "".join(m.text for m in messages)
         assert "Section 0" in full
@@ -527,6 +525,6 @@ class TestOversizedResponseIntegration:
         messages = formatter.format_code_output(output, "python", "Build Output")
 
         for i, msg in enumerate(messages):
-            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
-                f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
-            )
+            assert (
+                len(msg.text) <= TELEGRAM_HARD_LIMIT
+            ), f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
