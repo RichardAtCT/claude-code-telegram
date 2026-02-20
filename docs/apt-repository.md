@@ -101,6 +101,17 @@ sudo systemctl enable --now claude-code-telegram
 sudo systemctl status claude-code-telegram
 ```
 
+## Uninstall and purge behavior
+
+- `apt remove claude-code-telegram` stops/disables the service but keeps configuration and state files.
+- `apt purge claude-code-telegram` permanently deletes:
+  - `/etc/claude-code-telegram`
+  - `/var/lib/claude-code-telegram`
+  - `/var/log/claude-code-telegram`
+  - `/opt/claude-code-telegram`
+
+Use `purge` only when you explicitly want full data/config cleanup.
+
 ## Local testing
 
 Build package locally:

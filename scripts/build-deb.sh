@@ -62,7 +62,7 @@ Priority: optional
 Architecture: ${PKG_ARCH}
 Maintainer: Richard Atkinson <richardatk01@gmail.com>
 Depends: adduser, bash, ca-certificates, python3 (>= 3.10), python3-venv
-Homepage: https://github.com/richardatkinson/claude-code-telegram
+Homepage: https://github.com/RichardAtCT/claude-code-telegram
 Description: Telegram bot for remote Claude Code access
  This package installs Claude Code Telegram Bot and a systemd service.
  During installation it creates a virtual environment in

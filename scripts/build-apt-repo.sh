@@ -22,7 +22,6 @@ fi
 
 mkdir -p "$REPO_DIR/pool/main/c/claude-code-telegram"
 mkdir -p "$REPO_DIR/dists/stable/main/binary-all"
-mkdir -p "$REPO_DIR/dists/stable/main/binary-amd64"
 
 cp -f "$DEB_FILE" "$REPO_DIR/pool/main/c/claude-code-telegram/"
 
@@ -30,8 +29,6 @@ pushd "$REPO_DIR" >/dev/null
 
 apt-ftparchive packages pool/main > dists/stable/main/binary-all/Packages
 gzip -kf dists/stable/main/binary-all/Packages
-cp dists/stable/main/binary-all/Packages dists/stable/main/binary-amd64/Packages
-gzip -kf dists/stable/main/binary-amd64/Packages
 
 cat > apt-ftparchive.conf <<CONF
 APT::FTPArchive::Release {
@@ -39,7 +36,7 @@ APT::FTPArchive::Release {
   Label "claude-code-telegram";
   Suite "stable";
   Codename "stable";
-  Architectures "amd64 all";
+  Architectures "all";
   Components "main";
   Description "APT repository for claude-code-telegram";
 };
