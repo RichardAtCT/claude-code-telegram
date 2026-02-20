@@ -32,7 +32,7 @@ jobs:
           key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry install
+        run: poetry lock --no-update && poetry install
 
       - name: Lint
         run: make lint
