@@ -22,7 +22,6 @@ from telegram.ext import (
     filters,
 )
 
-from ..claude.exceptions import ClaudeToolValidationError
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
@@ -785,13 +784,6 @@ class MessageOrchestrator:
             formatted_messages = formatter.format_claude_response(
                 claude_response.content
             )
-
-        except ClaudeToolValidationError as e:
-            success = False
-            logger.error("Tool validation error", error=str(e), user_id=user_id)
-            from .utils.formatting import FormattedMessage
-
-            formatted_messages = [FormattedMessage(str(e), parse_mode="HTML")]
 
         except Exception as e:
             success = False

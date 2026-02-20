@@ -1,4 +1,4 @@
-"""Test Claude tool monitor — especially bash directory boundary checking."""
+"""Test bash directory boundary checking."""
 
 from pathlib import Path
 from unittest.mock import patch
@@ -6,12 +6,9 @@ from unittest.mock import patch
 import pytest
 
 from src.claude.monitor import (
-    ToolMonitor,
     _is_claude_internal_path,
     check_bash_directory_boundary,
 )
-from src.config.settings import Settings
-from src.security.validators import SecurityValidator
 
 
 class TestCheckBashDirectoryBoundary:
@@ -194,9 +191,7 @@ class TestCheckBashDirectoryBoundary:
 
     def test_cd_outside_approved_directory(self) -> None:
         """cd to an outside directory should be blocked."""
-        valid, error = check_bash_directory_boundary(
-            "cd /tmp", self.cwd, self.approved
-        )
+        valid, error = check_bash_directory_boundary("cd /tmp", self.cwd, self.approved)
         assert not valid
         assert "directory boundary violation" in error.lower()
         assert "/tmp" in error
@@ -240,64 +235,6 @@ class TestCheckBashDirectoryBoundary:
         )
         assert not valid
         assert "/tmp" in error
-
-
-class TestToolMonitorBashBoundary:
-    """Test that validate_tool_call wires up the bash directory boundary check."""
-
-    @pytest.fixture
-    def config(self, tmp_path: Path) -> Settings:
-        return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
-            approved_directory=tmp_path,
-        )
-
-    @pytest.fixture
-    def monitor(self, config: Settings) -> ToolMonitor:
-        return ToolMonitor(config)
-
-    async def test_bash_directory_violation_recorded(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Bash command writing outside approved dir is caught by validate_tool_call."""
-        valid, error = await monitor.validate_tool_call(
-            tool_name="Bash",
-            tool_input={"command": "mkdir -p /tmp/evil"},
-            working_directory=tmp_path,
-            user_id=123,
-        )
-        assert not valid
-        assert "directory boundary violation" in error.lower()
-        assert len(monitor.security_violations) == 1
-        assert monitor.security_violations[0]["type"] == "directory_boundary_violation"
-
-    async def test_bash_inside_approved_dir_passes(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Bash command within approved dir passes validation."""
-        subdir = tmp_path / "subdir"
-        valid, error = await monitor.validate_tool_call(
-            tool_name="Bash",
-            tool_input={"command": f"mkdir -p {subdir}"},
-            working_directory=tmp_path,
-            user_id=123,
-        )
-        assert valid
-        assert error is None
-
-    async def test_dangerous_pattern_still_checked_first(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Dangerous patterns are still caught before directory boundary check."""
-        valid, error = await monitor.validate_tool_call(
-            tool_name="Bash",
-            tool_input={"command": "sudo mkdir /tmp/test"},
-            working_directory=tmp_path,
-            user_id=123,
-        )
-        assert not valid
-        assert "dangerous command pattern" in error.lower()
 
 
 class TestIsClaudeInternalPath:
@@ -352,102 +289,3 @@ class TestIsClaudeInternalPath:
             bad_file = tmp_path / ".claude" / "secrets" / "key.pem"
             bad_file.touch()
             assert _is_claude_internal_path(str(bad_file)) is False
-
-
-class TestToolMonitorClaudeInternalPaths:
-    """Test that validate_tool_call allows Claude internal paths."""
-
-    @pytest.fixture
-    def config(self, tmp_path: Path) -> Settings:
-        return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
-            approved_directory=tmp_path,
-        )
-
-    @pytest.fixture
-    def security_validator(self, config: Settings) -> SecurityValidator:
-        return SecurityValidator(config.approved_directory)
-
-    @pytest.fixture
-    def monitor(
-        self, config: Settings, security_validator: SecurityValidator
-    ) -> ToolMonitor:
-        return ToolMonitor(config, security_validator=security_validator)
-
-    async def test_read_plan_file_allowed(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Read tool targeting a plan file in ~/.claude/plans/ should pass."""
-        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
-            (tmp_path / ".claude" / "plans").mkdir(parents=True)
-            plan_path = str(tmp_path / ".claude" / "plans" / "my-plan.md")
-            valid, error = await monitor.validate_tool_call(
-                tool_name="Read",
-                tool_input={"file_path": plan_path},
-                working_directory=tmp_path / "project",
-                user_id=123,
-            )
-            assert valid
-            assert error is None
-
-    async def test_write_plan_file_allowed(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Write tool targeting a plan file in ~/.claude/plans/ should pass."""
-        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
-            (tmp_path / ".claude" / "plans").mkdir(parents=True)
-            plan_path = str(tmp_path / ".claude" / "plans" / "new-plan.md")
-            valid, error = await monitor.validate_tool_call(
-                tool_name="Write",
-                tool_input={"file_path": plan_path},
-                working_directory=tmp_path / "project",
-                user_id=123,
-            )
-            assert valid
-            assert error is None
-
-    async def test_edit_plan_file_allowed(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Edit tool targeting a plan file in ~/.claude/plans/ should pass."""
-        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
-            (tmp_path / ".claude" / "plans").mkdir(parents=True)
-            plan_path = str(tmp_path / ".claude" / "plans" / "my-plan.md")
-            valid, error = await monitor.validate_tool_call(
-                tool_name="Edit",
-                tool_input={"file_path": plan_path},
-                working_directory=tmp_path / "project",
-                user_id=123,
-            )
-            assert valid
-            assert error is None
-
-    async def test_file_outside_both_approved_and_claude_still_blocked(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Files outside both approved dir and ~/.claude/ are still blocked."""
-        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
-            valid, error = await monitor.validate_tool_call(
-                tool_name="Read",
-                tool_input={"file_path": "/etc/passwd"},
-                working_directory=tmp_path,
-                user_id=123,
-            )
-            assert not valid
-            assert error is not None
-
-    async def test_no_security_violations_for_claude_internal(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Accessing Claude internal paths should not record security violations."""
-        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
-            (tmp_path / ".claude" / "plans").mkdir(parents=True)
-            plan_path = str(tmp_path / ".claude" / "plans" / "my-plan.md")
-            await monitor.validate_tool_call(
-                tool_name="Read",
-                tool_input={"file_path": plan_path},
-                working_directory=tmp_path / "project",
-                user_id=123,
-            )
-            assert len(monitor.security_violations) == 0

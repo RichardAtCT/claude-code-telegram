@@ -3,17 +3,25 @@
 import asyncio
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import (
     AssistantMessage,
+    PermissionResultAllow,
+    PermissionResultDeny,
     ResultMessage,
     TextBlock,
+    ToolPermissionContext,
 )
 from claude_agent_sdk.types import StreamEvent
 
-from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
+from src.claude.sdk_integration import (
+    ClaudeResponse,
+    ClaudeSDKManager,
+    StreamUpdate,
+    _make_can_use_tool_callback,
+)
 from src.config.settings import Settings
 
 
@@ -51,13 +59,12 @@ def _make_result_message(**kwargs):
 def _mock_client(*messages):
     """Create a mock ClaudeSDKClient that yields the given messages.
 
-    Returns a client mock with _query.receive_messages() that yields
-    the given messages as raw data (parse_message must be patched
-    as a passthrough for typed Message objects to work).
+    Returns a factory function suitable for patching ClaudeSDKClient.
+    Uses connect()/disconnect() pattern (not async context manager).
     """
     client = AsyncMock()
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
     client.query = AsyncMock()
 
     async def receive_raw_messages():
@@ -236,8 +243,8 @@ class TestClaudeSDKManager:
         from src.claude.exceptions import ClaudeTimeoutError
 
         client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
         client.query = AsyncMock()
 
         async def hanging_receive():
@@ -519,8 +526,8 @@ class TestClaudeMCPErrors:
         from src.claude.exceptions import ClaudeMCPError
 
         client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
         client.query = AsyncMock(
             side_effect=CLIConnectionError("MCP server failed to start")
         )
@@ -541,8 +548,8 @@ class TestClaudeMCPErrors:
         from src.claude.exceptions import ClaudeMCPError
 
         client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
         client.query = AsyncMock(
             side_effect=ProcessError("Failed to start MCP server: connection refused")
         )
@@ -555,6 +562,114 @@ class TestClaudeMCPErrors:
                 )
 
         assert "MCP" in str(exc_info.value)
+
+
+class TestCanUseToolCallback:
+    """Test the _make_can_use_tool_callback factory and its behavior."""
+
+    @pytest.fixture
+    def approved_dir(self, tmp_path):
+        return tmp_path
+
+    @pytest.fixture
+    def working_dir(self, tmp_path):
+        return tmp_path / "project"
+
+    @pytest.fixture
+    def security_validator(self):
+        """Create a mock SecurityValidator."""
+        validator = MagicMock()
+        validator.validate_path = MagicMock(return_value=(True, Path("/ok"), None))
+        return validator
+
+    @pytest.fixture
+    def callback(self, security_validator, working_dir, approved_dir):
+        return _make_can_use_tool_callback(
+            security_validator=security_validator,
+            working_directory=working_dir,
+            approved_directory=approved_dir,
+        )
+
+    @pytest.fixture
+    def context(self):
+        return ToolPermissionContext()
+
+    async def test_allows_safe_file_read(self, callback, context, security_validator):
+        """File read with a valid path is allowed."""
+        result = await callback("Read", {"file_path": "src/main.py"}, context)
+        assert isinstance(result, PermissionResultAllow)
+        security_validator.validate_path.assert_called_once()
+
+    async def test_denies_invalid_file_path(
+        self, callback, context, security_validator
+    ):
+        """File write with a path that fails validation is denied."""
+        security_validator.validate_path.return_value = (
+            False,
+            None,
+            "Path traversal detected",
+        )
+        result = await callback("Write", {"file_path": "../../etc/passwd"}, context)
+        assert isinstance(result, PermissionResultDeny)
+        assert "Path traversal" in result.message
+
+    async def test_allows_bash_inside_boundary(
+        self, callback, context, working_dir, approved_dir
+    ):
+        """Bash command targeting inside approved dir is allowed."""
+        result = await callback(
+            "Bash", {"command": f"mkdir -p {approved_dir}/subdir"}, context
+        )
+        assert isinstance(result, PermissionResultAllow)
+
+    async def test_denies_bash_outside_boundary(self, callback, context):
+        """Bash command targeting outside approved dir is denied."""
+        result = await callback("Bash", {"command": "mkdir -p /tmp/evil"}, context)
+        assert isinstance(result, PermissionResultDeny)
+        assert "boundary violation" in result.message.lower()
+
+    async def test_allows_unknown_tool(self, callback, context):
+        """Tools not in file/bash sets are allowed through."""
+        result = await callback("Grep", {"pattern": "foo"}, context)
+        assert isinstance(result, PermissionResultAllow)
+
+    async def test_allows_bash_read_only_command(self, callback, context):
+        """Read-only bash commands pass through even with external paths."""
+        result = await callback("Bash", {"command": "cat /etc/hosts"}, context)
+        assert isinstance(result, PermissionResultAllow)
+
+    async def test_file_tool_without_path_allowed(self, callback, context):
+        """File tool call without a path key is allowed (no path to validate)."""
+        result = await callback("Read", {"content": "something"}, context)
+        assert isinstance(result, PermissionResultAllow)
+
+    async def test_wired_into_sdk_manager(self, tmp_path):
+        """SecurityValidator is wired into options.can_use_tool by execute_command."""
+        validator = MagicMock()
+        validator.validate_path = MagicMock(return_value=(True, tmp_path, None))
+
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+        )
+        manager = ClaudeSDKManager(config, security_validator=validator)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(prompt="Test", working_directory=tmp_path)
+
+        assert len(captured_options) == 1
+        assert captured_options[0].can_use_tool is not None
 
 
 class TestSessionIdFallback:

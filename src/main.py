@@ -15,7 +15,6 @@ from src.bot.core import ClaudeCodeBot
 from src.claude import (
     ClaudeIntegration,
     SessionManager,
-    ToolMonitor,
 )
 from src.claude.sdk_integration import ClaudeSDKManager
 from src.config.features import FeatureFlags
@@ -140,19 +139,15 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Create Claude integration components with persistent storage
     session_storage = SQLiteSessionStorage(storage.db_manager)
     session_manager = SessionManager(config, session_storage)
-    tool_monitor = ToolMonitor(
-        config, security_validator, agentic_mode=config.agentic_mode
-    )
 
     # Create Claude SDK manager and integration facade
     logger.info("Using Claude Python SDK integration")
-    sdk_manager = ClaudeSDKManager(config)
+    sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
 
     claude_integration = ClaudeIntegration(
         config=config,
         sdk_manager=sdk_manager,
         session_manager=session_manager,
-        tool_monitor=tool_monitor,
     )
 
     # --- Event bus and agentic platform components ---
