@@ -7,7 +7,6 @@ import structlog
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ...claude.exceptions import ClaudeToolValidationError
 from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.rate_limiter import RateLimiter
@@ -88,9 +87,6 @@ def _format_error_message(error_str: str) -> str:
     """Format error messages for user-friendly display."""
     if "usage limit reached" in error_str.lower():
         # Usage limit error - already user-friendly from integration.py
-        return error_str
-    elif "tool not allowed" in error_str.lower():
-        # Tool validation error - already handled in facade.py
         return error_str
     elif "no conversation found" in error_str.lower():
         return (
@@ -249,18 +245,6 @@ async def handle_text_message(
                 claude_response.content
             )
 
-        except ClaudeToolValidationError as e:
-            # Tool validation error with detailed instructions
-            logger.error(
-                "Tool validation error",
-                error=str(e),
-                user_id=user_id,
-                blocked_tools=e.blocked_tools,
-            )
-            # Error message already formatted, create FormattedMessage
-            from ..utils.formatting import FormattedMessage
-
-            formatted_messages = [FormattedMessage(str(e), parse_mode="HTML")]
         except Exception as e:
             logger.error("Claude integration failed", error=str(e), user_id=user_id)
             # Format error and create FormattedMessage

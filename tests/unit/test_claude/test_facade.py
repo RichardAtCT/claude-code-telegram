@@ -3,7 +3,7 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -55,18 +55,13 @@ def session_manager(config):
 
 @pytest.fixture
 def facade(config, session_manager):
-    """Create facade with mocked SDK manager and tool monitor."""
+    """Create facade with mocked SDK manager."""
     sdk_manager = MagicMock()
-    tool_monitor = MagicMock()
-    tool_monitor.validate_tool_call = AsyncMock(return_value=(True, None))
-    tool_monitor.get_tool_stats = MagicMock(return_value={})
-    tool_monitor.get_user_tool_usage = MagicMock(return_value={})
 
     integration = ClaudeIntegration(
         config=config,
         sdk_manager=sdk_manager,
         session_manager=session_manager,
-        tool_monitor=tool_monitor,
     )
     return integration
 

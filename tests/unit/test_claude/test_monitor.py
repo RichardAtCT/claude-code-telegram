@@ -1,11 +1,8 @@
-"""Test Claude tool monitor — especially bash directory boundary checking."""
+"""Test bash directory boundary checking."""
 
 from pathlib import Path
 
-import pytest
-
-from src.claude.monitor import ToolMonitor, check_bash_directory_boundary
-from src.config.settings import Settings
+from src.claude.monitor import check_bash_directory_boundary
 
 
 class TestCheckBashDirectoryBoundary:
@@ -183,61 +180,3 @@ class TestCheckBashDirectoryBoundary:
         )
         assert not valid
         assert "/etc" in error
-
-
-class TestToolMonitorBashBoundary:
-    """Test that validate_tool_call wires up the bash directory boundary check."""
-
-    @pytest.fixture
-    def config(self, tmp_path: Path) -> Settings:
-        return Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
-            approved_directory=tmp_path,
-        )
-
-    @pytest.fixture
-    def monitor(self, config: Settings) -> ToolMonitor:
-        return ToolMonitor(config)
-
-    async def test_bash_directory_violation_recorded(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Bash command writing outside approved dir is caught by validate_tool_call."""
-        valid, error = await monitor.validate_tool_call(
-            tool_name="Bash",
-            tool_input={"command": "mkdir -p /tmp/evil"},
-            working_directory=tmp_path,
-            user_id=123,
-        )
-        assert not valid
-        assert "directory boundary violation" in error.lower()
-        assert len(monitor.security_violations) == 1
-        assert monitor.security_violations[0]["type"] == "directory_boundary_violation"
-
-    async def test_bash_inside_approved_dir_passes(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Bash command within approved dir passes validation."""
-        subdir = tmp_path / "subdir"
-        valid, error = await monitor.validate_tool_call(
-            tool_name="Bash",
-            tool_input={"command": f"mkdir -p {subdir}"},
-            working_directory=tmp_path,
-            user_id=123,
-        )
-        assert valid
-        assert error is None
-
-    async def test_dangerous_pattern_still_checked_first(
-        self, monitor: ToolMonitor, tmp_path: Path
-    ) -> None:
-        """Dangerous patterns are still caught before directory boundary check."""
-        valid, error = await monitor.validate_tool_call(
-            tool_name="Bash",
-            tool_input={"command": "sudo mkdir /tmp/test"},
-            working_directory=tmp_path,
-            user_id=123,
-        )
-        assert not valid
-        assert "dangerous command pattern" in error.lower()
