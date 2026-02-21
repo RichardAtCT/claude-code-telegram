@@ -155,7 +155,22 @@ def _format_error_message(error: Exception | str) -> str:
     if isinstance(error_obj, ClaudeProcessError):
         return _format_process_error(error_str)
 
-    # --- Fall back to keyword matching (for string-only callers) ---
+    # ClaudeToolValidationError (and any future ClaudeError subtypes not
+    # explicitly handled above) — preserve their existing message as-is
+    # rather than downgrading to a generic "process error".
+    if isinstance(error_obj, ClaudeError):
+        safe_error = escape_html(error_str)
+        if len(safe_error) > 500:
+            safe_error = safe_error[:500] + "..."
+        return (
+            f"❌ <b>Claude Error</b>\n\n"
+            f"{safe_error}\n\n"
+            f"Try again or use /new to start a fresh session."
+        )
+
+    # --- Fall back to keyword matching (for string-only callers) --------
+    # These patterns match the known error prefixes produced by
+    # sdk_integration.py and facade.py, NOT arbitrary user content.
 
     error_lower = error_str.lower()
 
@@ -185,7 +200,7 @@ def _format_error_message(error: Exception | str) -> str:
             "• Check your current usage with /status"
         )
 
-    if "timeout" in error_lower or "timed out" in error_lower:
+    if "timed out after" in error_lower or "claude sdk timed out" in error_lower:
         return (
             "⏰ <b>Request Timeout</b>\n\n"
             f"{escape_html(error_str)}\n\n"
@@ -195,7 +210,7 @@ def _format_error_message(error: Exception | str) -> str:
             "• Try again — transient slowdowns happen"
         )
 
-    if "overloaded" in error_lower or "529" in error_lower:
+    if "overloaded" in error_lower:
         return (
             "🏗️ <b>Claude is Overloaded</b>\n\n"
             "The Claude API is currently experiencing high demand.\n\n"
@@ -204,7 +219,7 @@ def _format_error_message(error: Exception | str) -> str:
             "• Shorter prompts may succeed more easily"
         )
 
-    if "invalid api key" in error_lower or "authentication" in error_lower:
+    if "invalid api key" in error_lower or "authentication_error" in error_lower:
         return (
             "🔑 <b>API Authentication Error</b>\n\n"
             "The API key used to connect to Claude is invalid or expired.\n\n"
@@ -214,7 +229,9 @@ def _format_error_message(error: Exception | str) -> str:
             "• Check that the API key has not been revoked"
         )
 
-    if "connection" in error_lower or "connect" in error_lower:
+    # Match known SDK prefixes: "Failed to connect to Claude: ..."
+    # and "MCP server connection failed: ..."
+    if error_lower.startswith("failed to connect to claude"):
         return (
             "🌐 <b>Connection Error</b>\n\n"
             f"Could not connect to Claude:\n"
@@ -225,7 +242,8 @@ def _format_error_message(error: Exception | str) -> str:
             "• Try again in a moment"
         )
 
-    if "not found" in error_lower and ("claude" in error_lower or "cli" in error_lower):
+    # Match known SDK prefix: "Claude Code not found. ..."
+    if error_lower.startswith("claude code not found"):
         return (
             "🔍 <b>Claude CLI Not Found</b>\n\n"
             f"{escape_html(error_str)}\n\n"
@@ -235,7 +253,9 @@ def _format_error_message(error: Exception | str) -> str:
             "• Set the <code>CLAUDE_CLI_PATH</code> environment variable"
         )
 
-    if "mcp" in error_lower:
+    # Match known SDK prefixes: "MCP server error: ..." and
+    # "MCP server connection failed: ..."
+    if error_lower.startswith("mcp server"):
         return (
             "🔌 <b>MCP Server Error</b>\n\n"
             f"{escape_html(error_str)}\n\n"
@@ -245,19 +265,12 @@ def _format_error_message(error: Exception | str) -> str:
             "• Ask the administrator to check MCP server logs"
         )
 
-    if isinstance(error_obj, ClaudeError):
-        return _format_process_error(error_str)
-
-    # --- Truly unknown errors — still show the real message ---
+    # --- No match — show the raw error as-is ---
     safe_error = escape_html(error_str)
     if len(safe_error) > 500:
         safe_error = safe_error[:500] + "..."
 
-    return (
-        f"❌ <b>Error</b>\n\n"
-        f"{safe_error}\n\n"
-        f"Try again or use /new to start a fresh session."
-    )
+    return f"❌ {safe_error}"
 
 
 def _format_process_error(error_str: str) -> str:
