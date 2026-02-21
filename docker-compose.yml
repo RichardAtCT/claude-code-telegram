@@ -9,8 +9,8 @@ services:
     volumes:
       # Persist SQLite database across restarts
       - bot-data:/home/botuser/workspace
-      # Mount your project directory (optional, for Claude Code file access)
-      # - /path/to/your/project:/home/botuser/workspace/project
+      # Mount host project directory so Claude Code can read/write files
+      - ${HOST_PROJECT_DIR:-.}:/home/botuser/workspace/project
 
 volumes:
   bot-data:
