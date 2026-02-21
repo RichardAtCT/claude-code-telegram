@@ -2,7 +2,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://ghcr.io/richardatct/claude-code-telegram)
 
 A Telegram bot that gives you remote access to [Claude Code](https://claude.ai/code). Chat naturally with Claude about your projects from anywhere -- no terminal commands needed.
 
@@ -34,6 +33,8 @@ Bot: Running pytest...
 
 ### 1. Prerequisites
 
+- **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
+- **Poetry** -- Modern Python dependency management
 - **Claude Code CLI** -- [Install from here](https://claude.ai/code)
 - **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
 
@@ -41,27 +42,7 @@ Bot: Running pytest...
 
 Choose your preferred method:
 
-#### Option A: Docker (Recommended)
-
-```bash
-# Clone a stable release
-git clone --branch latest https://github.com/RichardAtCT/claude-code-telegram.git
-cd claude-code-telegram
-
-# Configure
-cp .env.example .env
-# Edit .env with your settings (see step 3)
-
-# Run
-docker compose up -d
-```
-
-Or pull the pre-built image directly:
-```bash
-docker pull ghcr.io/richardatct/claude-code-telegram:latest
-```
-
-#### Option B: pip install from a release tag
+#### Option A: pip install from a release tag
 
 ```bash
 # Install a specific version
@@ -71,7 +52,7 @@ pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.2.0
 pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```
 
-#### Option C: From source (for development)
+#### Option B: From source (for development)
 
 ```bash
 git clone https://github.com/RichardAtCT/claude-code-telegram.git
@@ -99,17 +80,13 @@ ALLOWED_USERS=123456789  # Your Telegram user ID
 ### 4. Run
 
 ```bash
-# Docker
-docker compose up -d
-
-# Or from source
 make run          # Production
 make run-debug    # With debug logging
 ```
 
 Message your bot on Telegram to get started.
 
-> **Detailed setup:** See [docs/setup.md](docs/setup.md) for Claude authentication options, Docker configuration, and troubleshooting.
+> **Detailed setup:** See [docs/setup.md](docs/setup.md) for Claude authentication options and troubleshooting.
 
 ## Modes
 
@@ -364,7 +341,7 @@ make bump-major    # 1.2.0 -> 2.0.0 (breaking changes)
 make release       # Push the tag to trigger CI release
 ```
 
-This creates a git tag, runs CI tests, publishes a GitHub Release with auto-generated notes, and pushes a Docker image to GHCR.
+This creates a git tag, runs CI tests, and publishes a GitHub Release with auto-generated notes.
 
 ### Contributing
 

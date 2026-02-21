@@ -4,10 +4,10 @@
 
 ### 1. Prerequisites
 
+- **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
+- **Poetry** -- Modern Python dependency management
 - **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
 - **Claude Authentication** -- Choose one method below
-- **For source installs:** Python 3.11+ and Poetry
-- **For Docker:** Docker and Docker Compose
 
 ### 2. Claude Authentication Setup
 
@@ -43,19 +43,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 
 Choose your preferred installation method:
 
-#### Option A: Docker (Recommended)
-
-```bash
-git clone --branch latest https://github.com/RichardAtCT/claude-code-telegram.git
-cd claude-code-telegram
-```
-
-Or pull the pre-built image:
-```bash
-docker pull ghcr.io/richardatct/claude-code-telegram:latest
-```
-
-#### Option B: pip from a release tag
+#### Option A: pip from a release tag
 
 ```bash
 # Specific version
@@ -65,7 +53,7 @@ pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.2.0
 pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```
 
-#### Option C: From source (for development)
+#### Option B: From source (for development)
 
 ```bash
 git clone https://github.com/RichardAtCT/claude-code-telegram.git
@@ -100,11 +88,6 @@ ALLOWED_USERS=123456789  # Your Telegram user ID
 ### 6. Run the Bot
 
 ```bash
-# Docker
-docker compose up -d          # Detached
-docker compose logs -f        # Follow logs
-
-# From source
 make run-debug    # Recommended for first run
 make run          # Production
 ```
@@ -315,52 +298,6 @@ echo $ANTHROPIC_API_KEY
 ```bash
 # Check approved directory exists and is accessible
 ls -la /path/to/your/projects
-```
-
-## Docker Deployment
-
-The bot ships with a `Dockerfile` and `docker-compose.yml` for containerized deployment.
-
-### docker-compose.yml
-
-```bash
-# Start the bot
-docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop
-docker compose down
-
-# Rebuild after updating
-docker compose build && docker compose up -d
-```
-
-The compose file reads your `.env` file automatically and persists the SQLite database in a named volume (`bot-data`).
-
-To mount your project directory so Claude Code can access files:
-
-```yaml
-# In docker-compose.yml, uncomment:
-volumes:
-  - /path/to/your/project:/home/botuser/workspace/project
-```
-
-### Using a specific version
-
-Pin to a release tag instead of `:latest`:
-
-```yaml
-services:
-  bot:
-    image: ghcr.io/richardatct/claude-code-telegram:1.2.0
-```
-
-### Building locally
-
-```bash
-make docker-build
 ```
 
 ## Production Deployment

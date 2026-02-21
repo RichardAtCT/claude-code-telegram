@@ -10,11 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Version Management & Distribution**:
   - Single source of truth: version read from `pyproject.toml` via `importlib.metadata`
-  - GitHub Release workflow triggered by `v*` tags -- runs tests, creates Release, pushes Docker image to GHCR
+  - GitHub Release workflow triggered by `v*` tags -- runs tests, creates Release
   - Rolling `latest` git tag updated on each stable release for `pip install git+...@latest`
-  - Makefile targets: `bump-patch`, `bump-minor`, `bump-major`, `release`, `version`, `docker-build`
-  - Dockerfile (multi-stage build) and `docker-compose.yml` for containerized deployment
-  - `.dockerignore` for lean image builds
+  - Makefile targets: `bump-patch`, `bump-minor`, `bump-major`, `release`, `version`
   - Pre-release support (`-rc`, `-beta`, `-alpha` tags)
 
 ### Previously Added

@@ -85,7 +85,6 @@ make bump-patch    # Bump patch version, commit, and tag
 make bump-minor    # Bump minor version, commit, and tag
 make bump-major    # Bump major version, commit, and tag
 make release       # Push tag to trigger GitHub release workflow
-make docker-build  # Build Docker image locally
 ```
 
 ## Project Architecture
@@ -398,20 +397,11 @@ make release
 
 1. Runs the full lint + test suite
 2. Creates a GitHub Release with auto-generated release notes
-3. Builds and pushes a Docker image to `ghcr.io`
-4. Updates the rolling `latest` git tag (stable releases only)
+3. Updates the rolling `latest` git tag (stable releases only)
 
 ### Pre-releases
 
 Tags containing `-rc`, `-beta`, or `-alpha` (e.g. `v1.3.0-rc1`) are marked as pre-releases on GitHub and do **not** update the `latest` tag.
-
-### Docker images
-
-Every release publishes two image tags to GHCR:
-- `ghcr.io/richardatct/claude-code-telegram:<version>` (e.g. `1.2.1`)
-- `ghcr.io/richardatct/claude-code-telegram:latest`
-
-Build locally with `make docker-build`.
 
 ## Contributing
 
