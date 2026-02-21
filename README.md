@@ -189,6 +189,7 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 
 - Tunable verbose output showing Claude's tool usage and reasoning in real-time
 - Persistent typing indicator so users always know the bot is working
+- 15 configurable tools with allowlist/disallowlist control (see [docs/tools.md](docs/tools.md))
 
 ### Planned Enhancements
 
@@ -283,7 +284,7 @@ Message [@userinfobot](https://t.me/userinfobot) on Telegram -- it will reply wi
 **Claude integration not working:**
 - SDK mode (default): Check `claude auth status` or verify `ANTHROPIC_API_KEY`
 - CLI mode: Verify `claude --version` and `claude auth status`
-- Check `CLAUDE_ALLOWED_TOOLS` includes necessary tools
+- Check `CLAUDE_ALLOWED_TOOLS` includes necessary tools (see [docs/tools.md](docs/tools.md) for the full reference)
 
 **High usage costs:**
 - Adjust `CLAUDE_MAX_COST_PER_USER` to set spending limits
