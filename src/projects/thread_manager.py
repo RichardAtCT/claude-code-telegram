@@ -1,17 +1,22 @@
 """Telegram forum topic synchronization and project resolution."""
 
+import asyncio
 from dataclasses import dataclass
-from typing import Optional
+from datetime import timedelta
+from time import monotonic
+from typing import Awaitable, Callable, Optional, TypeVar
 
 import structlog
 from telegram import Bot
-from telegram.error import TelegramError
+from telegram.error import RetryAfter, TelegramError
 
 from ..storage.models import ProjectThreadModel
 from ..storage.repositories import ProjectThreadRepository
+from ..utils.constants import DEFAULT_PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS
 from .registry import ProjectDefinition, ProjectRegistry
 
 logger = structlog.get_logger()
+T = TypeVar("T")
 
 
 class PrivateTopicsUnavailableError(RuntimeError):
@@ -38,9 +43,15 @@ class ProjectThreadManager:
         self,
         registry: ProjectRegistry,
         repository: ProjectThreadRepository,
+        sync_action_interval_seconds: float = (
+            DEFAULT_PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS
+        ),
     ) -> None:
         self.registry = registry
         self.repository = repository
+        self.sync_action_interval_seconds = max(0.0, sync_action_interval_seconds)
+        self._sync_api_lock = asyncio.Lock()
+        self._last_sync_api_call_at: Optional[float] = None
 
     async def sync_topics(self, bot: Bot, chat_id: int) -> TopicSyncResult:
         """Create/reconcile topics for all enabled projects."""
@@ -100,9 +111,12 @@ class ProjectThreadManager:
         )
         for stale in stale_mappings:
             try:
-                await bot.close_forum_topic(
-                    chat_id=stale.chat_id,
-                    message_thread_id=stale.message_thread_id,
+                await self._call_sync_api(
+                    lambda: bot.close_forum_topic(
+                        chat_id=stale.chat_id,
+                        message_thread_id=stale.message_thread_id,
+                    ),
+                    operation="close_forum_topic",
                 )
                 result.closed += 1
             except TelegramError as e:
@@ -127,6 +141,51 @@ class ProjectThreadManager:
                 result.deactivated += 1
 
         return result
+
+    async def _call_sync_api(
+        self,
+        call: Callable[[], Awaitable[T]],
+        *,
+        operation: str,
+    ) -> T:
+        """Call Telegram sync API with pacing and one RetryAfter retry."""
+        async with self._sync_api_lock:
+            await self._wait_for_sync_interval()
+            self._last_sync_api_call_at = monotonic()
+            try:
+                return await call()
+            except RetryAfter as error:
+                retry_after_seconds = self._retry_after_seconds(error)
+                logger.warning(
+                    "Topic sync hit Telegram flood control; retrying once",
+                    operation=operation,
+                    retry_after_seconds=retry_after_seconds,
+                )
+                await asyncio.sleep(retry_after_seconds + 0.1)
+                await self._wait_for_sync_interval()
+                self._last_sync_api_call_at = monotonic()
+                return await call()
+
+    async def _wait_for_sync_interval(self) -> None:
+        """Wait until minimum sync action interval is satisfied."""
+        if (
+            self.sync_action_interval_seconds <= 0
+            or self._last_sync_api_call_at is None
+        ):
+            return
+
+        elapsed = monotonic() - self._last_sync_api_call_at
+        wait_time = self.sync_action_interval_seconds - elapsed
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+
+    @staticmethod
+    def _retry_after_seconds(error: RetryAfter) -> float:
+        """Normalize RetryAfter payload to seconds."""
+        retry_after = error.retry_after
+        if isinstance(retry_after, timedelta):
+            return max(0.0, retry_after.total_seconds())
+        return max(0.0, float(retry_after))
 
     async def _sync_existing_mapping(
         self,
@@ -195,9 +254,12 @@ class ProjectThreadManager:
         result: TopicSyncResult,
     ) -> None:
         """Create a topic and persist mapping."""
-        topic = await bot.create_forum_topic(
-            chat_id=chat_id,
-            name=project.name,
+        topic = await self._call_sync_api(
+            lambda: bot.create_forum_topic(
+                chat_id=chat_id,
+                name=project.name,
+            ),
+            operation="create_forum_topic",
         )
 
         await self.repository.upsert_mapping(
@@ -218,9 +280,12 @@ class ProjectThreadManager:
     async def _ensure_topic_usable(self, bot: Bot, mapping: ProjectThreadModel) -> str:
         """Ensure mapped topic is usable. Returns ok|unusable|failed."""
         try:
-            await bot.reopen_forum_topic(
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
+            await self._call_sync_api(
+                lambda: bot.reopen_forum_topic(
+                    chat_id=mapping.chat_id,
+                    message_thread_id=mapping.message_thread_id,
+                ),
+                operation="reopen_forum_topic",
             )
             return "ok"
         except TelegramError as e:
@@ -239,9 +304,12 @@ class ProjectThreadManager:
     ) -> str:
         """Reopen inactive topic. Returns reopened|unusable|failed."""
         try:
-            await bot.reopen_forum_topic(
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
+            await self._call_sync_api(
+                lambda: bot.reopen_forum_topic(
+                    chat_id=mapping.chat_id,
+                    message_thread_id=mapping.message_thread_id,
+                ),
+                operation="reopen_forum_topic",
             )
             return "reopened"
         except TelegramError as e:
@@ -317,10 +385,13 @@ class ProjectThreadManager:
     ) -> str:
         """Rename forum topic. Returns renamed|unusable|failed."""
         try:
-            await bot.edit_forum_topic(
-                chat_id=mapping.chat_id,
-                message_thread_id=mapping.message_thread_id,
-                name=target_name,
+            await self._call_sync_api(
+                lambda: bot.edit_forum_topic(
+                    chat_id=mapping.chat_id,
+                    message_thread_id=mapping.message_thread_id,
+                    name=target_name,
+                ),
+                operation="edit_forum_topic",
             )
             return "renamed"
         except TelegramError as e:
@@ -344,15 +415,18 @@ class ProjectThreadManager:
     ) -> None:
         """Post a short message so newly created topics are visible in clients."""
         try:
-            await bot.send_message(
-                chat_id=chat_id,
-                message_thread_id=message_thread_id,
-                text=(
-                    f"🧵 <b>{project_name}</b>\n\n"
-                    "This project topic is ready. "
-                    "Send messages here to work on this project."
+            await self._call_sync_api(
+                lambda: bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=message_thread_id,
+                    text=(
+                        f"🧵 <b>{project_name}</b>\n\n"
+                        "This project topic is ready. "
+                        "Send messages here to work on this project."
+                    ),
+                    parse_mode="HTML",
                 ),
-                parse_mode="HTML",
+                operation="send_message",
             )
         except TelegramError as e:
             logger.warning(

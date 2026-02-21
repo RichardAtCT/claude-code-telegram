@@ -6,8 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from telegram.error import TelegramError
+from telegram.error import RetryAfter, TelegramError
 
+import src.projects.thread_manager as thread_manager_module
 from src.projects import (
     PrivateTopicsUnavailableError,
     ProjectThreadManager,
@@ -56,7 +57,7 @@ async def test_sync_topics_idempotent(tmp_path: Path, db_manager) -> None:
     registry = load_project_registry(config_file, approved)
 
     repo = ProjectThreadRepository(db_manager)
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
 
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock(
@@ -92,7 +93,7 @@ async def test_resolve_project_by_mapping(tmp_path: Path, db_manager) -> None:
         is_active=True,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     project = await manager.resolve_project(-1001234567890, 555)
 
     assert project is not None
@@ -107,7 +108,11 @@ async def test_sync_deactivates_stale_projects(tmp_path: Path, db_manager) -> No
     initial_registry = load_project_registry(initial_file, approved)
 
     repo = ProjectThreadRepository(db_manager)
-    manager = ProjectThreadManager(initial_registry, repo)
+    manager = ProjectThreadManager(
+        initial_registry,
+        repo,
+        sync_action_interval_seconds=0.0,
+    )
 
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock(
@@ -129,7 +134,11 @@ async def test_sync_deactivates_stale_projects(tmp_path: Path, db_manager) -> No
         encoding="utf-8",
     )
     reduced_registry = load_project_registry(reduced_file, approved)
-    reduced_manager = ProjectThreadManager(reduced_registry, repo)
+    reduced_manager = ProjectThreadManager(
+        reduced_registry,
+        repo,
+        sync_action_interval_seconds=0.0,
+    )
 
     result = await reduced_manager.sync_topics(bot, chat_id=-1001234567890)
     mappings = await repo.list_by_chat(-1001234567890, active_only=False)
@@ -156,7 +165,7 @@ async def test_sync_private_topics_unavailable_raises(
     registry = load_project_registry(config_file, approved)
 
     repo = ProjectThreadRepository(db_manager)
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
 
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock(
@@ -191,7 +200,7 @@ async def test_sync_renames_existing_topic_and_updates_mapping(
         is_active=True,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock()
     bot.reopen_forum_topic = AsyncMock()
@@ -231,7 +240,7 @@ async def test_sync_rename_failure_keeps_old_mapping_for_retry(
         is_active=True,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock()
     bot.reopen_forum_topic = AsyncMock()
@@ -271,7 +280,7 @@ async def test_sync_reused_mapping_skips_rename_when_name_matches(
         is_active=True,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock()
     bot.reopen_forum_topic = AsyncMock()
@@ -292,7 +301,7 @@ async def test_sync_create_sends_bootstrap_message(tmp_path: Path, db_manager) -
     registry = load_project_registry(config_file, approved)
 
     repo = ProjectThreadRepository(db_manager)
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
 
     bot = AsyncMock()
     bot.create_forum_topic = AsyncMock(
@@ -334,7 +343,7 @@ async def test_sync_recreates_active_mapping_when_topic_unusable(
         is_active=True,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     bot = AsyncMock()
     bot.reopen_forum_topic = AsyncMock(
         side_effect=TelegramError("Bad Request: topic deleted")
@@ -375,7 +384,7 @@ async def test_sync_reopen_inactive_mapping(tmp_path: Path, db_manager) -> None:
         is_active=False,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     bot = AsyncMock()
     bot.reopen_forum_topic = AsyncMock()
     bot.edit_forum_topic = AsyncMock()
@@ -413,7 +422,7 @@ async def test_sync_reopen_unusable_inactive_mapping_recreates(
         is_active=False,
     )
 
-    manager = ProjectThreadManager(registry, repo)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
     bot = AsyncMock()
     bot.reopen_forum_topic = AsyncMock(
         side_effect=TelegramError("Bad Request: message thread not found")
@@ -431,3 +440,107 @@ async def test_sync_reopen_unusable_inactive_mapping_recreates(
     assert mapping is not None
     assert mapping.is_active is True
     assert mapping.message_thread_id == 3003
+
+
+async def test_sync_topics_applies_pacing_between_api_calls(
+    tmp_path: Path, db_manager, monkeypatch
+) -> None:
+    """Sync API calls should be spaced by configured interval."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+
+    config_file = _write_registry(tmp_path, approved, "app1")
+    registry = load_project_registry(config_file, approved)
+    repo = ProjectThreadRepository(db_manager)
+    manager = ProjectThreadManager(
+        registry,
+        repo,
+        sync_action_interval_seconds=0.5,
+    )
+
+    bot = AsyncMock()
+    bot.create_forum_topic = AsyncMock(
+        return_value=SimpleNamespace(message_thread_id=123)
+    )
+    bot.send_message = AsyncMock()
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(thread_manager_module.asyncio, "sleep", sleep_mock)
+    monkeypatch.setattr(thread_manager_module, "monotonic", lambda: 0.0)
+
+    result = await manager.sync_topics(bot, chat_id=42)
+
+    assert result.created == 1
+    sleep_mock.assert_awaited_once_with(0.5)
+
+
+async def test_sync_topics_retries_once_on_retry_after(
+    tmp_path: Path, db_manager, monkeypatch
+) -> None:
+    """RetryAfter should trigger one sleep and one retry."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+
+    config_file = _write_registry(tmp_path, approved, "app1")
+    registry = load_project_registry(config_file, approved)
+    repo = ProjectThreadRepository(db_manager)
+    manager = ProjectThreadManager(
+        registry,
+        repo,
+        sync_action_interval_seconds=0.0,
+    )
+
+    bot = AsyncMock()
+    bot.create_forum_topic = AsyncMock(
+        side_effect=[
+            RetryAfter(2),
+            SimpleNamespace(message_thread_id=888),
+        ]
+    )
+    bot.send_message = AsyncMock()
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(thread_manager_module.asyncio, "sleep", sleep_mock)
+
+    result = await manager.sync_topics(bot, chat_id=42)
+
+    assert result.created == 1
+    assert result.failed == 0
+    assert bot.create_forum_topic.await_count == 2
+    sleep_mock.assert_awaited_once_with(2.1)
+
+
+async def test_sync_topics_retry_after_retry_failure_counts_as_failed(
+    tmp_path: Path, db_manager, monkeypatch
+) -> None:
+    """If retry attempt fails, sync should count the project as failed."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+
+    config_file = _write_registry(tmp_path, approved, "app1")
+    registry = load_project_registry(config_file, approved)
+    repo = ProjectThreadRepository(db_manager)
+    manager = ProjectThreadManager(
+        registry,
+        repo,
+        sync_action_interval_seconds=0.0,
+    )
+
+    bot = AsyncMock()
+    bot.create_forum_topic = AsyncMock(
+        side_effect=[
+            RetryAfter(1),
+            RetryAfter(1),
+        ]
+    )
+    bot.send_message = AsyncMock()
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(thread_manager_module.asyncio, "sleep", sleep_mock)
+
+    result = await manager.sync_topics(bot, chat_id=42)
+
+    assert result.created == 0
+    assert result.failed == 1
+    assert bot.create_forum_topic.await_count == 2
+    sleep_mock.assert_awaited_once_with(1.1)
