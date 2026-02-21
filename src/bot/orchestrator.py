@@ -799,7 +799,7 @@ class MessageOrchestrator:
             from .utils.formatting import FormattedMessage
 
             formatted_messages = [
-                FormattedMessage(_format_error_message(str(e)), parse_mode="HTML")
+                FormattedMessage(_format_error_message(e), parse_mode="HTML")
             ]
         finally:
             heartbeat.cancel()
@@ -816,10 +816,10 @@ class MessageOrchestrator:
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
-            except Exception as e:
+            except Exception as send_err:
                 logger.warning(
                     "Failed to send HTML response, retrying as plain text",
-                    error=str(e),
+                    error=str(send_err),
                     message_index=i,
                 )
                 try:
@@ -830,9 +830,11 @@ class MessageOrchestrator:
                             update.message.message_id if i == 0 else None
                         ),
                     )
-                except Exception:
+                except Exception as plain_err:
                     await update.message.reply_text(
-                        "Failed to send response. Please try again.",
+                        f"Failed to deliver response "
+                        f"(Telegram error: {str(plain_err)[:150]}). "
+                        f"Please try again.",
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
@@ -982,9 +984,7 @@ class MessageOrchestrator:
         except Exception as e:
             from .handlers.message import _format_error_message
 
-            await progress_msg.edit_text(
-                _format_error_message(str(e)), parse_mode="HTML"
-            )
+            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
         finally:
             heartbeat.cancel()
@@ -1074,9 +1074,7 @@ class MessageOrchestrator:
         except Exception as e:
             from .handlers.message import _format_error_message
 
-            await progress_msg.edit_text(
-                _format_error_message(str(e)), parse_mode="HTML"
-            )
+            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
             logger.error(
                 "Claude photo processing failed", error=str(e), user_id=user_id
             )
