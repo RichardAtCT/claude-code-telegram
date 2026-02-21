@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    # Or pull a tagged release from GHCR:
+    # image: ghcr.io/richardatkinson/claude-code-telegram:1.2.0
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist SQLite database across restarts
+      - bot-data:/home/botuser/workspace
+      # Mount your project directory (optional, for Claude Code file access)
+      # - /path/to/your/project:/home/botuser/workspace/project
+
+volumes:
+  bot-data:
