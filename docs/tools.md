@@ -107,14 +107,14 @@ DISABLE_TOOL_VALIDATION=true
 
 ### Security Layers
 
-Even when a tool is allowed, additional security checks apply:
+Even when a tool is allowed, additional security checks apply. The exact checks depend on the run mode:
 
-1. **File path validation** — `Read`, `Write`, `Edit`, and `MultiEdit` operations must target paths within the `APPROVED_DIRECTORY`. Path traversal attempts are blocked.
+1. **File path validation** (all modes) — `Read`, `Write`, `Edit`, and `MultiEdit` operations must target paths within the `APPROVED_DIRECTORY`. Path traversal attempts are blocked.
 
-2. **Bash command validation** (classic mode) — Dangerous patterns (`rm -rf`, `sudo`, `chmod 777`, pipes, redirections, subshells) are blocked. Filesystem-modifying commands (`mkdir`, `cp`, `mv`, `rm`, etc.) must target paths within the approved directory.
+2. **Bash command validation** (classic mode only) — Dangerous patterns (`rm -rf`, `sudo`, `chmod 777`, pipes, redirections, subshells) are blocked by default. Filesystem-modifying commands (`mkdir`, `cp`, `mv`, `rm`, etc.) must target paths within the approved directory. This layer is **not active in agentic mode**, which relies on OS-level sandboxing instead.
 
-3. **Bash sandboxing** (agentic mode) — Claude Code runs inside its own sandbox. The dangerous-pattern blocklist is skipped in agentic mode since the sandbox provides OS-level isolation, but directory boundary checks for filesystem-modifying commands still apply.
+3. **Bash directory boundary checks** (all modes) — Filesystem-modifying commands are checked to ensure their target paths stay within the approved directory, regardless of run mode.
 
-4. **Audit logging** — All tool calls and security violations are recorded for review.
+4. **Audit logging** (all modes) — All tool calls and security violations are recorded for review.
 
 See [Security](../SECURITY.md) for the full security model.
