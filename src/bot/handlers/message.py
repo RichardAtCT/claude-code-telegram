@@ -1060,10 +1060,10 @@ async def _generate_placeholder_response(
 ) -> dict:
     """Generate placeholder response until Claude integration is implemented."""
     settings: Settings = context.bot_data["settings"]
-    current_dir = getattr(
-        context.user_data, "current_directory", settings.approved_directory
+    current_dir = context.user_data.get(
+        "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     # Analyze the message for intent
     message_lower = message_text.lower()
@@ -1166,7 +1166,7 @@ def _update_working_directory_from_claude_response(
 
                 # Validate that the new path is within the approved directory
                 if (
-                    new_path.is_relative_to(settings.approved_directory)
+                    settings.is_path_in_approved_directories(new_path)
                     and new_path.exists()
                 ):
                     context.user_data["current_directory"] = new_path

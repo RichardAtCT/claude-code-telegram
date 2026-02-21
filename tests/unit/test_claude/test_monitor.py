@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from src.claude.monitor import (
     _is_claude_internal_path,
     check_bash_directory_boundary,
@@ -287,3 +289,104 @@ class TestIsClaudeInternalPath:
             bad_file = tmp_path / ".claude" / "secrets" / "key.pem"
             bad_file.touch()
             assert _is_claude_internal_path(str(bad_file)) is False
+
+
+class TestCheckBashDirectoryBoundaryMultipleDirectories:
+    """Test check_bash_directory_boundary with multiple approved directories."""
+
+    def test_path_within_first_directory(self) -> None:
+        """Path within first approved directory should pass."""
+        approved_dirs = [Path("/root/projects1"), Path("/root/projects2")]
+        cwd = Path("/root/projects1/myapp")
+
+        valid, error = check_bash_directory_boundary(
+            "mkdir -p /root/projects1/newdir",
+            cwd,
+            approved_directories=approved_dirs,
+        )
+
+        assert valid
+        assert error is None
+
+    def test_path_within_second_directory(self) -> None:
+        """Path within second approved directory should pass."""
+        approved_dirs = [Path("/root/projects1"), Path("/root/projects2")]
+        cwd = Path("/root/projects2/myapp")
+
+        valid, error = check_bash_directory_boundary(
+            "mkdir -p /root/projects2/newdir",
+            cwd,
+            approved_directories=approved_dirs,
+        )
+
+        assert valid
+        assert error is None
+
+    def test_path_outside_all_directories(self) -> None:
+        """Path outside all approved directories should fail."""
+        approved_dirs = [Path("/root/projects1"), Path("/root/projects2")]
+        cwd = Path("/root/projects1/myapp")
+
+        valid, error = check_bash_directory_boundary(
+            "mkdir -p /root/evil",
+            cwd,
+            approved_directories=approved_dirs,
+        )
+
+        assert not valid
+        assert error is not None
+        assert "directory boundary violation" in error.lower()
+
+    def test_relative_path_across_approved_directories(self) -> None:
+        """Relative path that resolves outside all approved dirs should fail."""
+        approved_dirs = [Path("/root/projects1"), Path("/root/projects2")]
+        cwd = Path("/root/projects1/myapp")
+
+        valid, error = check_bash_directory_boundary(
+            "mkdir ../../evil",
+            cwd,
+            approved_directories=approved_dirs,
+        )
+
+        assert not valid
+        assert error is not None
+        assert "directory boundary violation" in error.lower()
+
+    def test_backward_compatibility_single_directory(self) -> None:
+        """Single approved_directory parameter should still work."""
+        approved = Path("/root/projects")
+        cwd = Path("/root/projects/myapp")
+
+        valid, error = check_bash_directory_boundary(
+            "mkdir -p /root/projects/newdir",
+            cwd,
+            approved_directory=approved,
+        )
+
+        assert valid
+        assert error is None
+
+    def test_requires_directory_parameter(self) -> None:
+        """Should raise error if neither directory parameter is provided."""
+        cwd = Path("/root/projects")
+
+        with pytest.raises(ValueError) as exc_info:
+            check_bash_directory_boundary("mkdir test", cwd)
+
+        assert "must be provided" in str(exc_info.value)
+
+    def test_approved_directories_takes_precedence(self) -> None:
+        """approved_directories takes precedence over approved_directory."""
+        approved_dirs = [Path("/root/projects1"), Path("/root/projects2")]
+        single_dir = Path("/root/other")
+        cwd = Path("/root/projects1/myapp")
+
+        valid, error = check_bash_directory_boundary(
+            "mkdir -p /root/projects1/newdir",
+            cwd,
+            approved_directory=single_dir,
+            approved_directories=approved_dirs,
+        )
+
+        assert valid
+        assert error is None

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **`/repo` inline keyboard format changed**: callback data for project buttons changed from `cd:<name>` to `cd:<root_name>:<name>`. Users who have old Telegram inline keyboards cached (rendered before this deploy) will see a "Directory root not found — run /repo again" error when tapping those buttons. Tapping the button is safe; running `/repo` refreshes the keyboard with the new format.
+
 ## [1.4.0] - 2026-02-27
 
 ### Added

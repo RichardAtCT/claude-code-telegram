@@ -127,7 +127,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     auth_manager = AuthenticationManager(providers)
     security_validator = SecurityValidator(
-        config.approved_directory,
+        approved_directories=config.approved_directories,
         disable_security_patterns=config.disable_security_patterns,
     )
     rate_limiter = RateLimiter(config)
@@ -241,7 +241,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 )
             registry = load_project_registry(
                 config_path=config.projects_config_path,
-                approved_directory=config.approved_directory,
+                approved_directories=config.approved_directories,
             )
             project_threads_manager = ProjectThreadManager(
                 registry=registry,
