@@ -1,6 +1,6 @@
 FROM python:3.11-slim AS builder
 
-RUN pip install --no-cache-dir poetry==2.1.1
+RUN pip install --no-cache-dir poetry==2.1.1 poetry-plugin-export==1.9.0
 
 WORKDIR /app
 
