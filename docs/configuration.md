@@ -74,7 +74,7 @@ CLAUDE_TIMEOUT_SECONDS=300
 CLAUDE_MAX_COST_PER_USER=10.0
 
 # Allowed Claude tools (comma-separated list; see docs/tools.md for descriptions)
-CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
+CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,TaskOutput,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
 ```
 
 #### Rate Limiting

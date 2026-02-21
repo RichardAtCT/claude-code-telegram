@@ -189,7 +189,7 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 
 - Tunable verbose output showing Claude's tool usage and reasoning in real-time
 - Persistent typing indicator so users always know the bot is working
-- 15 configurable tools with allowlist/disallowlist control (see [docs/tools.md](docs/tools.md))
+- 16 configurable tools with allowlist/disallowlist control (see [docs/tools.md](docs/tools.md))
 
 ### Planned Enhancements
 

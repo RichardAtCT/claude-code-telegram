@@ -4,7 +4,7 @@ This document describes the tools that Claude Code can use when interacting thro
 
 ## Overview
 
-By default, the bot allows **15 tools**. These are configured via the `CLAUDE_ALLOWED_TOOLS` environment variable and validated at runtime by the [ToolMonitor](../src/claude/monitor.py).
+By default, the bot allows **16 tools**. These are configured via the `CLAUDE_ALLOWED_TOOLS` environment variable and validated at runtime by the [ToolMonitor](../src/claude/monitor.py).
 
 When Claude uses a tool during a conversation, the tool name appears in real-time if verbose output is enabled (`/verbose 1` or `/verbose 2`). If Claude attempts to use a tool that is not in the allowed list, the bot blocks the call and displays an error with the list of currently allowed tools.
 
@@ -59,6 +59,7 @@ When Claude uses a tool during a conversation, the tool name appears in real-tim
 | Tool | Icon | Description |
 |------|------|-------------|
 | **Task** | 🧠 | Launch a sub-agent to handle complex, multi-step operations autonomously. The sub-agent runs with its own context and returns a result when finished. |
+| **TaskOutput** | 🧠 | Read the output of a background sub-agent launched by **Task**. Required for retrieving results from agents that were run in the background. |
 
 ## Verbose Output
 
@@ -91,7 +92,7 @@ The default allowed tools list is defined in `src/config/settings.py` and can be
 
 ```bash
 # Allow only specific tools (comma-separated)
-CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
+CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,TaskOutput,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
 
 # Explicitly block specific tools (comma-separated, takes precedence over allowed)
 CLAUDE_DISALLOWED_TOOLS=Bash,Write
