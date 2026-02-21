@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Communications :: Chat",
-    "Topic :: Software Development :: Tools",
+    "Topic :: Software Development",
     "Topic :: System :: Shells",
 ]
 packages = [{include = "src"}]
