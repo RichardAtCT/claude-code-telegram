@@ -23,9 +23,9 @@ WORKDIR /app
 COPY --from=builder /app/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source
+# Copy application source and files needed for pip install
 COPY src/ src/
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 
 # Install the project itself (for entry point and metadata)
 RUN pip install --no-cache-dir --no-deps .
