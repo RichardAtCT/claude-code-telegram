@@ -26,7 +26,6 @@ def test_settings_validation_required_fields(monkeypatch):
     required_fields = {error["loc"][0] for error in errors}
     assert "telegram_bot_token" in required_fields
     assert "telegram_bot_username" in required_fields
-    assert "approved_directory" in required_fields
 
 
 def test_settings_with_valid_data(tmp_path):
@@ -139,6 +138,24 @@ def test_approved_directories_string_parsing(tmp_path):
     assert dir2.resolve() in settings.approved_directories
 
 
+def test_approved_directories_without_single_directory(tmp_path):
+    """Test approved_directories without approved_directory."""
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directories_str=f"{dir1},{dir2}",
+        _env_file=None,
+    )
+
+    assert settings.approved_directories == [dir1.resolve(), dir2.resolve()]
+    assert settings.approved_directory == dir1.resolve()
+
+
 def test_approved_directories_string_with_spaces(tmp_path):
     """Test parsing with spaces around directories."""
     dir1 = tmp_path / "dir1"
@@ -203,6 +220,19 @@ def test_approved_directories_empty_string_fallback(tmp_path):
     )
 
     assert settings.approved_directories == [test_dir.resolve()]
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=None,
+            approved_directories_str="",
+            _env_file=None,
+        )
+
+    assert "Either APPROVED_DIRECTORY or APPROVED_DIRECTORIES must be set" in str(
+        exc_info.value
+    )
 
 
 def test_approved_directories_whitespace_only_fallback(tmp_path):
