@@ -1,5 +1,5 @@
 .PHONY: install dev test lint format clean help run run-remote remote-attach remote-stop \
-       bump-patch bump-minor bump-major release version docker-build docker-run docker-stop docker-logs
+       bump-patch bump-minor bump-major release version docker-build docker-rebuild docker-run docker-stop docker-logs
 
 # Default target
 help:
@@ -17,6 +17,7 @@ help:
 	@echo "  bump-major    - Bump major version (1.2.0 -> 2.0.0), commit, and tag"
 	@echo "  release       - Push current version tag to trigger release workflow"
 	@echo "  docker-build  - Build Docker image locally"
+	@echo "  docker-rebuild- Rebuild Docker image from scratch (no cache)"
 	@echo "  docker-run    - Start bot via Docker Compose"
 	@echo "  docker-stop   - Stop Docker Compose services"
 	@echo "  docker-logs   - Follow Docker Compose logs"
@@ -108,6 +109,10 @@ release:  ## Push the current version tag to trigger the release workflow
 docker-build:  ## Build Docker image locally
 	$(eval CURRENT_VERSION := $(shell poetry version -s))
 	docker build -t claude-code-telegram:$(CURRENT_VERSION) -t claude-code-telegram:latest .
+
+docker-rebuild:  ## Rebuild Docker image from scratch (no cache)
+	$(eval CURRENT_VERSION := $(shell poetry version -s))
+	docker build --no-cache -t claude-code-telegram:$(CURRENT_VERSION) -t claude-code-telegram:latest .
 
 docker-run:  ## Start bot via Docker Compose (detached)
 	docker compose up -d
