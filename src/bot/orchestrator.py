@@ -808,6 +808,8 @@ class MessageOrchestrator:
         await progress_msg.delete()
 
         for i, message in enumerate(formatted_messages):
+            if not message.text or not message.text.strip():
+                continue
             try:
                 await update.message.reply_text(
                     message.text,

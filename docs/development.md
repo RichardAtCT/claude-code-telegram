@@ -6,7 +6,7 @@ This document provides detailed information for developers working on the Claude
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.11 or higher
 - Poetry for dependency management
 - Git for version control
 - Claude authentication (one of):
@@ -17,7 +17,7 @@ This document provides detailed information for developers working on the Claude
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/RichardAtCT/claude-code-telegram.git
    cd claude-code-telegram
    ```
 
@@ -78,6 +78,13 @@ make format        # Auto-format all code
 make clean         # Clean up generated files
 make run           # Run the bot in normal mode
 make run-debug     # Run the bot with debug logging
+
+# Version management
+make version       # Show current version
+make bump-patch    # Bump patch version, commit, and tag
+make bump-minor    # Bump minor version, commit, and tag
+make bump-major    # Bump major version, commit, and tag
+make release       # Push tag to trigger GitHub release workflow
 ```
 
 ## Project Architecture
@@ -367,6 +374,31 @@ The debug output will show:
 - Environment overrides applied
 - Feature flags enabled
 - Validation results
+
+## Version Management
+
+### How versioning works
+
+The version is defined in a single place: `pyproject.toml`. At runtime, `src/__init__.py` reads it via `importlib.metadata`. There is no hardcoded version string to keep in sync.
+
+### Cutting a release
+
+```bash
+# Bump the version (choose one) — commits, tags, and pushes automatically
+make bump-patch    # 1.2.0 -> 1.2.1
+make bump-minor    # 1.2.0 -> 1.3.0
+make bump-major    # 1.2.0 -> 2.0.0
+```
+
+`make bump-*` runs `poetry version`, commits `pyproject.toml`, creates a git tag, and pushes both to GitHub. The tag push triggers the release workflow:
+
+1. Runs the full lint + test suite
+2. Creates a GitHub Release with auto-generated release notes
+3. Updates the rolling `latest` git tag (stable releases only)
+
+### Pre-releases
+
+Tags containing `-rc`, `-beta`, or `-alpha` (e.g. `v1.3.0-rc1`) are marked as pre-releases on GitHub and do **not** update the `latest` tag.
 
 ## Contributing
 
