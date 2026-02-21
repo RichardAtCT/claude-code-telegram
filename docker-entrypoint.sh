@@ -28,7 +28,8 @@ fi
 #   1. CLAUDE_CONFIG_DIR env var            (explicit override)
 #   2. /host-claude-config                  (docker-compose bind mount)
 #   3. ~/.claude                            (already in place)
-TARGET="$HOME/.claude"
+# Entrypoint runs as root; credentials must land in botuser's home.
+TARGET="/home/botuser/.claude"
 
 resolve_config() {
     if [ -n "$CLAUDE_CONFIG_DIR" ] && [ -d "$CLAUDE_CONFIG_DIR" ]; then
@@ -68,4 +69,11 @@ elif [ -z "$SOURCE" ]; then
     fi
 fi
 
-exec "$@"
+# --- Fix volume permissions and drop to non-root ---
+# Docker named volumes are root-owned on first creation.  Ensure botuser
+# can write to the workspace (for the SQLite data dir, etc.).
+# Only chown the volume root and data dir — NOT the bind-mounted project/.
+mkdir -p /home/botuser/workspace/data
+chown botuser:botuser /home/botuser/workspace /home/botuser/workspace/data
+
+exec gosu botuser "$@"

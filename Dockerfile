@@ -14,9 +14,10 @@ RUN poetry export -f requirements.txt --without dev -o requirements.txt
 
 FROM python:3.11-slim
 
-# Install git (needed for Claude Code operations) and clean up
+# Install git (needed for Claude Code operations) and gosu (for dropping
+# root privileges in the entrypoint after fixing volume permissions)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git && \
+    apt-get install -y --no-install-recommends git gosu && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -40,7 +41,9 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
     useradd --create-home botuser && \
     mkdir -p /home/botuser/workspace
 
-USER botuser
+# NOTE: No USER directive here — the entrypoint starts as root to fix
+# volume permissions (named volumes are root-owned), then drops to
+# botuser via gosu before exec'ing the command.
 WORKDIR /home/botuser/workspace
 
 ENTRYPOINT ["docker-entrypoint.sh"]
