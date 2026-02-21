@@ -13,6 +13,18 @@ files = [
 ]
 
 [[package]]
+name = "aiolimiter"
+version = "1.2.1"
+description = "asyncio rate limiter, a leaky bucket implementation"
+optional = false
+python-versions = "<4.0,>=3.8"
+groups = ["main"]
+files = [
+    {file = "aiolimiter-1.2.1-py3-none-any.whl", hash = "sha256:d3f249e9059a20badcb56b61601a83556133655c11d1eb3dd3e04ff069e5f3c7"},
+    {file = "aiolimiter-1.2.1.tar.gz", hash = "sha256:e02a37ea1a855d9e832252a105420ad4d15011505512a1a1d814647451b5cca9"},
+]
+
+[[package]]
 name = "aiosqlite"
 version = "0.21.0"
 description = "asyncio bridge to the standard sqlite3 module"
@@ -1560,6 +1572,7 @@ files = [
 ]
 
 [package.dependencies]
+aiolimiter = {version = ">=1.1,<1.3", optional = true, markers = "extra == \"rate-limiter\""}
 httpcore = {version = ">=1.0.9", markers = "python_version >= \"3.14\""}
 httpx = ">=0.27,<0.29"
 
@@ -2293,4 +2306,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "1446869f899302f1072be89d42a09eb6a8b07fb073ea5486d1991a88e4153652"
+content-hash = "9a9e9698290e0a2ccbc11d358efd4f261c3c7bcaa5eff0c654141178fe839ae6"

@@ -251,6 +251,9 @@ async def run_application(app: Dict[str, Any]) -> None:
             project_threads_manager = ProjectThreadManager(
                 registry=registry,
                 repository=storage.project_threads,
+                sync_action_interval_seconds=(
+                    config.project_threads_sync_action_interval_seconds
+                ),
             )
 
             bot.deps["project_registry"] = registry

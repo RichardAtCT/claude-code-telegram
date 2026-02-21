@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Optional
 import structlog
 from telegram import Update
 from telegram.ext import (
+    AIORateLimiter,
     Application,
     ContextTypes,
     MessageHandler,
@@ -49,6 +50,7 @@ class ClaudeCodeBot:
         # Create application
         builder = Application.builder()
         builder.token(self.settings.telegram_token_str)
+        builder.rate_limiter(AIORateLimiter(max_retries=1))
 
         # Configure connection settings
         builder.connect_timeout(30)
