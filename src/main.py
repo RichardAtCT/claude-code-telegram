@@ -144,9 +144,10 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         config, security_validator, agentic_mode=config.agentic_mode
     )
 
-    # Create Claude SDK manager and integration facade
+    # Create Claude SDK manager and verify authentication
     logger.info("Using Claude Python SDK integration")
     sdk_manager = ClaudeSDKManager(config)
+    await sdk_manager.check_authentication()
 
     claude_integration = ClaudeIntegration(
         config=config,

@@ -9,6 +9,7 @@ Features:
 
 import asyncio
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -147,6 +148,62 @@ class ClaudeSDKManager:
             logger.info("Using provided API key for Claude SDK authentication")
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
+
+    async def check_authentication(self) -> None:
+        """Verify that Claude authentication is available.
+
+        Checks for either:
+        1. An ANTHROPIC_API_KEY set in config/environment
+        2. A reachable Claude CLI (assumed to hold its own auth)
+
+        Raises ConfigurationError if neither is available.
+        """
+        from ..exceptions import ConfigurationError
+
+        # 1. API key takes priority
+        if os.environ.get("ANTHROPIC_API_KEY"):
+            logger.info("Authentication check passed: API key is set")
+            return
+
+        # 2. Fall back to Claude CLI availability
+        cli_path = find_claude_cli(self.config.claude_cli_path)
+        if not cli_path:
+            raise ConfigurationError(
+                "No Claude authentication found. Either set ANTHROPIC_API_KEY "
+                "or install and authenticate the Claude CLI "
+                "(npm install -g @anthropic-ai/claude-code && claude login)."
+            )
+
+        # Verify the CLI is actually executable
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                [cli_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                raise ConfigurationError(
+                    f"Claude CLI found at {cli_path} but returned an error "
+                    f"(exit code {result.returncode}). "
+                    "Ensure the CLI is working or set ANTHROPIC_API_KEY instead."
+                )
+            logger.info(
+                "Authentication check passed: Claude CLI is available",
+                cli_path=cli_path,
+                version=result.stdout.strip(),
+            )
+        except subprocess.TimeoutExpired:
+            raise ConfigurationError(
+                f"Claude CLI at {cli_path} timed out during version check. "
+                "Ensure the CLI is working or set ANTHROPIC_API_KEY instead."
+            )
+        except FileNotFoundError:
+            raise ConfigurationError(
+                f"Claude CLI path {cli_path} is no longer accessible. "
+                "Set ANTHROPIC_API_KEY or fix your Claude CLI installation."
+            )
 
     async def execute_command(
         self,

@@ -2,8 +2,9 @@
 
 import asyncio
 import os
+import subprocess
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import (
@@ -14,6 +15,7 @@ from claude_agent_sdk import (
 
 from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from src.config.settings import Settings
+from src.exceptions import ConfigurationError
 
 
 def _make_assistant_message(text="Test response"):
@@ -541,3 +543,125 @@ class TestClaudeMCPErrors:
                 )
 
         assert "MCP" in str(exc_info.value)
+
+
+class TestCheckAuthentication:
+    """Test authentication check at startup."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        """Create test config without API key."""
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+        )
+
+    @pytest.fixture
+    def config_with_key(self, tmp_path):
+        """Create test config with API key."""
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            anthropic_api_key="sk-ant-test-key",
+            claude_timeout_seconds=2,
+        )
+
+    async def test_auth_passes_with_api_key(self, config_with_key):
+        """Test that auth check passes when ANTHROPIC_API_KEY is set."""
+        manager = ClaudeSDKManager(config_with_key)
+        # Should not raise
+        await manager.check_authentication()
+
+    async def test_auth_passes_with_cli(self, config):
+        """Test that auth check passes when Claude CLI is found and works."""
+        manager = ClaudeSDKManager(config)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "1.0.0"
+
+        # Remove API key from env to force CLI path
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with patch(
+                "src.claude.sdk_integration.find_claude_cli",
+                return_value="/usr/local/bin/claude",
+            ):
+                with patch("subprocess.run", return_value=mock_result):
+                    await manager.check_authentication()
+
+    async def test_auth_fails_no_key_no_cli(self, config):
+        """Test that auth check fails when neither API key nor CLI is available."""
+        manager = ClaudeSDKManager(config)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with patch("src.claude.sdk_integration.find_claude_cli", return_value=None):
+                with pytest.raises(
+                    ConfigurationError, match="No Claude authentication"
+                ):
+                    await manager.check_authentication()
+
+    async def test_auth_fails_cli_returns_error(self, config):
+        """Test that auth check fails when CLI returns non-zero exit code."""
+        manager = ClaudeSDKManager(config)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with patch(
+                "src.claude.sdk_integration.find_claude_cli",
+                return_value="/usr/local/bin/claude",
+            ):
+                with patch("subprocess.run", return_value=mock_result):
+                    with pytest.raises(ConfigurationError, match="returned an error"):
+                        await manager.check_authentication()
+
+    async def test_auth_fails_cli_timeout(self, config):
+        """Test that auth check fails when CLI times out."""
+        manager = ClaudeSDKManager(config)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with patch(
+                "src.claude.sdk_integration.find_claude_cli",
+                return_value="/usr/local/bin/claude",
+            ):
+                with patch(
+                    "subprocess.run",
+                    side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=10),
+                ):
+                    with pytest.raises(ConfigurationError, match="timed out"):
+                        await manager.check_authentication()
+
+    async def test_auth_fails_cli_not_found_at_runtime(self, config):
+        """Test that auth check fails when CLI path disappears."""
+        manager = ClaudeSDKManager(config)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with patch(
+                "src.claude.sdk_integration.find_claude_cli",
+                return_value="/usr/local/bin/claude",
+            ):
+                with patch("subprocess.run", side_effect=FileNotFoundError()):
+                    with pytest.raises(
+                        ConfigurationError, match="no longer accessible"
+                    ):
+                        await manager.check_authentication()
+
+    async def test_api_key_in_env_takes_priority_over_cli(self, config):
+        """Test that API key in environment is checked before CLI."""
+        manager = ClaudeSDKManager(config)
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=False):
+            # Should pass without ever checking CLI
+            with patch("src.claude.sdk_integration.find_claude_cli") as mock_find:
+                await manager.check_authentication()
+                mock_find.assert_not_called()
