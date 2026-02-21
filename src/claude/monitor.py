@@ -7,9 +7,11 @@ operating outside the approved directory.
 
 import shlex
 from pathlib import Path
-from typing import Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 import structlog
+
+from ..utils.paths import DIRECTORY_PARAM_ERROR, is_relative_to
 
 # Subdirectories under ~/.claude/ that Claude Code uses internally.
 # File operations targeting these paths are allowed even when they fall
@@ -72,16 +74,24 @@ _COMMAND_SEPARATORS: Set[str] = {"&&", "||", ";", "|", "&"}
 def check_bash_directory_boundary(
     command: str,
     working_directory: Path,
-    approved_directory: Path,
+    approved_directory: Optional[Path] = None,
+    approved_directories: Optional[List[Path]] = None,
 ) -> Tuple[bool, Optional[str]]:
-    """Check if a bash command's absolute paths stay within the approved directory.
+    """Check if a bash command's absolute paths stay within approved directories.
 
     This function parses the command string (including chained commands) and
     verifies that any filesystem-modifying or context-changing command (like cd)
     only targets paths within the approved boundary.
 
-    Returns (True, None) if the command is safe, or (False, error_message) if it
-    attempts to operate outside the approved directory boundary.
+    Args:
+        command: The bash command to check
+        working_directory: The current working directory
+        approved_directory: Single approved directory (for backward compatibility)
+        approved_directories: List of approved directories (takes precedence)
+
+    Returns:
+        (True, None) if the command is safe, or (False, error_message) if it
+        attempts to operate outside the approved directory boundary.
     """
     try:
         tokens = shlex.split(command)
@@ -108,7 +118,13 @@ def check_bash_directory_boundary(
     if current_chain:
         command_chains.append(current_chain)
 
-    resolved_approved = approved_directory.resolve()
+    # Resolve approved directories list
+    if approved_directories:
+        resolved_dirs = [d.resolve() for d in approved_directories]
+    elif approved_directory:
+        resolved_dirs = [approved_directory.resolve()]
+    else:
+        raise ValueError(DIRECTORY_PARAM_ERROR)
 
     # Check each command in the chain
     for cmd_tokens in command_chains:
@@ -146,11 +162,11 @@ def check_bash_directory_boundary(
                 else:
                     resolved = (working_directory / token).resolve()
 
-                if not _is_within_directory(resolved, resolved_approved):
+                if not any(is_relative_to(resolved, d) for d in resolved_dirs):
                     return False, (
                         f"Directory boundary violation: '{base_command}' targets "
-                        f"'{token}' which is outside approved directory "
-                        f"'{resolved_approved}'"
+                        f"'{token}' which is outside approved directories "
+                        f"{[str(d) for d in resolved_dirs]}"
                     )
             except (ValueError, OSError):
                 # If path resolution fails, the command might be malformed or

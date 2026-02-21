@@ -266,7 +266,7 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         registry = load_project_registry(
             config_path=settings.projects_config_path,
-            approved_directory=settings.approved_directory,
+            approved_directories=settings.approved_directories,
         )
         manager.registry = registry
         context.bot_data["project_registry"] = registry
@@ -309,7 +309,7 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     # Track what was cleared for user feedback
     old_session_id = context.user_data.get("claude_session_id")
@@ -385,7 +385,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             status_msg = await update.message.reply_text(
                 f"🔄 <b>Continuing Session</b>\n\n"
                 f"Session ID: <code>{claude_session_id[:8]}...</code>\n"
-                f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
+                f"Directory: <code>{settings.format_relative_path(current_dir)}/</code>\n\n"
                 f"{'Processing your message...' if prompt else 'Continuing where you left off...'}",
                 parse_mode="HTML",
             )
@@ -449,7 +449,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await status_msg.edit_text(
                 "❌ <b>No Session Found</b>\n\n"
                 f"No recent Claude session found in this directory.\n"
-                f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
+                f"Directory: <code>{settings.format_relative_path(current_dir)}/</code>\n\n"
                 f"<b>What you can do:</b>\n"
                 f"• Use <code>/new</code> to start a fresh session\n"
                 f"• Use <code>/status</code> to check your sessions\n"
@@ -512,6 +512,9 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
+    current_root = (
+        settings.get_approved_root_for_path(current_dir) or settings.approved_directory
+    )
 
     try:
         # List directory contents
@@ -542,7 +545,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         items = directories + files
 
         # Format response
-        relative_path = current_dir.relative_to(settings.approved_directory)
+        relative_path = settings.format_relative_path(current_dir)
         if not items:
             message = f"📂 <code>{relative_path}/</code>\n\n<i>(empty directory)</i>"
         else:
@@ -559,7 +562,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         # Add navigation buttons if not at root
         keyboard = []
-        if current_dir != settings.approved_directory:
+        if current_dir != current_root:
             keyboard.append(
                 [
                     InlineKeyboardButton("⬆️ Go Up", callback_data="cd:.."),
@@ -624,7 +627,10 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         "current_directory", settings.approved_directory
     )
     project_root = _get_thread_project_root(settings, context)
-    directory_root = project_root or settings.approved_directory
+    current_root = (
+        settings.get_approved_root_for_path(current_dir) or settings.approved_directory
+    )
+    directory_root = project_root or current_root
 
     try:
         # Handle known navigation shortcuts first
@@ -706,7 +712,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 )
 
         # Send confirmation
-        relative_base = project_root or settings.approved_directory
+        relative_base = project_root or current_root
         relative_path = resolved_path.relative_to(relative_base)
         relative_display = "/" if str(relative_path) == "." else f"{relative_path}/"
         await update.message.reply_text(
@@ -740,7 +746,7 @@ async def print_working_directory(
         "current_directory", settings.approved_directory
     )
 
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
     absolute_path = str(current_dir)
 
     # Add quick navigation buttons
@@ -802,9 +808,16 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
             return
 
-        # Get directories in approved directory (these are "projects")
+        # Get directories in the current approved root (these are "projects")
+        current_dir = context.user_data.get(
+            "current_directory", settings.approved_directory
+        )
+        current_root = (
+            settings.get_approved_root_for_path(current_dir)
+            or settings.approved_directory
+        )
         projects = []
-        for item in sorted(settings.approved_directory.iterdir()):
+        for item in sorted(current_root.iterdir()):
             if item.is_dir() and not item.name.startswith("."):
                 projects.append(item.name)
 
@@ -867,7 +880,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     # Get rate limiter info if available
     rate_limiter = context.bot_data.get("rate_limiter")
@@ -1029,7 +1042,7 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     # Clear session data
     context.user_data["claude_session_id"] = None
@@ -1116,7 +1129,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         # Create inline keyboard
         keyboard = quick_action_manager.create_inline_keyboard(actions, max_columns=2)
 
-        relative_path = current_dir.relative_to(settings.approved_directory)
+        relative_path = settings.format_relative_path(current_dir)
         await update.message.reply_text(
             f"⚡ <b>Quick Actions</b>\n\n"
             f"📂 Context: <code>{relative_path}/</code>\n\n"
@@ -1162,7 +1175,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not (current_dir / ".git").exists():
             await update.message.reply_text(
                 f"📂 <b>Not a Git Repository</b>\n\n"
-                f"Current directory <code>{current_dir.relative_to(settings.approved_directory)}/</code> is not a git repository.\n\n"
+                f"Current directory <code>{settings.format_relative_path(current_dir)}/</code> is not a git repository.\n\n"
                 f"<b>Options:</b>\n"
                 f"• Navigate to a git repository with <code>/cd</code>\n"
                 f"• Initialize a new repository (ask Claude to help)\n"
@@ -1174,7 +1187,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         git_status = await git_integration.get_status(current_dir)
 
         # Format status message
-        relative_path = current_dir.relative_to(settings.approved_directory)
+        relative_path = settings.format_relative_path(current_dir)
         status_message = "🔗 <b>Git Repository Status</b>\n\n"
         status_message += f"📂 Directory: <code>{relative_path}/</code>\n"
         status_message += f"🌿 Branch: <code>{git_status.branch}</code>\n"

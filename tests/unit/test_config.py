@@ -120,6 +120,231 @@ def test_approved_directory_validation_not_directory(tmp_path):
     assert "not a directory" in str(exc_info.value)
 
 
+def test_approved_directories_string_parsing(tmp_path):
+    """Test parsing of comma-separated approved_directories_str."""
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(dir1),
+        approved_directories_str=f"{dir1},{dir2}",
+    )
+
+    assert len(settings.approved_directories) == 2
+    assert dir1.resolve() in settings.approved_directories
+    assert dir2.resolve() in settings.approved_directories
+
+
+def test_approved_directories_string_with_spaces(tmp_path):
+    """Test parsing with spaces around directories."""
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(dir1),
+        approved_directories_str=f" {dir1} , {dir2} ",
+    )
+
+    assert len(settings.approved_directories) == 2
+    assert dir1.resolve() in settings.approved_directories
+    assert dir2.resolve() in settings.approved_directories
+
+
+def test_approved_directories_loaded_from_env_alias(monkeypatch, tmp_path):
+    """Test APPROVED_DIRECTORIES env var maps to approved_directories_str."""
+    dir1 = tmp_path / "dir1"
+    dir2 = tmp_path / "dir2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test_token")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "test_bot")
+    monkeypatch.setenv("APPROVED_DIRECTORY", str(dir1))
+    monkeypatch.setenv("APPROVED_DIRECTORIES", f"{dir1},{dir2}")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.approved_directories_str == f"{dir1},{dir2}"
+    assert settings.approved_directories == [dir1.resolve(), dir2.resolve()]
+
+
+def test_approved_directories_fallback_to_single(tmp_path):
+    """Test that approved_directories falls back to approved_directory."""
+    test_dir = tmp_path / "projects"
+    test_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+    )
+
+    assert settings.approved_directories == [test_dir.resolve()]
+
+
+def test_approved_directories_empty_string_fallback(tmp_path):
+    """Test that empty approved_directories_str falls back to approved_directory."""
+    test_dir = tmp_path / "projects"
+    test_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+        approved_directories_str="",
+    )
+
+    assert settings.approved_directories == [test_dir.resolve()]
+
+
+def test_approved_directories_whitespace_only_fallback(tmp_path):
+    """Test that whitespace-only approved_directories_str falls back."""
+    test_dir = tmp_path / "projects"
+    test_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+        approved_directories_str="   ,  ,  ",
+    )
+
+    assert settings.approved_directories == [test_dir.resolve()]
+
+
+def test_approved_directories_nonexistent_directory(tmp_path):
+    """Test validation fails for non-existent directory in list."""
+    dir1 = tmp_path / "dir1"
+    dir1.mkdir()
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(dir1),
+            approved_directories_str=f"{dir1},/nonexistent/directory",
+        )
+
+    assert "does not exist" in str(exc_info.value)
+
+
+def test_approved_directories_file_not_directory(tmp_path):
+    """Test validation fails when path is a file, not directory."""
+    dir1 = tmp_path / "dir1"
+    dir1.mkdir()
+    file1 = tmp_path / "file.txt"
+    file1.write_text("test")
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(dir1),
+            approved_directories_str=f"{dir1},{file1}",
+        )
+
+    assert "not a directory" in str(exc_info.value)
+
+
+def test_format_relative_path_single_root(tmp_path):
+    """With a single root, format_relative_path returns plain relative path."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    child = root / "myapp"
+    child.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(root),
+    )
+
+    assert settings.format_relative_path(child) == "myapp"
+    assert settings.format_relative_path(root) == "."
+
+
+def test_format_relative_path_multiple_roots(tmp_path):
+    """With multiple roots, format_relative_path prefixes with root name."""
+    root1 = tmp_path / "work"
+    root2 = tmp_path / "personal"
+    root1.mkdir()
+    root2.mkdir()
+    child1 = root1 / "repo"
+    child2 = root2 / "blog"
+    child1.mkdir()
+    child2.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(root1),
+        approved_directories_str=f"{root1},{root2}",
+    )
+
+    assert settings.format_relative_path(child1) == "work/repo"
+    assert settings.format_relative_path(child2) == "personal/blog"
+    # Path that equals a root shows just the root name
+    assert settings.format_relative_path(root1) == "work"
+    assert settings.format_relative_path(root2) == "personal"
+
+
+def test_get_approved_root_for_path_exact_root(tmp_path):
+    """get_approved_root_for_path returns root when path equals the root itself."""
+    root = tmp_path / "projects"
+    root.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(root),
+    )
+
+    assert settings.get_approved_root_for_path(root) == root.resolve()
+
+
+def test_get_approved_root_for_path_child(tmp_path):
+    """get_approved_root_for_path returns correct root for a nested path."""
+    root1 = tmp_path / "root1"
+    root2 = tmp_path / "root2"
+    root1.mkdir()
+    root2.mkdir()
+    child = root2 / "deep" / "dir"
+    child.mkdir(parents=True)
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(root1),
+        approved_directories_str=f"{root1},{root2}",
+    )
+
+    assert settings.get_approved_root_for_path(child) == root2.resolve()
+
+
+def test_get_approved_root_for_path_outside(tmp_path):
+    """get_approved_root_for_path returns None when path is outside all roots."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    outside = tmp_path / "other"
+    outside.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(root),
+    )
+
+    assert settings.get_approved_root_for_path(outside) is None
+
+
 def test_auth_token_validation():
     """Test auth token secret validation."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -277,7 +502,7 @@ def test_project_threads_validation_requires_chat_id_in_group_mode(tmp_path):
     app_dir.mkdir()
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n" "  - slug: app\n" "    name: App\n" "    path: app\n",
+        "projects:\n  - slug: app\n    name: App\n    path: app\n",
         encoding="utf-8",
     )
 
@@ -338,7 +563,7 @@ def test_project_threads_validation_private_mode_no_chat_id(tmp_path):
     app_dir.mkdir()
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n" "  - slug: app\n" "    name: App\n" "    path: app\n",
+        "projects:\n  - slug: app\n    name: App\n    path: app\n",
         encoding="utf-8",
     )
 
@@ -363,7 +588,7 @@ def test_project_threads_validation_private_mode_empty_chat_id(tmp_path):
     app_dir.mkdir()
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n" "  - slug: app\n" "    name: App\n" "    path: app\n",
+        "projects:\n  - slug: app\n    name: App\n    path: app\n",
         encoding="utf-8",
     )
 
@@ -389,7 +614,7 @@ def test_project_threads_validation_group_mode_empty_chat_id_fails(tmp_path):
     app_dir.mkdir()
     config_file = tmp_path / "projects.yaml"
     config_file.write_text(
-        "projects:\n" "  - slug: app\n" "    name: App\n" "    path: app\n",
+        "projects:\n  - slug: app\n    name: App\n    path: app\n",
         encoding="utf-8",
     )
 

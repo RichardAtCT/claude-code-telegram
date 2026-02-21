@@ -12,9 +12,17 @@ import json
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    Field,
+    PrivateAttr,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.utils.paths import is_relative_to
 from src.utils.constants import (
     DEFAULT_CLAUDE_MAX_COST_PER_USER,
     DEFAULT_CLAUDE_MAX_TURNS,
@@ -32,6 +40,9 @@ from src.utils.constants import (
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    # Cached, validated list of approved directories – populated by model_validator.
+    _approved_directories_cache: List[Path] = PrivateAttr(default_factory=list)
+
     # Bot settings
     telegram_bot_token: SecretStr = Field(
         ..., description="Telegram bot token from BotFather"
@@ -40,6 +51,14 @@ class Settings(BaseSettings):
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")
+    approved_directories_str: Optional[str] = Field(
+        None,
+        description="Comma-separated list of approved directories "
+        "(takes precedence over approved_directory)",
+        validation_alias=AliasChoices(
+            "APPROVED_DIRECTORIES", "approved_directories_str"
+        ),
+    )
     allowed_users: Optional[List[int]] = Field(
         None, description="Allowed Telegram user IDs"
     )
@@ -359,7 +378,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_cross_field_dependencies(self) -> "Settings":
-        """Validate dependencies between fields."""
+        """Validate dependencies between fields and build approved-directories cache."""
         # Check auth token requirements
         if self.enable_token_auth and not self.auth_token_secret:
             raise ValueError(
@@ -384,7 +403,34 @@ class Settings(BaseSettings):
                     "projects_config_path required when enable_project_threads is True"
                 )
 
+        # Build and validate approved_directories once at construction time.
+        # Validation errors here surface immediately (not lazily on first access).
+        self._approved_directories_cache = self._parse_approved_directories()
+
         return self
+
+    def _parse_approved_directories(self) -> List[Path]:
+        """Parse, resolve and validate approved_directories_str.
+
+        Called once from the model_validator so filesystem checks happen at
+        startup, not on every property access.
+        """
+        if self.approved_directories_str and self.approved_directories_str.strip():
+            directories = []
+            for dir_str in self.approved_directories_str.split(","):
+                dir_str = dir_str.strip()
+                if dir_str:
+                    path = Path(dir_str).resolve()
+                    if not path.exists():
+                        raise ValueError(f"Approved directory does not exist: {path}")
+                    if not path.is_dir():
+                        raise ValueError(
+                            f"Approved directory is not a directory: {path}"
+                        )
+                    directories.append(path)
+            if directories:
+                return directories
+        return [self.approved_directory]
 
     @property
     def is_production(self) -> bool:
@@ -419,3 +465,36 @@ class Settings(BaseSettings):
             if self.anthropic_api_key
             else None
         )
+
+    @property
+    def approved_directories(self) -> List[Path]:
+        """Return the cached, validated list of approved directories."""
+        return self._approved_directories_cache
+
+    def get_approved_root_for_path(self, path: Path) -> Optional[Path]:
+        """Return the approved root containing path, or None."""
+        resolved = path.resolve()
+        for directory in self._approved_directories_cache:
+            if is_relative_to(resolved, directory):
+                return directory
+        return None
+
+    def is_path_in_approved_directories(self, path: Path) -> bool:
+        """Check if path is within any approved directory."""
+        return self.get_approved_root_for_path(path) is not None
+
+    def format_relative_path(self, path: Path) -> str:
+        """Format path relative to approved roots for display."""
+        resolved = path.resolve()
+        root = self.get_approved_root_for_path(resolved)
+        if root is None:
+            return str(resolved)
+
+        relative = resolved.relative_to(root)
+        if len(self._approved_directories_cache) == 1:
+            return str(relative)
+
+        root_label = root.name or str(root)
+        if str(relative) in {"", "."}:
+            return root_label
+        return f"{root_label}/{relative}"

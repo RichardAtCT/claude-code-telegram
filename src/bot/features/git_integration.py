@@ -83,7 +83,6 @@ class GitIntegration:
             settings: Application settings
         """
         self.settings = settings
-        self.approved_dir = Path(settings.approved_directory)
 
     async def execute_git_command(
         self, command: List[str], cwd: Path
@@ -117,7 +116,7 @@ class GitIntegration:
         # Validate working directory
         try:
             cwd = cwd.resolve()
-            if not cwd.is_relative_to(self.approved_dir):
+            if not self.settings.is_path_in_approved_directories(cwd):
                 raise SecurityError("Repository outside approved directory")
         except Exception:
             raise SecurityError("Invalid repository path")
