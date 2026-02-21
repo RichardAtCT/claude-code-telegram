@@ -1,6 +1,8 @@
+# syntax=docker/dockerfile:1
 FROM python:3.11-slim AS builder
 
-RUN pip install --no-cache-dir poetry==2.1.1 poetry-plugin-export==1.9.0
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install poetry==2.1.1 poetry-plugin-export==1.9.0
 
 WORKDIR /app
 
@@ -19,27 +21,26 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Install Python dependencies from exported requirements
+# Install Python dependencies — cache mount keeps downloaded wheels across builds
 COPY --from=builder /app/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # Copy application source and files needed for pip install
 COPY src/ src/
 COPY pyproject.toml README.md ./
 
 # Install the project itself (for entry point and metadata)
-RUN pip install --no-cache-dir --no-deps .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-deps .
 
-# Copy entrypoint script
+# Copy entrypoint script and set up non-root user in one layer
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    useradd --create-home botuser && \
+    mkdir -p /home/botuser/workspace
 
-# Create a non-root user
-RUN useradd --create-home botuser
 USER botuser
-
-# Default working directory for Claude Code operations
-RUN mkdir -p /home/botuser/workspace
 WORKDIR /home/botuser/workspace
 
 ENTRYPOINT ["docker-entrypoint.sh"]
