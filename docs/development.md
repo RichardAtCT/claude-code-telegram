@@ -86,6 +86,9 @@ make bump-minor    # Bump minor version, commit, and tag
 make bump-major    # Bump major version, commit, and tag
 make release       # Push tag to trigger GitHub release workflow
 make docker-build  # Build Docker image locally
+make docker-run    # Start bot via Docker Compose
+make docker-stop   # Stop Docker Compose services
+make docker-logs   # Follow Docker Compose logs
 ```
 
 ## Project Architecture

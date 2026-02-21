@@ -53,7 +53,7 @@ cp .env.example .env
 # Edit .env with your settings (see step 3)
 
 # Run
-docker compose up -d
+make docker-run
 ```
 
 Or pull the pre-built image directly:
@@ -100,7 +100,7 @@ ALLOWED_USERS=123456789  # Your Telegram user ID
 
 ```bash
 # Docker
-docker compose up -d
+make docker-run
 
 # Or from source
 make run          # Production

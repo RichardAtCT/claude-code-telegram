@@ -101,8 +101,8 @@ ALLOWED_USERS=123456789  # Your Telegram user ID
 
 ```bash
 # Docker
-docker compose up -d          # Detached
-docker compose logs -f        # Follow logs
+make docker-run       # Start detached
+make docker-logs      # Follow output
 
 # From source
 make run-debug    # Recommended for first run
@@ -321,30 +321,23 @@ ls -la /path/to/your/projects
 
 The bot ships with a `Dockerfile` and `docker-compose.yml` for containerized deployment.
 
-### docker-compose.yml
+### Running with Docker
 
 ```bash
-# Start the bot
-docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop
-docker compose down
+make docker-build     # Build the image
+make docker-run       # Start the bot (detached)
+make docker-logs      # Follow logs
+make docker-stop      # Stop the bot
 
 # Rebuild after updating
-docker compose build && docker compose up -d
+make docker-build && make docker-run
 ```
 
-The compose file reads your `.env` file automatically and persists the SQLite database in a named volume (`bot-data`).
+The compose file reads your `.env` file automatically, persists the SQLite database in a named volume (`bot-data`), and bind-mounts your project directory via the `HOST_PROJECT_DIR` env var. Set it in `.env`:
 
-To mount your project directory so Claude Code can access files:
-
-```yaml
-# In docker-compose.yml, uncomment:
-volumes:
-  - /path/to/your/project:/home/botuser/workspace/project
+```bash
+HOST_PROJECT_DIR=/path/to/your/project
+APPROVED_DIRECTORY=/home/botuser/workspace/project
 ```
 
 ### Using a specific version
