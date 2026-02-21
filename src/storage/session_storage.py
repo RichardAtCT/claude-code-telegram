@@ -121,11 +121,14 @@ class SQLiteSessionStorage(SessionStorage):
             user_id=session.user_id,
         )
 
-    async def load_session(self, session_id: str) -> Optional[ClaudeSession]:
-        """Load session from database."""
+    async def load_session(
+        self, session_id: str, user_id: int
+    ) -> Optional[ClaudeSession]:
+        """Load session from database, filtered by user ownership."""
         async with self.db_manager.get_connection() as conn:
             cursor = await conn.execute(
-                "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
+                "SELECT * FROM sessions WHERE session_id = ? AND user_id = ?",
+                (session_id, user_id),
             )
             row = await cursor.fetchone()
 
