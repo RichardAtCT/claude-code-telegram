@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Version Management & Distribution**:
+  - Single source of truth: version read from `pyproject.toml` via `importlib.metadata`
+  - GitHub Release workflow triggered by `v*` tags -- runs tests, creates Release, pushes Docker image to GHCR
+  - Rolling `latest` git tag updated on each stable release for `pip install git+...@latest`
+  - Makefile targets: `bump-patch`, `bump-minor`, `bump-major`, `release`, `version`, `docker-build`
+  - Dockerfile (multi-stage build) and `docker-compose.yml` for containerized deployment
+  - `.dockerignore` for lean image builds
+  - Pre-release support (`-rc`, `-beta`, `-alpha` tags)
+
+### Previously Added
 - **Agentic Mode** (default interaction model):
   - `MessageOrchestrator` routes messages to agentic (3 commands) or classic (13 commands) handlers based on `AGENTIC_MODE` setting
   - Natural language conversation with Claude -- no terminal commands needed
