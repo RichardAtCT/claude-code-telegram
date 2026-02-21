@@ -319,9 +319,7 @@ class SessionManager:
         """Get all sessions for a user."""
         return await self.storage.get_user_sessions(user_id)
 
-    async def get_session_info(
-        self, session_id: str, user_id: int
-    ) -> Optional[Dict]:
+    async def get_session_info(self, session_id: str, user_id: int) -> Optional[Dict]:
         """Get session information.
 
         Args:

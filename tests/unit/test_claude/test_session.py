@@ -402,9 +402,7 @@ class TestToolMonitorConfigBypass:
         loaded = await session_manager.storage.load_session("session-2", user_id=123)
         assert loaded is None
 
-    async def test_get_or_create_rejects_wrong_user_active_cache(
-        self, session_manager
-    ):
+    async def test_get_or_create_rejects_wrong_user_active_cache(self, session_manager):
         """Requesting another user's session via active cache creates a new one."""
         existing = ClaudeSession(
             session_id="other-user-session",
@@ -427,9 +425,7 @@ class TestToolMonitorConfigBypass:
         assert session.user_id == 123
         assert session.is_new_session is True
 
-    async def test_get_or_create_rejects_wrong_user_from_storage(
-        self, session_manager
-    ):
+    async def test_get_or_create_rejects_wrong_user_from_storage(self, session_manager):
         """Requesting another user's session via storage creates a new one."""
         existing = ClaudeSession(
             session_id="stored-other-session",
