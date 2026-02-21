@@ -79,6 +79,12 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
 
+      - name: Update rolling latest tag
+        if: ${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
   docker:
     needs: test
     runs-on: ubuntu-latest
