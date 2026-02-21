@@ -11,6 +11,9 @@ services:
       - bot-data:/home/botuser/workspace
       # Mount host project directory so Claude Code can read/write files
       - ${HOST_PROJECT_DIR:-.}:/home/botuser/workspace/project
+      # Pass host Claude CLI credentials into the container (read-only)
+      # Only needed when using CLI auth (USE_SDK=true without ANTHROPIC_API_KEY)
+      - ${HOME}/.claude:/home/botuser/.claude:ro
 
 volumes:
   bot-data:
