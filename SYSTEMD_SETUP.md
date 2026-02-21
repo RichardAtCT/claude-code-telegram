@@ -2,6 +2,8 @@
 
 This guide shows how to run the Claude Code Telegram Bot as a persistent systemd user service.
 
+> **Prefer Docker?** You can also run the bot with `docker compose up -d` -- see [docs/setup.md](docs/setup.md#docker-deployment) for details. Docker handles restarts automatically and doesn't require systemd configuration.
+
 **⚠️ SECURITY NOTE:** Before setting up the service, ensure your `.env` file has `DEVELOPMENT_MODE=false` and `ENVIRONMENT=production` for secure operation.
 
 ## Quick Setup
