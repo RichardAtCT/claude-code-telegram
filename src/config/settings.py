@@ -22,7 +22,6 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.utils.paths import is_relative_to
 from src.utils.constants import (
     DEFAULT_CLAUDE_MAX_COST_PER_USER,
     DEFAULT_CLAUDE_MAX_TURNS,
@@ -35,6 +34,7 @@ from src.utils.constants import (
     DEFAULT_RATE_LIMIT_WINDOW,
     DEFAULT_SESSION_TIMEOUT_HOURS,
 )
+from src.utils.paths import is_relative_to
 
 
 class Settings(BaseSettings):
@@ -50,7 +50,9 @@ class Settings(BaseSettings):
     telegram_bot_username: str = Field(..., description="Bot username without @")
 
     # Security
-    approved_directory: Path = Field(..., description="Base directory for projects")
+    approved_directory: Optional[Path] = Field(
+        None, description="Base directory for projects"
+    )
     approved_directories_str: Optional[str] = Field(
         None,
         description="Comma-separated list of approved directories "
@@ -279,8 +281,10 @@ class Settings(BaseSettings):
 
     @field_validator("approved_directory")
     @classmethod
-    def validate_approved_directory(cls, v: Any) -> Path:
+    def validate_approved_directory(cls, v: Any) -> Optional[Path]:
         """Ensure approved directory exists and is absolute."""
+        if v is None:
+            return None
         if isinstance(v, str):
             v = Path(v)
 
@@ -407,6 +411,10 @@ class Settings(BaseSettings):
         # Validation errors here surface immediately (not lazily on first access).
         self._approved_directories_cache = self._parse_approved_directories()
 
+        # Backfill approved_directory from first approved directory
+        if self.approved_directory is None:
+            self.approved_directory = self._approved_directories_cache[0]
+
         return self
 
     def _parse_approved_directories(self) -> List[Path]:
@@ -430,6 +438,10 @@ class Settings(BaseSettings):
                     directories.append(path)
             if directories:
                 return directories
+        if self.approved_directory is None:
+            raise ValueError(
+                "Either APPROVED_DIRECTORY or APPROVED_DIRECTORIES must be set"
+            )
         return [self.approved_directory]
 
     @property
@@ -470,6 +482,15 @@ class Settings(BaseSettings):
     def approved_directories(self) -> List[Path]:
         """Return the cached, validated list of approved directories."""
         return self._approved_directories_cache
+
+    @property
+    def approved_directory_path(self) -> Path:
+        """Return the approved directory, ensuring one is configured."""
+        if self.approved_directory is None:
+            raise ValueError(
+                "Either APPROVED_DIRECTORY or APPROVED_DIRECTORIES must be set"
+            )
+        return self.approved_directory
 
     def get_approved_root_for_path(self, path: Path) -> Optional[Path]:
         """Return the approved root containing path, or None."""
