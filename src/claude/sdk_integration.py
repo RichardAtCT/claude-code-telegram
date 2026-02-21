@@ -29,6 +29,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 from claude_agent_sdk._errors import MessageParseError
+from claude_agent_sdk._internal.message_parser import parse_message
 
 from ..config.settings import Settings
 from .exceptions import (
@@ -208,15 +209,18 @@ class ClaudeSDKManager:
             async def _run_client() -> None:
                 async with ClaudeSDKClient(options) as client:
                     await client.query(prompt)
-                    response_iter = client.receive_response()
-                    while True:
+
+                    # Iterate over raw messages and parse them ourselves
+                    # so that MessageParseError (e.g. from rate_limit_event)
+                    # doesn't kill the underlying async generator. When
+                    # parse_message raises inside the SDK's receive_messages()
+                    # generator, Python terminates that generator permanently,
+                    # causing us to lose all subsequent messages including
+                    # the ResultMessage.
+                    async for raw_data in client._query.receive_messages():
                         try:
-                            message = await response_iter.__anext__()
-                        except StopAsyncIteration:
-                            break
+                            message = parse_message(raw_data)
                         except MessageParseError as e:
-                            # Skip unknown message types (e.g. rate_limit_event)
-                            # rather than failing the entire request
                             logger.debug(
                                 "Skipping unparseable message",
                                 error=str(e),
@@ -224,6 +228,9 @@ class ClaudeSDKManager:
                             continue
 
                         messages.append(message)
+
+                        if isinstance(message, ResultMessage):
+                            break
 
                         # Handle streaming callback
                         if stream_callback:
