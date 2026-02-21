@@ -16,7 +16,7 @@ __pycache__
 tests
 docs
 *.md
-!pyproject.toml
+!README.md
 Makefile
 docker-compose.yml
 Dockerfile
