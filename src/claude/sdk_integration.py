@@ -28,6 +28,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+from claude_agent_sdk._errors import MessageParseError
 
 from ..config.settings import Settings
 from .exceptions import (
@@ -207,7 +208,21 @@ class ClaudeSDKManager:
             async def _run_client() -> None:
                 async with ClaudeSDKClient(options) as client:
                     await client.query(prompt)
-                    async for message in client.receive_response():
+                    response_iter = client.receive_response()
+                    while True:
+                        try:
+                            message = await response_iter.__anext__()
+                        except StopAsyncIteration:
+                            break
+                        except MessageParseError as e:
+                            # Skip unknown message types (e.g. rate_limit_event)
+                            # rather than failing the entire request
+                            logger.debug(
+                                "Skipping unparseable message",
+                                error=str(e),
+                            )
+                            continue
+
                         messages.append(message)
 
                         # Handle streaming callback

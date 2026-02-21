@@ -7,7 +7,15 @@ import structlog
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ...claude.exceptions import ClaudeToolValidationError
+from ...claude.exceptions import (
+    ClaudeError,
+    ClaudeMCPError,
+    ClaudeParsingError,
+    ClaudeProcessError,
+    ClaudeSessionError,
+    ClaudeTimeoutError,
+    ClaudeToolValidationError,
+)
 from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.rate_limiter import RateLimiter
@@ -84,24 +92,105 @@ async def _format_progress_update(update_obj) -> Optional[str]:
     return None
 
 
-def _format_error_message(error_str: str) -> str:
-    """Format error messages for user-friendly display."""
-    if "usage limit reached" in error_str.lower():
-        # Usage limit error - already user-friendly from integration.py
-        return error_str
-    elif "tool not allowed" in error_str.lower():
-        # Tool validation error - already handled in facade.py
-        return error_str
-    elif "no conversation found" in error_str.lower():
+def _format_error_message(error: Exception | str) -> str:
+    """Format error messages for user-friendly display.
+
+    Accepts an exception object (preferred) or a string for backward
+    compatibility.  When an exception is provided, the error type is used
+    to produce a specific, actionable message.
+    """
+    # Normalise: keep both the object and a string representation.
+    if isinstance(error, str):
+        error_str = error
+        error_obj: Exception | None = None
+    else:
+        error_str = str(error)
+        error_obj = error
+
+    # --- Dispatch on exception type first (most specific) ---
+
+    if isinstance(error_obj, ClaudeTimeoutError):
         return (
-            "🔄 <b>Session Not Found</b>\n\n"
-            "The Claude session could not be found or has expired.\n\n"
+            "⏰ <b>Request Timeout</b>\n\n"
+            f"{escape_html(error_str)}\n\n"
+            "<b>What you can do:</b>\n"
+            "• Try breaking your request into smaller parts\n"
+            "• Avoid asking for very large file operations in one go\n"
+            "• Try again — transient slowdowns happen"
+        )
+
+    if isinstance(error_obj, ClaudeMCPError):
+        server_hint = ""
+        if error_obj.server_name:
+            server_hint = f" (<code>{escape_html(error_obj.server_name)}</code>)"
+        return (
+            f"🔌 <b>MCP Server Error</b>{server_hint}\n\n"
+            f"{escape_html(error_str)}\n\n"
+            "<b>What you can do:</b>\n"
+            "• Check that the MCP server is running and reachable\n"
+            "• Verify <code>MCP_CONFIG_PATH</code> points to a valid config\n"
+            "• Ask the administrator to check MCP server logs"
+        )
+
+    if isinstance(error_obj, ClaudeParsingError):
+        return (
+            "📄 <b>Response Parsing Error</b>\n\n"
+            f"Claude returned a response that could not be parsed:\n"
+            f"<code>{escape_html(error_str[:300])}</code>\n\n"
+            "<b>What you can do:</b>\n"
+            "• Try your request again\n"
+            "• Rephrase your prompt if the problem persists"
+        )
+
+    if isinstance(error_obj, ClaudeSessionError):
+        return (
+            "🔄 <b>Session Error</b>\n\n"
+            f"{escape_html(error_str)}\n\n"
             "<b>What you can do:</b>\n"
             "• Use /new to start a fresh session\n"
             "• Try your request again\n"
             "• Use /status to check your current session"
         )
-    elif "rate limit" in error_str.lower():
+
+    if isinstance(error_obj, ClaudeProcessError):
+        return _format_process_error(error_str)
+
+    # ClaudeToolValidationError (and any future ClaudeError subtypes not
+    # explicitly handled above) — preserve their existing message as-is
+    # rather than downgrading to a generic "process error".
+    if isinstance(error_obj, ClaudeError):
+        safe_error = escape_html(error_str)
+        if len(safe_error) > 500:
+            safe_error = safe_error[:500] + "..."
+        return (
+            f"❌ <b>Claude Error</b>\n\n"
+            f"{safe_error}\n\n"
+            f"Try again or use /new to start a fresh session."
+        )
+
+    # --- Fall back to keyword matching (for string-only callers) --------
+    # These patterns match the known error prefixes produced by
+    # sdk_integration.py and facade.py, NOT arbitrary user content.
+
+    error_lower = error_str.lower()
+
+    if "usage limit reached" in error_lower or "usage limit" in error_lower:
+        return error_str  # Already user-friendly
+
+    if "tool not allowed" in error_lower:
+        return error_str  # Already formatted by facade.py
+
+    if "no conversation found" in error_lower:
+        return (
+            "🔄 <b>Session Not Found</b>\n\n"
+            "The previous Claude session could not be found or has expired.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Use /new to start a fresh session\n"
+            "• Try your request again\n"
+            "• Use /status to check your current session"
+        )
+
+    if "rate limit" in error_lower:
         return (
             "⏱️ <b>Rate Limit Reached</b>\n\n"
             "Too many requests in a short time period.\n\n"
@@ -110,28 +199,94 @@ def _format_error_message(error_str: str) -> str:
             "• Use simpler requests\n"
             "• Check your current usage with /status"
         )
-    elif "timeout" in error_str.lower():
+
+    if "timed out after" in error_lower or "claude sdk timed out" in error_lower:
         return (
             "⏰ <b>Request Timeout</b>\n\n"
-            "Your request took too long to process and timed out.\n\n"
+            f"{escape_html(error_str)}\n\n"
             "<b>What you can do:</b>\n"
-            "• Try breaking down your request into smaller parts\n"
-            "• Use simpler commands\n"
+            "• Try breaking your request into smaller parts\n"
+            "• Avoid asking for very large file operations in one go\n"
+            "• Try again — transient slowdowns happen"
+        )
+
+    if "overloaded" in error_lower:
+        return (
+            "🏗️ <b>Claude is Overloaded</b>\n\n"
+            "The Claude API is currently experiencing high demand.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Wait a moment and try again\n"
+            "• Shorter prompts may succeed more easily"
+        )
+
+    if "invalid api key" in error_lower or "authentication_error" in error_lower:
+        return (
+            "🔑 <b>API Authentication Error</b>\n\n"
+            "The API key used to connect to Claude is invalid or expired.\n\n"
+            "<b>What you can do:</b>\n"
+            "• Ask the administrator to verify the "
+            "<code>ANTHROPIC_API_KEY</code> setting\n"
+            "• Check that the API key has not been revoked"
+        )
+
+    # Match known SDK prefixes: "Failed to connect to Claude: ..."
+    # and "MCP server connection failed: ..."
+    if error_lower.startswith("failed to connect to claude"):
+        return (
+            "🌐 <b>Connection Error</b>\n\n"
+            f"Could not connect to Claude:\n"
+            f"<code>{escape_html(error_str[:300])}</code>\n\n"
+            "<b>What you can do:</b>\n"
+            "• Check your network / firewall settings\n"
+            "• Verify the Claude CLI is installed and accessible\n"
             "• Try again in a moment"
         )
-    else:
-        # Generic error handling
-        # Escape HTML special characters in error message
-        safe_error = escape_html(error_str)
-        # Truncate very long errors
-        if len(safe_error) > 200:
-            safe_error = safe_error[:200] + "..."
 
+    # Match known SDK prefix: "Claude Code not found. ..."
+    if error_lower.startswith("claude code not found"):
         return (
-            f"❌ <b>Claude Code Error</b>\n\n"
-            f"Failed to process your request: {safe_error}\n\n"
-            f"Please try again or contact the administrator if the problem persists."
+            "🔍 <b>Claude CLI Not Found</b>\n\n"
+            f"{escape_html(error_str)}\n\n"
+            "<b>What you can do:</b>\n"
+            "• Ensure Claude Code is installed: "
+            "<code>npm install -g @anthropic-ai/claude-code</code>\n"
+            "• Set the <code>CLAUDE_CLI_PATH</code> environment variable"
         )
+
+    # Match known SDK prefixes: "MCP server error: ..." and
+    # "MCP server connection failed: ..."
+    if error_lower.startswith("mcp server"):
+        return (
+            "🔌 <b>MCP Server Error</b>\n\n"
+            f"{escape_html(error_str)}\n\n"
+            "<b>What you can do:</b>\n"
+            "• Check that the MCP server is running\n"
+            "• Verify MCP configuration\n"
+            "• Ask the administrator to check MCP server logs"
+        )
+
+    # --- No match — show the raw error as-is ---
+    safe_error = escape_html(error_str)
+    if len(safe_error) > 500:
+        safe_error = safe_error[:500] + "..."
+
+    return f"❌ {safe_error}"
+
+
+def _format_process_error(error_str: str) -> str:
+    """Format a Claude process/SDK error with the actual details."""
+    safe_error = escape_html(error_str)
+    if len(safe_error) > 500:
+        safe_error = safe_error[:500] + "..."
+
+    return (
+        f"❌ <b>Claude Process Error</b>\n\n"
+        f"{safe_error}\n\n"
+        "<b>What you can do:</b>\n"
+        "• Try your request again\n"
+        "• Use /new to start a fresh session if the problem persists\n"
+        "• Check /status for current session state"
+    )
 
 
 async def handle_text_message(
@@ -265,11 +420,10 @@ async def handle_text_message(
             ]
         except Exception as e:
             logger.error("Claude integration failed", error=str(e), user_id=user_id)
-            # Format error and create FormattedMessage
             from ..utils.formatting import FormattedMessage
 
             formatted_messages = [
-                FormattedMessage(_format_error_message(str(e)), parse_mode="HTML")
+                FormattedMessage(_format_error_message(e), parse_mode="HTML")
             ]
 
         # Delete progress message
@@ -289,10 +443,10 @@ async def handle_text_message(
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
 
-            except Exception as e:
+            except Exception as send_err:
                 logger.warning(
                     "Failed to send HTML response, retrying as plain text",
-                    error=str(e),
+                    error=str(send_err),
                     message_index=i,
                 )
                 try:
@@ -303,13 +457,16 @@ async def handle_text_message(
                             update.message.message_id if i == 0 else None
                         ),
                     )
-                except Exception as plain_text_error:
+                except Exception as plain_err:
                     logger.error(
                         "Failed to send plain text fallback response",
-                        error=str(plain_text_error),
+                        error=str(plain_err),
                     )
+                    # Include what actually went wrong instead of a generic message
                     await update.message.reply_text(
-                        "❌ Failed to send response. Please try again.",
+                        f"Failed to deliver response "
+                        f"(Telegram error: {str(plain_err)[:150]}). "
+                        f"Please try again.",
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
@@ -382,8 +539,7 @@ async def handle_text_message(
         except Exception as delete_error:
             logger.debug("Failed to delete progress message", error=str(delete_error))
 
-        error_msg = f"❌ <b>Error processing message</b>\n\n{escape_html(str(e))}"
-        await update.message.reply_text(error_msg, parse_mode="HTML")
+        await update.message.reply_text(_format_error_message(e), parse_mode="HTML")
 
         # Log failed processing
         if audit_logger:
@@ -597,7 +753,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         except Exception as e:
             await claude_progress_msg.edit_text(
-                _format_error_message(str(e)), parse_mode="HTML"
+                _format_error_message(e), parse_mode="HTML"
             )
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
 
@@ -721,7 +877,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
             except Exception as e:
                 await claude_progress_msg.edit_text(
-                    _format_error_message(str(e)), parse_mode="HTML"
+                    _format_error_message(e), parse_mode="HTML"
                 )
                 logger.error(
                     "Claude image processing failed", error=str(e), user_id=user_id
@@ -730,7 +886,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except Exception as e:
             logger.error("Image processing failed", error=str(e), user_id=user_id)
             await update.message.reply_text(
-                f"❌ <b>Error processing image</b>\n\n{escape_html(str(e))}",
+                _format_error_message(e),
                 parse_mode="HTML",
             )
     else:
