@@ -333,11 +333,11 @@ make docker-stop      # Stop the bot
 make docker-build && make docker-run
 ```
 
-The compose file reads your `.env` file automatically, persists the SQLite database in a named volume (`bot-data`), and bind-mounts your project directory via the `HOST_PROJECT_DIR` env var. Set it in `.env`:
+The compose file reads your `.env` file automatically, persists the SQLite database in a named volume (`bot-data`), and bind-mounts your `APPROVED_DIRECTORY` into the container. The entrypoint automatically remaps the path so your existing `.env` works without changes:
 
 ```bash
-HOST_PROJECT_DIR=/path/to/your/project
-APPROVED_DIRECTORY=/home/botuser/workspace/project
+# Same .env works for both source and Docker installs
+APPROVED_DIRECTORY=/Users/yourname/projects
 ```
 
 ### Using a specific version

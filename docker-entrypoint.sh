@@ -2,33 +2,45 @@
 set -e
 
 # ---------------------------------------------------------------------------
-# Auto-discover Claude CLI credentials and make them available to the bot.
+# Docker entrypoint for Claude Code Telegram Bot
 #
+# 1. Remap APPROVED_DIRECTORY to the container mount path if needed
+# 2. Auto-discover Claude CLI credentials
+# ---------------------------------------------------------------------------
+
+CONTAINER_PROJECT_DIR="/home/botuser/workspace/project"
+
+# --- APPROVED_DIRECTORY remapping ---
+# Users set APPROVED_DIRECTORY to their host path (e.g. /Users/me/projects).
+# docker-compose mounts that host path at $CONTAINER_PROJECT_DIR.
+# If the configured path doesn't exist in the container, remap it.
+if [ -n "$APPROVED_DIRECTORY" ] && [ ! -d "$APPROVED_DIRECTORY" ]; then
+    if [ -d "$CONTAINER_PROJECT_DIR" ]; then
+        echo "Remapping APPROVED_DIRECTORY: $APPROVED_DIRECTORY -> $CONTAINER_PROJECT_DIR"
+        export APPROVED_DIRECTORY="$CONTAINER_PROJECT_DIR"
+    fi
+elif [ -z "$APPROVED_DIRECTORY" ]; then
+    export APPROVED_DIRECTORY="$CONTAINER_PROJECT_DIR"
+fi
+
+# --- Claude CLI credential discovery ---
 # Lookup order (first match wins):
 #   1. CLAUDE_CONFIG_DIR env var            (explicit override)
 #   2. /host-claude-config                  (docker-compose bind mount)
 #   3. ~/.claude                            (already in place)
-#
-# When a source is found outside ~/.claude we symlink it so the SDK and CLI
-# always find credentials at the canonical path.
-# ---------------------------------------------------------------------------
-
 TARGET="$HOME/.claude"
 
 resolve_config() {
-    # 1. Explicit override via env var
     if [ -n "$CLAUDE_CONFIG_DIR" ] && [ -d "$CLAUDE_CONFIG_DIR" ]; then
         echo "$CLAUDE_CONFIG_DIR"
         return
     fi
 
-    # 2. Dedicated mount point (set up in docker-compose)
     if [ -d "/host-claude-config" ] && [ "$(ls -A /host-claude-config 2>/dev/null)" ]; then
         echo "/host-claude-config"
         return
     fi
 
-    # 3. Already present at canonical path
     if [ -d "$TARGET" ] && [ "$(ls -A "$TARGET" 2>/dev/null)" ]; then
         echo "$TARGET"
         return
@@ -40,7 +52,6 @@ resolve_config() {
 SOURCE=$(resolve_config)
 
 if [ -n "$SOURCE" ] && [ "$SOURCE" != "$TARGET" ]; then
-    # Remove empty placeholder that Docker may have created
     if [ -d "$TARGET" ] && [ ! -L "$TARGET" ] && [ -z "$(ls -A "$TARGET" 2>/dev/null)" ]; then
         rmdir "$TARGET" 2>/dev/null || true
     fi
