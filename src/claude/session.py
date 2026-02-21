@@ -102,8 +102,16 @@ class SessionStorage:
         """Save session to storage."""
         raise NotImplementedError
 
-    async def load_session(self, session_id: str) -> Optional[ClaudeSession]:
-        """Load session from storage."""
+    async def load_session(
+        self, session_id: str, user_id: int
+    ) -> Optional[ClaudeSession]:
+        """Load session from storage.
+
+        Args:
+            session_id: The session ID to load.
+            user_id: The requesting user's ID. Only sessions owned by this
+                     user will be returned (defense-in-depth).
+        """
         raise NotImplementedError
 
     async def delete_session(self, session_id: str) -> None:
@@ -131,10 +139,20 @@ class InMemorySessionStorage(SessionStorage):
         self.sessions[session.session_id] = session
         logger.debug("Session saved to memory", session_id=session.session_id)
 
-    async def load_session(self, session_id: str) -> Optional[ClaudeSession]:
-        """Load session from memory."""
+    async def load_session(
+        self, session_id: str, user_id: int
+    ) -> Optional[ClaudeSession]:
+        """Load session from memory, verifying ownership."""
         session = self.sessions.get(session_id)
         if session:
+            if session.user_id != user_id:
+                logger.warning(
+                    "Session ownership mismatch",
+                    session_id=session_id,
+                    session_owner=session.user_id,
+                    requesting_user=user_id,
+                )
+                return None
             logger.debug("Session loaded from memory", session_id=session_id)
         return session
 
@@ -181,13 +199,20 @@ class SessionManager:
         # Check for existing session
         if session_id and session_id in self.active_sessions:
             session = self.active_sessions[session_id]
-            if not session.is_expired(self.config.session_timeout_hours):
+            if session.user_id != user_id:
+                logger.warning(
+                    "Session ownership mismatch in active cache",
+                    session_id=session_id,
+                    session_owner=session.user_id,
+                    requesting_user=user_id,
+                )
+            elif not session.is_expired(self.config.session_timeout_hours):
                 logger.debug("Using active session", session_id=session_id)
                 return session
 
-        # Try to load from storage
+        # Try to load from storage (filtered by user_id)
         if session_id:
-            session = await self.storage.load_session(session_id)
+            session = await self.storage.load_session(session_id, user_id)
             if session and not session.is_expired(self.config.session_timeout_hours):
                 self.active_sessions[session_id] = session
                 logger.info("Loaded session from storage", session_id=session_id)
@@ -294,12 +319,27 @@ class SessionManager:
         """Get all sessions for a user."""
         return await self.storage.get_user_sessions(user_id)
 
-    async def get_session_info(self, session_id: str) -> Optional[Dict]:
-        """Get session information."""
+    async def get_session_info(self, session_id: str, user_id: int) -> Optional[Dict]:
+        """Get session information.
+
+        Args:
+            session_id: The session ID to look up.
+            user_id: The requesting user's ID. Only returns info for sessions
+                     owned by this user.
+        """
         session = self.active_sessions.get(session_id)
 
+        if session and session.user_id != user_id:
+            logger.warning(
+                "Session ownership mismatch in get_session_info",
+                session_id=session_id,
+                session_owner=session.user_id,
+                requesting_user=user_id,
+            )
+            session = None
+
         if not session:
-            session = await self.storage.load_session(session_id)
+            session = await self.storage.load_session(session_id, user_id)
 
         if session:
             return {

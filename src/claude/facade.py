@@ -333,9 +333,11 @@ class ClaudeIntegration:
             on_stream=on_stream,
         )
 
-    async def get_session_info(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session information."""
-        return await self.session_manager.get_session_info(session_id)
+    async def get_session_info(
+        self, session_id: str, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get session information (scoped to requesting user)."""
+        return await self.session_manager.get_session_info(session_id, user_id)
 
     async def get_user_sessions(self, user_id: int) -> List[Dict[str, Any]]:
         """Get all sessions for a user."""
