@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     claude_max_cost_per_user: float = Field(
         DEFAULT_CLAUDE_MAX_COST_PER_USER, description="Max cost per user"
     )
+    # NOTE: When changing this list, also update docs/tools.md,
+    # docs/configuration.md, .env.example,
+    # src/claude/facade.py (_get_admin_instructions),
+    # and src/bot/orchestrator.py (_TOOL_ICONS).
     claude_allowed_tools: Optional[List[str]] = Field(
         default=[
             "Read",
@@ -94,6 +98,7 @@ class Settings(BaseSettings):
             "Grep",
             "LS",
             "Task",
+            "TaskOutput",
             "MultiEdit",
             "NotebookRead",
             "NotebookEdit",

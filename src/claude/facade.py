@@ -399,6 +399,7 @@ class ClaudeIntegration:
                 "Grep",
                 "LS",
                 "Task",
+                "TaskOutput",
                 "MultiEdit",
                 "NotebookRead",
                 "NotebookEdit",

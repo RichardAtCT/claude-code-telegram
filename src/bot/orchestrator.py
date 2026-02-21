@@ -83,6 +83,7 @@ _TOOL_ICONS: Dict[str, str] = {
     "Grep": "\U0001f50d",
     "LS": "\U0001f4c2",
     "Task": "\U0001f9e0",
+    "TaskOutput": "\U0001f9e0",
     "WebFetch": "\U0001f310",
     "WebSearch": "\U0001f310",
     "NotebookRead": "\U0001f4d3",
