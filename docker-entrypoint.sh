@@ -69,6 +69,15 @@ elif [ -z "$SOURCE" ]; then
     fi
 fi
 
+# Copy ~/.claude.json from the host-mounted config directory if available.
+# The host's ~/.claude.json must be copied into ~/.claude/ first (the Makefile
+# docker-run target handles this automatically).
+if [ -f "/host-claude-config/.claude.json" ] && [ ! -e "/home/botuser/.claude.json" ]; then
+    cp "/host-claude-config/.claude.json" "/home/botuser/.claude.json"
+    chown botuser:botuser "/home/botuser/.claude.json"
+    echo "Copied Claude config from /host-claude-config/.claude.json"
+fi
+
 # --- Fix volume permissions and drop to non-root ---
 # Docker named volumes are root-owned on first creation.  Ensure botuser
 # can write to the workspace (for the SQLite data dir, etc.).

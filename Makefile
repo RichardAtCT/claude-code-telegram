@@ -115,6 +115,9 @@ docker-rebuild:  ## Rebuild Docker image from scratch (no cache)
 	docker build --no-cache -t claude-code-telegram:$(CURRENT_VERSION) -t claude-code-telegram:latest .
 
 docker-run:  ## Start bot via Docker Compose (detached)
+	@# Copy ~/.claude.json into ~/.claude/ so the container can access it
+	@# via the existing directory mount (single-file Docker mounts are unreliable).
+	@[ -f "$(HOME)/.claude.json" ] && cp "$(HOME)/.claude.json" "$(HOME)/.claude/.claude.json" 2>/dev/null || true
 	docker compose up -d
 	@echo "Bot started. Use 'make docker-logs' to follow output."
 
