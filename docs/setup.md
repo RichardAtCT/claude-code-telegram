@@ -5,9 +5,9 @@
 ### 1. Prerequisites
 
 - **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
-- **Poetry** -- Modern Python dependency management
 - **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
 - **Claude Authentication** -- Choose one method below
+- **For source installs:** [Poetry](https://python-poetry.org/docs/#installation)
 
 ### 2. Claude Authentication Setup
 
@@ -43,15 +43,20 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
 
 Choose your preferred installation method:
 
-#### Option A: pip from a release tag
+#### Option A: Install from a release tag (Recommended)
 
 ```bash
-# Specific version
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.2.0
+# Using uv (recommended — fast Rust-based installer)
+uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
 
-# Latest stable
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+# Or using pip
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+
+# Or always track the latest stable release
+uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```
+
+> **Don't have uv?** Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
 
 #### Option B: From source (for development)
 

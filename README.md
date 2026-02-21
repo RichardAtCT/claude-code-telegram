@@ -34,7 +34,6 @@ Bot: Running pytest...
 ### 1. Prerequisites
 
 - **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
-- **Poetry** -- Modern Python dependency management
 - **Claude Code CLI** -- [Install from here](https://claude.ai/code)
 - **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
 
@@ -42,14 +41,17 @@ Bot: Running pytest...
 
 Choose your preferred method:
 
-#### Option A: pip install from a release tag
+#### Option A: Install from a release tag (Recommended)
 
 ```bash
-# Install a specific version
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.2.0
+# Using uv (recommended — fast Rust-based installer)
+uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+
+# Or using pip
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
 
 # Or always track the latest stable release
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```
 
 #### Option B: From source (for development)
@@ -57,7 +59,7 @@ pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```bash
 git clone https://github.com/RichardAtCT/claude-code-telegram.git
 cd claude-code-telegram
-make dev
+make dev  # requires Poetry
 ```
 
 > **Note:** Always install from a tagged release (not `main`) for stability. See [Releases](https://github.com/RichardAtCT/claude-code-telegram/releases) for available versions.
