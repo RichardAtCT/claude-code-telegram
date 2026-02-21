@@ -205,7 +205,7 @@ async def test_sync_threads_reloads_registry_from_yaml(thread_settings, monkeypa
 
     load_mock.assert_called_once_with(
         config_path=settings.projects_config_path,
-        approved_directory=settings.approved_directory,
+        approved_directories=settings.approved_directories,
     )
     assert manager.registry is new_registry
     assert context.bot_data["project_registry"] is new_registry

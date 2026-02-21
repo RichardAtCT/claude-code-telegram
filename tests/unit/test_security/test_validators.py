@@ -349,3 +349,97 @@ class TestSecurityValidator:
         assert "  " not in sanitized  # No double spaces
         assert not sanitized.startswith(" ")  # No leading space
         assert not sanitized.endswith(" ")  # No trailing space
+
+
+class TestSecurityValidatorMultipleDirectories:
+    """Test security validation with multiple approved directories."""
+
+    @pytest.fixture
+    def temp_dirs(self):
+        """Create temporary approved directories for testing."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            dir1 = base / "approved1"
+            dir2 = base / "approved2"
+            dir1.mkdir()
+            dir2.mkdir()
+            yield dir1, dir2
+
+    def test_validator_with_multiple_directories(self, temp_dirs):
+        """Test validator initialization with multiple directories."""
+        dir1, dir2 = temp_dirs
+        validator = SecurityValidator(approved_directories=[dir1, dir2])
+
+        assert len(validator.approved_directories) == 2
+        assert dir1.resolve() in validator.approved_directories
+        assert dir2.resolve() in validator.approved_directories
+        assert validator.approved_directory == dir1.resolve()
+
+    def test_validator_requires_directory_parameter(self):
+        """Validator should require either approved_directory or approved_directories."""
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator()
+
+        assert "must be provided" in str(exc_info.value)
+
+    def test_path_within_first_directory(self, temp_dirs):
+        """Test path validation within first approved directory."""
+        dir1, dir2 = temp_dirs
+        (dir1 / "project").mkdir()
+
+        validator = SecurityValidator(approved_directories=[dir1, dir2])
+        valid, path, error = validator.validate_path("project", dir1)
+
+        assert valid is True
+        assert path == (dir1 / "project").resolve()
+        assert error is None
+
+    def test_path_within_second_directory(self, temp_dirs):
+        """Test path validation within second approved directory."""
+        dir1, dir2 = temp_dirs
+        (dir2 / "project").mkdir()
+
+        validator = SecurityValidator(approved_directories=[dir1, dir2])
+        valid, path, error = validator.validate_path("project", dir2)
+
+        assert valid is True
+        assert path == (dir2 / "project").resolve()
+        assert error is None
+
+    def test_path_outside_all_directories(self, temp_dirs):
+        """Test rejection of paths outside all approved directories."""
+        dir1, dir2 = temp_dirs
+
+        validator = SecurityValidator(
+            approved_directories=[dir1, dir2], disable_security_patterns=True
+        )
+        valid, path, error = validator.validate_path("../outside", dir1)
+
+        assert valid is False
+        assert error is not None
+        assert "outside approved directories" in error
+
+    def test_security_summary_includes_all_directories(self, temp_dirs):
+        """Test that security summary includes all approved directories."""
+        dir1, dir2 = temp_dirs
+        validator = SecurityValidator(approved_directories=[dir1, dir2])
+
+        summary = validator.get_security_summary()
+
+        assert "approved_directories" in summary
+        assert len(summary["approved_directories"]) == 2
+        assert str(dir1.resolve()) in summary["approved_directories"]
+        assert str(dir2.resolve()) in summary["approved_directories"]
+
+    def test_backward_compatibility_single_directory(self, temp_dirs):
+        """Test backward compatibility with single approved_directory parameter."""
+        dir1, _ = temp_dirs
+        (dir1 / "project").mkdir()
+
+        validator = SecurityValidator(approved_directory=dir1)
+
+        assert len(validator.approved_directories) == 1
+        assert validator.approved_directory == dir1.resolve()
+
+        valid, path, error = validator.validate_path("project", dir1)
+        assert valid is True

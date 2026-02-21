@@ -49,6 +49,7 @@ def load_config(
             telegram_bot_token_set=bool(os.getenv("TELEGRAM_BOT_TOKEN")),
             telegram_bot_username=os.getenv("TELEGRAM_BOT_USERNAME"),
             approved_directory=os.getenv("APPROVED_DIRECTORY"),
+            approved_directories=os.getenv("APPROVED_DIRECTORIES"),
             debug_mode=os.getenv("DEBUG"),
         )
 
@@ -66,7 +67,7 @@ def load_config(
             "Configuration loaded successfully",
             environment=env,
             debug=settings.debug,
-            approved_directory=str(settings.approved_directory),
+            approved_directories=[str(path) for path in settings.approved_directories],
             features_enabled=_get_enabled_features_summary(settings),
         )
 
@@ -105,10 +106,11 @@ def _validate_config(settings: Settings) -> None:
     """Perform additional runtime validation."""
     # Check file system permissions
     try:
-        if not os.access(settings.approved_directory, os.R_OK | os.X_OK):
-            raise InvalidConfigError(
-                f"Cannot access approved directory: {settings.approved_directory}"
-            )
+        for approved_directory in settings.approved_directories:
+            if not os.access(approved_directory, os.R_OK | os.X_OK):
+                raise InvalidConfigError(
+                    f"Cannot access approved directory: {approved_directory}"
+                )
     except OSError as e:
         raise InvalidConfigError(f"Error accessing approved directory: {e}") from e
 
