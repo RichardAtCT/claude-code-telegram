@@ -73,30 +73,33 @@ version:  ## Show current version
 	@poetry version -s
 
 bump-patch:  ## Bump patch version, commit, and tag
-	poetry version patch
-	$(eval NEW_VERSION := $(shell poetry version -s))
-	git add pyproject.toml
-	git commit -m "release: v$(NEW_VERSION)"
-	git tag "v$(NEW_VERSION)"
-	@echo "Bumped to v$(NEW_VERSION). Run 'make release' to push the tag."
+	poetry version patch && \
+	NEW_VERSION=$$(poetry version -s) && \
+	git add pyproject.toml && \
+	git commit -m "release: v$$NEW_VERSION" && \
+	git tag "v$$NEW_VERSION" && \
+	git push && git push origin "v$$NEW_VERSION" && \
+	echo "Released v$$NEW_VERSION. Tag pushed — release workflow will run on GitHub."
 
 bump-minor:  ## Bump minor version, commit, and tag
-	poetry version minor
-	$(eval NEW_VERSION := $(shell poetry version -s))
-	git add pyproject.toml
-	git commit -m "release: v$(NEW_VERSION)"
-	git tag "v$(NEW_VERSION)"
-	@echo "Bumped to v$(NEW_VERSION). Run 'make release' to push the tag."
+	poetry version minor && \
+	NEW_VERSION=$$(poetry version -s) && \
+	git add pyproject.toml && \
+	git commit -m "release: v$$NEW_VERSION" && \
+	git tag "v$$NEW_VERSION" && \
+	git push && git push origin "v$$NEW_VERSION" && \
+	echo "Released v$$NEW_VERSION. Tag pushed — release workflow will run on GitHub."
 
 bump-major:  ## Bump major version, commit, and tag
-	poetry version major
-	$(eval NEW_VERSION := $(shell poetry version -s))
-	git add pyproject.toml
-	git commit -m "release: v$(NEW_VERSION)"
-	git tag "v$(NEW_VERSION)"
-	@echo "Bumped to v$(NEW_VERSION). Run 'make release' to push the tag."
+	poetry version major && \
+	NEW_VERSION=$$(poetry version -s) && \
+	git add pyproject.toml && \
+	git commit -m "release: v$$NEW_VERSION" && \
+	git tag "v$$NEW_VERSION" && \
+	git push && git push origin "v$$NEW_VERSION" && \
+	echo "Released v$$NEW_VERSION. Tag pushed — release workflow will run on GitHub."
 
 release:  ## Push the current version tag to trigger the release workflow
-	$(eval CURRENT_VERSION := $(shell poetry version -s))
-	git push origin "v$(CURRENT_VERSION)"
-	@echo "Pushed v$(CURRENT_VERSION). Release workflow will run on GitHub."
+	CURRENT_VERSION=$$(poetry version -s) && \
+	git push && git push origin "v$$CURRENT_VERSION" && \
+	echo "Pushed v$$CURRENT_VERSION. Release workflow will run on GitHub."

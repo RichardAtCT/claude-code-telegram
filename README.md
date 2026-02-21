@@ -338,10 +338,9 @@ The version is defined once in `pyproject.toml` and read at runtime via `importl
 make bump-patch    # 1.2.0 -> 1.2.1 (bug fixes)
 make bump-minor    # 1.2.0 -> 1.3.0 (new features)
 make bump-major    # 1.2.0 -> 2.0.0 (breaking changes)
-make release       # Push the tag to trigger CI release
 ```
 
-This creates a git tag, runs CI tests, and publishes a GitHub Release with auto-generated notes.
+Each command commits, tags, and pushes automatically, triggering CI tests and a GitHub Release with auto-generated notes.
 
 ### Contributing
 

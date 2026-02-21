@@ -33,7 +33,7 @@ jobs:
           key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry lock && poetry install
+        run: poetry install --no-interaction
 
       - name: Lint
         run: |
@@ -56,18 +56,6 @@ jobs:
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate release notes
-        id: notes
-        run: |
-          # Get the previous tag
-          PREV_TAG=$(git tag --sort=-version:refname | head -n 2 | tail -n 1)
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${GITHUB_REF#refs/tags/}" ]; then
-            echo "First release"
-            echo "NOTES=Initial release" >> "$GITHUB_OUTPUT"
-          else
-            echo "Generating changelog from $PREV_TAG to ${GITHUB_REF#refs/tags/}"
-          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

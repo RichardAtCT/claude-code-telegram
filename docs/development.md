@@ -384,16 +384,13 @@ The version is defined in a single place: `pyproject.toml`. At runtime, `src/__i
 ### Cutting a release
 
 ```bash
-# 1. Bump the version (choose one)
+# Bump the version (choose one) — commits, tags, and pushes automatically
 make bump-patch    # 1.2.0 -> 1.2.1
 make bump-minor    # 1.2.0 -> 1.3.0
 make bump-major    # 1.2.0 -> 2.0.0
-
-# 2. Push the tag to trigger the release workflow
-make release
 ```
 
-`make bump-*` runs `poetry version`, commits `pyproject.toml`, and creates a git tag (`v1.2.1`). `make release` pushes the tag to GitHub, which triggers the release workflow:
+`make bump-*` runs `poetry version`, commits `pyproject.toml`, creates a git tag, and pushes both to GitHub. The tag push triggers the release workflow:
 
 1. Runs the full lint + test suite
 2. Creates a GitHub Release with auto-generated release notes
