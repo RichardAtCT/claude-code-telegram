@@ -44,14 +44,14 @@ Choose your preferred method:
 #### Option A: Install from a release tag (Recommended)
 
 ```bash
-# Using uv (recommended — fast Rust-based installer)
-uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+# Using uv (recommended — installs in an isolated environment)
+uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
 
 # Or using pip
 pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
 
-# Or always track the latest stable release
-uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+# Track the latest stable release
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```
 
 #### Option B: From source (for development)

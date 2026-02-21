@@ -46,17 +46,17 @@ Choose your preferred installation method:
 #### Option A: Install from a release tag (Recommended)
 
 ```bash
-# Using uv (recommended — fast Rust-based installer)
-uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+# Using uv (recommended — installs in an isolated environment)
+uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
 
 # Or using pip
 pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
 
-# Or always track the latest stable release
-uv pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+# Track the latest stable release
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 ```
 
-> **Don't have uv?** Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh` or `pip install uv`.
+> **Don't have uv?** Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 
 #### Option B: From source (for development)
 
