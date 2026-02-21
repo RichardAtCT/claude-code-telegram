@@ -2,13 +2,12 @@
 
 import asyncio
 from dataclasses import dataclass
-from datetime import timedelta
 from time import monotonic
 from typing import Awaitable, Callable, Optional, TypeVar
 
 import structlog
 from telegram import Bot
-from telegram.error import RetryAfter, TelegramError
+from telegram.error import TelegramError
 
 from ..storage.models import ProjectThreadModel
 from ..storage.repositories import ProjectThreadRepository
@@ -116,7 +115,6 @@ class ProjectThreadManager:
                         chat_id=stale.chat_id,
                         message_thread_id=stale.message_thread_id,
                     ),
-                    operation="close_forum_topic",
                 )
                 result.closed += 1
             except TelegramError as e:
@@ -145,26 +143,12 @@ class ProjectThreadManager:
     async def _call_sync_api(
         self,
         call: Callable[[], Awaitable[T]],
-        *,
-        operation: str,
     ) -> T:
-        """Call Telegram sync API with pacing and one RetryAfter retry."""
+        """Call Telegram sync API with pacing."""
         async with self._sync_api_lock:
             await self._wait_for_sync_interval()
             self._last_sync_api_call_at = monotonic()
-            try:
-                return await call()
-            except RetryAfter as error:
-                retry_after_seconds = self._retry_after_seconds(error)
-                logger.warning(
-                    "Topic sync hit Telegram flood control; retrying once",
-                    operation=operation,
-                    retry_after_seconds=retry_after_seconds,
-                )
-                await asyncio.sleep(retry_after_seconds + 0.1)
-                await self._wait_for_sync_interval()
-                self._last_sync_api_call_at = monotonic()
-                return await call()
+            return await call()
 
     async def _wait_for_sync_interval(self) -> None:
         """Wait until minimum sync action interval is satisfied."""
@@ -178,14 +162,6 @@ class ProjectThreadManager:
         wait_time = self.sync_action_interval_seconds - elapsed
         if wait_time > 0:
             await asyncio.sleep(wait_time)
-
-    @staticmethod
-    def _retry_after_seconds(error: RetryAfter) -> float:
-        """Normalize RetryAfter payload to seconds."""
-        retry_after = error.retry_after
-        if isinstance(retry_after, timedelta):
-            return max(0.0, retry_after.total_seconds())
-        return max(0.0, float(retry_after))
 
     async def _sync_existing_mapping(
         self,
@@ -259,7 +235,6 @@ class ProjectThreadManager:
                 chat_id=chat_id,
                 name=project.name,
             ),
-            operation="create_forum_topic",
         )
 
         await self.repository.upsert_mapping(
@@ -285,7 +260,6 @@ class ProjectThreadManager:
                     chat_id=mapping.chat_id,
                     message_thread_id=mapping.message_thread_id,
                 ),
-                operation="reopen_forum_topic",
             )
             return "ok"
         except TelegramError as e:
@@ -309,7 +283,6 @@ class ProjectThreadManager:
                     chat_id=mapping.chat_id,
                     message_thread_id=mapping.message_thread_id,
                 ),
-                operation="reopen_forum_topic",
             )
             return "reopened"
         except TelegramError as e:
@@ -391,7 +364,6 @@ class ProjectThreadManager:
                     message_thread_id=mapping.message_thread_id,
                     name=target_name,
                 ),
-                operation="edit_forum_topic",
             )
             return "renamed"
         except TelegramError as e:
@@ -426,7 +398,6 @@ class ProjectThreadManager:
                     ),
                     parse_mode="HTML",
                 ),
-                operation="send_message",
             )
         except TelegramError as e:
             logger.warning(

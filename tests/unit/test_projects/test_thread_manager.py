@@ -474,10 +474,10 @@ async def test_sync_topics_applies_pacing_between_api_calls(
     sleep_mock.assert_awaited_once_with(0.5)
 
 
-async def test_sync_topics_retries_once_on_retry_after(
+async def test_sync_topics_does_not_retry_retry_after(
     tmp_path: Path, db_manager, monkeypatch
 ) -> None:
-    """RetryAfter should trigger one sleep and one retry."""
+    """RetryAfter should not be retried by thread manager (AIORateLimiter owns retries)."""
     approved = tmp_path / "projects"
     approved.mkdir()
 
@@ -491,48 +491,7 @@ async def test_sync_topics_retries_once_on_retry_after(
     )
 
     bot = AsyncMock()
-    bot.create_forum_topic = AsyncMock(
-        side_effect=[
-            RetryAfter(2),
-            SimpleNamespace(message_thread_id=888),
-        ]
-    )
-    bot.send_message = AsyncMock()
-
-    sleep_mock = AsyncMock()
-    monkeypatch.setattr(thread_manager_module.asyncio, "sleep", sleep_mock)
-
-    result = await manager.sync_topics(bot, chat_id=42)
-
-    assert result.created == 1
-    assert result.failed == 0
-    assert bot.create_forum_topic.await_count == 2
-    sleep_mock.assert_awaited_once_with(2.1)
-
-
-async def test_sync_topics_retry_after_retry_failure_counts_as_failed(
-    tmp_path: Path, db_manager, monkeypatch
-) -> None:
-    """If retry attempt fails, sync should count the project as failed."""
-    approved = tmp_path / "projects"
-    approved.mkdir()
-
-    config_file = _write_registry(tmp_path, approved, "app1")
-    registry = load_project_registry(config_file, approved)
-    repo = ProjectThreadRepository(db_manager)
-    manager = ProjectThreadManager(
-        registry,
-        repo,
-        sync_action_interval_seconds=0.0,
-    )
-
-    bot = AsyncMock()
-    bot.create_forum_topic = AsyncMock(
-        side_effect=[
-            RetryAfter(1),
-            RetryAfter(1),
-        ]
-    )
+    bot.create_forum_topic = AsyncMock(side_effect=RetryAfter(1))
     bot.send_message = AsyncMock()
 
     sleep_mock = AsyncMock()
@@ -542,5 +501,5 @@ async def test_sync_topics_retry_after_retry_failure_counts_as_failed(
 
     assert result.created == 0
     assert result.failed == 1
-    assert bot.create_forum_topic.await_count == 2
-    sleep_mock.assert_awaited_once_with(1.1)
+    assert bot.create_forum_topic.await_count == 1
+    sleep_mock.assert_not_awaited()
