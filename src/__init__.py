@@ -15,7 +15,7 @@ from pathlib import Path
 _pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
 try:
     with open(_pyproject, "rb") as _f:
-        __version__: str = tomllib.load(_f)["tool"]["poetry"]["version"]
+        __version__: str = tomllib.load(_f)["project"]["version"]
 except Exception:
     try:
         __version__ = _pkg_version("claude-code-telegram")
