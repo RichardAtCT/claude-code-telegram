@@ -13,7 +13,8 @@ services:
       - ${HOST_PROJECT_DIR:-.}:/home/botuser/workspace/project
       # Pass host Claude CLI credentials into the container (read-only)
       # Only needed when using CLI auth (USE_SDK=true without ANTHROPIC_API_KEY)
-      - ${HOME}/.claude:/home/botuser/.claude:ro
+      # Override with CLAUDE_CONFIG_DIR env var if credentials live elsewhere
+      - ${CLAUDE_CONFIG_DIR:-${HOME}/.claude}:/host-claude-config:ro
 
 volumes:
   bot-data:

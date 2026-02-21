@@ -30,6 +30,10 @@ COPY pyproject.toml ./
 # Install the project itself (for entry point and metadata)
 RUN pip install --no-cache-dir --no-deps .
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create a non-root user
 RUN useradd --create-home botuser
 USER botuser
@@ -38,4 +42,5 @@ USER botuser
 RUN mkdir -p /home/botuser/workspace
 WORKDIR /home/botuser/workspace
 
-ENTRYPOINT ["claude-telegram-bot"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["claude-telegram-bot"]
