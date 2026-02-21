@@ -1,18 +1,16 @@
-[tool.poetry]
+[project]
 name = "claude-code-telegram"
 version = "1.2.0"
 description = "Telegram bot for remote Claude Code access with comprehensive configuration management"
-authors = ["Richard Atkinson <richardatk01@gmail.com>"]
-license = "MIT"
 readme = "README.md"
-homepage = "https://github.com/richardatkinson/claude-code-telegram"
-repository = "https://github.com/richardatkinson/claude-code-telegram"
-documentation = "https://github.com/richardatkinson/claude-code-telegram/blob/main/docs/"
+license = "MIT"
+authors = [
+    {name = "Richard Atkinson", email = "richardatk01@gmail.com"},
+]
 keywords = ["telegram", "bot", "claude", "ai", "development", "remote", "coding"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -21,6 +19,22 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: System :: Shells",
 ]
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/richardatkinson/claude-code-telegram"
+Repository = "https://github.com/richardatkinson/claude-code-telegram"
+Documentation = "https://github.com/richardatkinson/claude-code-telegram/blob/main/docs/"
+
+[project.scripts]
+claude-telegram-bot = "src.main:run"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
 packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
@@ -38,13 +52,6 @@ fastapi = "^0.115.0"
 uvicorn = {version = "^0.34.0", extras = ["standard"]}
 apscheduler = "^3.10"
 PyYAML = "^6.0.2"
-
-[tool.poetry.scripts]
-claude-telegram-bot = "src.main:run"
-
-[build-system]
-requires = ["poetry-core>=2.0.0"]
-build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.0"
