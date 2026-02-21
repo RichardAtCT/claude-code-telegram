@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 
 import yaml
 
+from src.utils.paths import DIRECTORY_PARAM_ERROR, is_relative_to
+
 
 @dataclass(frozen=True)
 class ProjectDefinition:
@@ -40,7 +42,9 @@ class ProjectRegistry:
 
 
 def load_project_registry(
-    config_path: Path, approved_directory: Path
+    config_path: Path,
+    approved_directory: Optional[Path] = None,
+    approved_directories: Optional[List[Path]] = None,
 ) -> ProjectRegistry:
     """Load and validate project definitions from YAML."""
     if not config_path.exists():
@@ -56,7 +60,13 @@ def load_project_registry(
     if not isinstance(raw_projects, list) or not raw_projects:
         raise ValueError("Projects config must contain a non-empty 'projects' list")
 
-    approved_root = approved_directory.resolve()
+    if approved_directories:
+        approved_roots = [directory.resolve() for directory in approved_directories]
+    elif approved_directory:
+        approved_roots = [approved_directory.resolve()]
+    else:
+        raise ValueError(DIRECTORY_PARAM_ERROR)
+
     seen_slugs = set()
     seen_names = set()
     seen_rel_paths = set()
@@ -82,14 +92,19 @@ def load_project_registry(
         if rel_path.is_absolute():
             raise ValueError(f"Project '{slug}' path must be relative: {rel_path_raw}")
 
-        absolute_path = (approved_root / rel_path).resolve()
-
-        try:
-            absolute_path.relative_to(approved_root)
-        except ValueError as e:
-            raise ValueError(
-                f"Project '{slug}' path outside approved " f"directory: {rel_path_raw}"
-            ) from e
+        candidate_paths = []
+        for root in approved_roots:
+            candidate = (root / rel_path).resolve()
+            if not is_relative_to(candidate, root):
+                raise ValueError(
+                    f"Project '{slug}' path outside approved directory: {rel_path_raw}"
+                )
+            candidate_paths.append(candidate)
+        absolute_path = next(
+            (candidate for candidate in candidate_paths if candidate.exists()), None
+        )
+        if absolute_path is None:
+            absolute_path = candidate_paths[0]
 
         if not absolute_path.exists() or not absolute_path.is_dir():
             raise ValueError(

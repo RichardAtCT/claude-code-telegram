@@ -16,6 +16,7 @@ import structlog
 
 from ..config.settings import Settings
 from ..security.validators import SecurityValidator
+from ..utils.paths import DIRECTORY_PARAM_ERROR, is_relative_to
 
 logger = structlog.get_logger()
 
@@ -69,12 +70,20 @@ _FIND_MUTATING_ACTIONS: Set[str] = {"-delete", "-exec", "-execdir", "-ok", "-okd
 def check_bash_directory_boundary(
     command: str,
     working_directory: Path,
-    approved_directory: Path,
+    approved_directory: Optional[Path] = None,
+    approved_directories: Optional[List[Path]] = None,
 ) -> Tuple[bool, Optional[str]]:
-    """Check if a bash command's absolute paths stay within the approved directory.
+    """Check if a bash command's absolute paths stay within approved directories.
 
-    Returns (True, None) if the command is safe, or (False, error_message) if it
-    attempts to write outside the approved directory boundary.
+    Args:
+        command: The bash command to check
+        working_directory: The current working directory
+        approved_directory: Single approved directory (for backward compatibility)
+        approved_directories: List of approved directories (takes precedence)
+
+    Returns:
+        (True, None) if the command is safe, or (False, error_message) if it
+        attempts to write outside the approved directory boundary.
     """
     try:
         tokens = shlex.split(command)
@@ -102,8 +111,17 @@ def check_bash_directory_boundary(
         # Only check filesystem-modifying commands
         return True, None
 
-    # Check each argument for paths outside the boundary
-    resolved_approved = approved_directory.resolve()
+    # Resolve approved directories list
+    if approved_directories:
+        resolved_dirs = [d.resolve() for d in approved_directories]
+    elif approved_directory:
+        resolved_dirs = [approved_directory.resolve()]
+    else:
+        raise ValueError(DIRECTORY_PARAM_ERROR)
+
+    def is_within_any_dir(path: Path) -> bool:
+        """Check if path is within any of the approved directories."""
+        return any(is_relative_to(path, resolved_dir) for resolved_dir in resolved_dirs)
 
     for token in tokens[1:]:
         # Skip flags
@@ -118,13 +136,11 @@ def check_bash_directory_boundary(
         else:
             resolved = (working_directory / token).resolve()
 
-        try:
-            resolved.relative_to(resolved_approved)
-        except ValueError:
+        if not is_within_any_dir(resolved):
             return False, (
                 f"Directory boundary violation: '{base_command}' targets "
-                f"'{token}' which is outside approved directory "
-                f"'{resolved_approved}'"
+                f"'{token}' which is outside approved directories "
+                f"{[str(d) for d in resolved_dirs]}"
             )
 
     return True, None
@@ -276,7 +292,9 @@ class ToolMonitor:
 
             # Check directory boundary for filesystem-modifying commands
             valid, error = check_bash_directory_boundary(
-                command, working_directory, self.config.approved_directory
+                command,
+                working_directory,
+                approved_directories=self.config.approved_directories,
             )
             if not valid:
                 violation = {

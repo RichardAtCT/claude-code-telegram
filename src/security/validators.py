@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
+from src.utils.paths import DIRECTORY_PARAM_ERROR, is_relative_to
+
 # from src.exceptions import SecurityError  # Future use
 
 logger = structlog.get_logger()
@@ -132,14 +134,30 @@ class SecurityValidator:
     ]
 
     def __init__(
-        self, approved_directory: Path, disable_security_patterns: bool = False
+        self,
+        approved_directory: Optional[Path] = None,
+        approved_directories: Optional[List[Path]] = None,
+        disable_security_patterns: bool = False,
     ):
-        """Initialize validator with approved directory."""
-        self.approved_directory = approved_directory.resolve()
+        """Initialize validator with approved directories.
+
+        Args:
+            approved_directory: Single approved directory (for backward compatibility)
+            approved_directories: List of approved directories (takes precedence)
+            disable_security_patterns: Whether to disable dangerous pattern checks
+        """
+        if approved_directories:
+            self.approved_directories = [d.resolve() for d in approved_directories]
+        elif approved_directory:
+            self.approved_directories = [approved_directory.resolve()]
+        else:
+            raise ValueError(DIRECTORY_PARAM_ERROR)
+
+        self.approved_directory = self.approved_directories[0]
         self.disable_security_patterns = disable_security_patterns
         logger.info(
             "Security validator initialized",
-            approved_directory=str(self.approved_directory),
+            approved_directories=[str(d) for d in self.approved_directories],
             disable_security_patterns=self.disable_security_patterns,
         )
 
@@ -186,15 +204,15 @@ class SecurityValidator:
             # Resolve path and check boundaries
             target = target.resolve()
 
-            # Ensure target is within approved directory
-            if not self._is_within_directory(target, self.approved_directory):
+            # Ensure target is within any approved directory
+            if not self._is_within_any_directory(target):
                 logger.warning(
                     "Path traversal attempt detected",
                     requested_path=user_path,
                     resolved_path=str(target),
-                    approved_directory=str(self.approved_directory),
+                    approved_directories=[str(d) for d in self.approved_directories],
                 )
-                return False, None, "Access denied: path outside approved directory"
+                return False, None, "Access denied: path outside approved directories"
 
             logger.debug(
                 "Path validation successful",
@@ -207,13 +225,9 @@ class SecurityValidator:
             logger.error("Path validation error", path=user_path, error=str(e))
             return False, None, f"Invalid path: {str(e)}"
 
-    def _is_within_directory(self, path: Path, directory: Path) -> bool:
-        """Check if path is within directory."""
-        try:
-            path.relative_to(directory)
-            return True
-        except ValueError:
-            return False
+    def _is_within_any_directory(self, path: Path) -> bool:
+        """Check if path is within any of the approved directories."""
+        return any(is_relative_to(path, d) for d in self.approved_directories)
 
     def validate_filename(self, filename: str) -> Tuple[bool, Optional[str]]:
         """Validate uploaded filename.
@@ -380,6 +394,7 @@ class SecurityValidator:
         """Get summary of security validation rules."""
         return {
             "approved_directory": str(self.approved_directory),
+            "approved_directories": [str(d) for d in self.approved_directories],
             "allowed_extensions": sorted(list(self.ALLOWED_EXTENSIONS)),
             "forbidden_filenames": sorted(list(self.FORBIDDEN_FILENAMES)),
             "dangerous_patterns_count": len(self.DANGEROUS_PATTERNS),

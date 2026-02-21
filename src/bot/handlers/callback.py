@@ -118,7 +118,11 @@ async def handle_cd_callback(
             "current_directory", settings.approved_directory
         )
         project_root = _get_thread_project_root(settings, context)
-        directory_root = project_root or settings.approved_directory
+        current_root = (
+            settings.get_approved_root_for_path(current_dir)
+            or settings.approved_directory
+        )
+        directory_root = project_root or current_root
 
         # Handle special paths
         if project_name == "/":
@@ -131,13 +135,13 @@ async def handle_cd_callback(
             if project_root:
                 new_path = current_dir / project_name
             else:
-                new_path = settings.approved_directory / project_name
+                new_path = current_root / project_name
 
         # Validate path if security validator is available
         if security_validator:
             # Pass the absolute path for validation
             valid, resolved_path, error = security_validator.validate_path(
-                str(new_path), settings.approved_directory
+                str(new_path), current_dir
             )
             if not valid:
                 await query.edit_message_text(
@@ -189,7 +193,7 @@ async def handle_cd_callback(
             resumed_session_info = "\n🆕 Send a message to start a new session."
 
         # Send confirmation with new directory info
-        relative_base = project_root or settings.approved_directory
+        relative_base = project_root or current_root
         relative_path = new_path.relative_to(relative_base)
         relative_display = "/" if str(relative_path) == "." else f"{relative_path}/"
 
@@ -361,9 +365,16 @@ async def _handle_show_projects_action(
             )
             return
 
-        # Get directories in approved directory
+        # Get directories in the current approved root
+        current_dir = context.user_data.get(
+            "current_directory", settings.approved_directory
+        )
+        current_root = (
+            settings.get_approved_root_for_path(current_dir)
+            or settings.approved_directory
+        )
         projects = []
-        for item in sorted(settings.approved_directory.iterdir()):
+        for item in sorted(current_root.iterdir()):
             if item.is_dir() and not item.name.startswith("."):
                 projects.append(item.name)
 
@@ -428,7 +439,7 @@ async def _handle_new_session_action(query, context: ContextTypes.DEFAULT_TYPE) 
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     keyboard = [
         [
@@ -490,7 +501,7 @@ async def _handle_end_session_action(query, context: ContextTypes.DEFAULT_TYPE) 
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     # Clear session data
     context.user_data["claude_session_id"] = None
@@ -555,7 +566,7 @@ async def _handle_continue_action(query, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.edit_message_text(
                 f"🔄 <b>Continuing Session</b>\n\n"
                 f"Session ID: <code>{escape_html(claude_session_id[:8])}...</code>\n"
-                f"Directory: <code>{escape_html(str(current_dir.relative_to(settings.approved_directory)))}/</code>\n\n"
+                f"Directory: <code>{escape_html(settings.format_relative_path(current_dir))}/</code>\n\n"
                 f"Continuing where you left off...",
                 parse_mode="HTML",
             )
@@ -595,7 +606,7 @@ async def _handle_continue_action(query, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.edit_message_text(
                 "❌ <b>No Session Found</b>\n\n"
                 f"No recent Claude session found in this directory.\n"
-                f"Directory: <code>{escape_html(str(current_dir.relative_to(settings.approved_directory)))}/</code>\n\n"
+                f"Directory: <code>{escape_html(settings.format_relative_path(current_dir))}/</code>\n\n"
                 f"<b>What you can do:</b>\n"
                 f"• Use the button below to start a fresh session\n"
                 f"• Check your session status\n"
@@ -644,7 +655,7 @@ async def _handle_status_action(query, context: ContextTypes.DEFAULT_TYPE) -> No
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
-    relative_path = current_dir.relative_to(settings.approved_directory)
+    relative_path = settings.format_relative_path(current_dir)
 
     # Get usage info if rate limiter is available
     rate_limiter = context.bot_data.get("rate_limiter")
@@ -721,6 +732,9 @@ async def _handle_ls_action(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
     )
+    current_root = (
+        settings.get_approved_root_for_path(current_dir) or settings.approved_directory
+    )
 
     try:
         # List directory contents (similar to /ls command)
@@ -746,7 +760,7 @@ async def _handle_ls_action(query, context: ContextTypes.DEFAULT_TYPE) -> None:
                     files.append(f"📄 {safe_name}")
 
         items = directories + files
-        relative_path = current_dir.relative_to(settings.approved_directory)
+        relative_path = settings.format_relative_path(current_dir)
 
         if not items:
             message = f"📂 <code>{escape_html(str(relative_path))}/</code>\n\n<i>(empty directory)</i>"
@@ -762,7 +776,7 @@ async def _handle_ls_action(query, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Add buttons
         keyboard = []
-        if current_dir != settings.approved_directory:
+        if current_dir != current_root:
             keyboard.append(
                 [
                     InlineKeyboardButton("⬆️ Go Up", callback_data="cd:.."),
@@ -913,7 +927,7 @@ async def handle_quick_action_callback(
         # Execute the action
         await query.edit_message_text(
             f"🚀 <b>Executing {action.icon} {escape_html(action.name)}</b>\n\n"
-            f"Running quick action in directory: <code>{escape_html(str(current_dir.relative_to(settings.approved_directory)))}/</code>\n\n"
+            f"Running quick action in directory: <code>{escape_html(settings.format_relative_path(current_dir))}/</code>\n\n"
             f"Please wait...",
             parse_mode="HTML",
         )
@@ -1038,7 +1052,7 @@ async def handle_conversation_callback(
         current_dir = context.user_data.get(
             "current_directory", settings.approved_directory
         )
-        relative_path = current_dir.relative_to(settings.approved_directory)
+        relative_path = settings.format_relative_path(current_dir)
 
         # Create quick action buttons
         keyboard = [
