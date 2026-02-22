@@ -1,11 +1,17 @@
 """Test Claude tool monitor — especially bash directory boundary checking."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from src.claude.monitor import ToolMonitor, check_bash_directory_boundary
+from src.claude.monitor import (
+    ToolMonitor,
+    _is_claude_internal_path,
+    check_bash_directory_boundary,
+)
 from src.config.settings import Settings
+from src.security.validators import SecurityValidator
 
 
 class TestCheckBashDirectoryBoundary:
@@ -241,3 +247,156 @@ class TestToolMonitorBashBoundary:
         )
         assert not valid
         assert "dangerous command pattern" in error.lower()
+
+
+class TestIsClaudeInternalPath:
+    """Test the _is_claude_internal_path helper function."""
+
+    def test_plan_file_is_internal(self, tmp_path: Path) -> None:
+        """~/.claude/plans/some-plan.md should be recognised as internal."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "plans").mkdir(parents=True)
+            plan_file = tmp_path / ".claude" / "plans" / "my-plan.md"
+            plan_file.touch()
+            assert _is_claude_internal_path(str(plan_file)) is True
+
+    def test_todo_file_is_internal(self, tmp_path: Path) -> None:
+        """~/.claude/todos/todo.md should be recognised as internal."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "todos").mkdir(parents=True)
+            todo_file = tmp_path / ".claude" / "todos" / "todo.md"
+            todo_file.touch()
+            assert _is_claude_internal_path(str(todo_file)) is True
+
+    def test_settings_json_is_internal(self, tmp_path: Path) -> None:
+        """~/.claude/settings.json should be recognised as internal."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude").mkdir(parents=True)
+            settings_file = tmp_path / ".claude" / "settings.json"
+            settings_file.touch()
+            assert _is_claude_internal_path(str(settings_file)) is True
+
+    def test_arbitrary_file_under_claude_dir_rejected(self, tmp_path: Path) -> None:
+        """Files directly under ~/.claude/ (not in known subdirs) are rejected."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude").mkdir(parents=True)
+            secret = tmp_path / ".claude" / "credentials.json"
+            secret.touch()
+            assert _is_claude_internal_path(str(secret)) is False
+
+    def test_path_outside_claude_dir_rejected(self, tmp_path: Path) -> None:
+        """Paths outside ~/.claude/ entirely are rejected."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            assert _is_claude_internal_path("/etc/passwd") is False
+            assert _is_claude_internal_path("/tmp/evil.txt") is False
+
+    def test_empty_path_rejected(self, tmp_path: Path) -> None:
+        """Empty paths are rejected."""
+        assert _is_claude_internal_path("") is False
+
+    def test_unknown_subdir_rejected(self, tmp_path: Path) -> None:
+        """Unknown subdirectories under ~/.claude/ are rejected."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "secrets").mkdir(parents=True)
+            bad_file = tmp_path / ".claude" / "secrets" / "key.pem"
+            bad_file.touch()
+            assert _is_claude_internal_path(str(bad_file)) is False
+
+
+class TestToolMonitorClaudeInternalPaths:
+    """Test that validate_tool_call allows Claude internal paths."""
+
+    @pytest.fixture
+    def config(self, tmp_path: Path) -> Settings:
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+        )
+
+    @pytest.fixture
+    def security_validator(self, config: Settings) -> SecurityValidator:
+        return SecurityValidator(config.approved_directory)
+
+    @pytest.fixture
+    def monitor(
+        self, config: Settings, security_validator: SecurityValidator
+    ) -> ToolMonitor:
+        return ToolMonitor(config, security_validator=security_validator)
+
+    async def test_read_plan_file_allowed(
+        self, monitor: ToolMonitor, tmp_path: Path
+    ) -> None:
+        """Read tool targeting a plan file in ~/.claude/plans/ should pass."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "plans").mkdir(parents=True)
+            plan_path = str(tmp_path / ".claude" / "plans" / "my-plan.md")
+            valid, error = await monitor.validate_tool_call(
+                tool_name="Read",
+                tool_input={"file_path": plan_path},
+                working_directory=tmp_path / "project",
+                user_id=123,
+            )
+            assert valid
+            assert error is None
+
+    async def test_write_plan_file_allowed(
+        self, monitor: ToolMonitor, tmp_path: Path
+    ) -> None:
+        """Write tool targeting a plan file in ~/.claude/plans/ should pass."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "plans").mkdir(parents=True)
+            plan_path = str(tmp_path / ".claude" / "plans" / "new-plan.md")
+            valid, error = await monitor.validate_tool_call(
+                tool_name="Write",
+                tool_input={"file_path": plan_path},
+                working_directory=tmp_path / "project",
+                user_id=123,
+            )
+            assert valid
+            assert error is None
+
+    async def test_edit_plan_file_allowed(
+        self, monitor: ToolMonitor, tmp_path: Path
+    ) -> None:
+        """Edit tool targeting a plan file in ~/.claude/plans/ should pass."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "plans").mkdir(parents=True)
+            plan_path = str(tmp_path / ".claude" / "plans" / "my-plan.md")
+            valid, error = await monitor.validate_tool_call(
+                tool_name="Edit",
+                tool_input={"file_path": plan_path},
+                working_directory=tmp_path / "project",
+                user_id=123,
+            )
+            assert valid
+            assert error is None
+
+    async def test_file_outside_both_approved_and_claude_still_blocked(
+        self, monitor: ToolMonitor, tmp_path: Path
+    ) -> None:
+        """Files outside both approved dir and ~/.claude/ are still blocked."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            valid, error = await monitor.validate_tool_call(
+                tool_name="Read",
+                tool_input={"file_path": "/etc/passwd"},
+                working_directory=tmp_path,
+                user_id=123,
+            )
+            assert not valid
+            assert error is not None
+
+    async def test_no_security_violations_for_claude_internal(
+        self, monitor: ToolMonitor, tmp_path: Path
+    ) -> None:
+        """Accessing Claude internal paths should not record security violations."""
+        with patch("src.claude.monitor.Path.home", return_value=tmp_path):
+            (tmp_path / ".claude" / "plans").mkdir(parents=True)
+            plan_path = str(tmp_path / ".claude" / "plans" / "my-plan.md")
+            await monitor.validate_tool_call(
+                tool_name="Read",
+                tool_input={"file_path": plan_path},
+                working_directory=tmp_path / "project",
+                user_id=123,
+            )
+            assert len(monitor.security_violations) == 0

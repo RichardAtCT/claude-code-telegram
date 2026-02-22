@@ -17,6 +17,11 @@ import structlog
 from ..config.settings import Settings
 from ..security.validators import SecurityValidator
 
+# Subdirectories under ~/.claude/ that Claude Code uses internally.
+# File operations targeting these paths are allowed even when they fall
+# outside the project's approved directory.
+_CLAUDE_INTERNAL_SUBDIRS: Set[str] = {"plans", "todos", "settings.json"}
+
 logger = structlog.get_logger()
 
 # Commands that modify the filesystem and should have paths checked
@@ -130,6 +135,36 @@ def check_bash_directory_boundary(
     return True, None
 
 
+def _is_claude_internal_path(file_path: str) -> bool:
+    """Check whether *file_path* points inside the ``~/.claude/`` directory.
+
+    Claude Code keeps internal state (plan-mode drafts, todo lists, etc.)
+    under ``$HOME/.claude/``.  These paths are outside the project's
+    ``approved_directory`` but are safe to read/write because they are
+    controlled entirely by Claude Code itself.
+
+    Only the specific subdirectories listed in ``_CLAUDE_INTERNAL_SUBDIRS``
+    are allowed; arbitrary files directly under ``~/.claude/`` are not.
+    """
+    try:
+        resolved = Path(file_path).resolve()
+        home = Path.home().resolve()
+        claude_dir = home / ".claude"
+
+        # Path must be inside ~/.claude/
+        try:
+            rel = resolved.relative_to(claude_dir)
+        except ValueError:
+            return False
+
+        # Must be in one of the known subdirectories (or a known file)
+        top_part = rel.parts[0] if rel.parts else ""
+        return top_part in _CLAUDE_INTERNAL_SUBDIRS
+
+    except Exception:
+        return False
+
+
 class ToolMonitor:
     """Monitor and validate Claude's tool usage."""
 
@@ -218,8 +253,15 @@ class ToolMonitor:
             if not file_path:
                 return False, "File path required"
 
-            # Validate path security
-            if self.security_validator:
+            # Allow Claude Code internal paths (~/.claude/plans/, etc.)
+            if _is_claude_internal_path(file_path):
+                logger.debug(
+                    "Allowing Claude internal path",
+                    tool_name=tool_name,
+                    file_path=file_path,
+                )
+            elif self.security_validator:
+                # Validate path security for all other paths
                 valid, resolved_path, error = self.security_validator.validate_path(
                     file_path, working_directory
                 )
