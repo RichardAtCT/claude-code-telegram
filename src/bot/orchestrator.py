@@ -626,22 +626,27 @@ class MessageOrchestrator:
         if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
             path = tool_input.get("file_path") or tool_input.get("path", "")
             if path:
-                # Show just the filename, not the full path
-                return str(path).rsplit("/", 1)[-1]
+                # Show last 2 path segments for context (e.g. "bot/core.py")
+                parts = str(path).rsplit("/", 2)
+                return "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
         if tool_name in ("Glob", "Grep"):
             pattern = tool_input.get("pattern", "")
             if pattern:
                 return str(pattern)[:60]
         if tool_name == "Bash":
-            cmd = tool_input.get("command", "")
-            if cmd:
-                return _redact_secrets(str(cmd)[:100])[:80]
-        if tool_name in ("WebFetch", "WebSearch"):
-            return str(tool_input.get("url", "") or tool_input.get("query", ""))[:60]
-        if tool_name == "Task":
+            # Prefer the human-readable description over raw command
             desc = tool_input.get("description", "")
             if desc:
-                return str(desc)[:60]
+                return str(desc)[:120]
+            cmd = tool_input.get("command", "")
+            if cmd:
+                return _redact_secrets(str(cmd)[:150])[:120]
+        if tool_name in ("WebFetch", "WebSearch"):
+            return str(tool_input.get("url", "") or tool_input.get("query", ""))[:60]
+        if tool_name in ("Task", "TaskOutput"):
+            desc = tool_input.get("description") or tool_input.get("prompt", "")
+            if desc:
+                return str(desc)[:100]
         # Generic: show first key's value
         for v in tool_input.values():
             if isinstance(v, str) and v:

@@ -501,7 +501,7 @@ class TestRedactSecrets:
         result = orchestrator._summarize_tool_input(
             "Read", {"file_path": "/home/user/.env"}
         )
-        assert result == ".env"
+        assert result == "user/.env"
 
 
 # --- Typing heartbeat tests ---
