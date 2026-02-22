@@ -336,6 +336,8 @@ make format        # Auto-format code
 make run-debug     # Run with debug logging
 ```
 
+> **Full documentation:** See the [docs index](docs/README.md) for all guides and references.
+
 ### Version Management
 
 The version is defined once in `pyproject.toml` and read at runtime via `importlib.metadata`. To cut a release:
