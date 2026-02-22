@@ -140,7 +140,7 @@ class DatabaseManager:
     def __init__(self, database_url: str):
         """Initialize database manager."""
         self.database_path = self._parse_database_url(database_url)
-        self._connection_pool = []
+        self._connection_pool: List[aiosqlite.Connection] = []
         self._pool_size = 5
         self._pool_lock = asyncio.Lock()
 
@@ -153,7 +153,7 @@ class DatabaseManager:
         else:
             return Path(database_url)
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Initialize database and run migrations."""
         logger.info("Initializing database", path=str(self.database_path))
 
@@ -168,7 +168,7 @@ class DatabaseManager:
 
         logger.info("Database initialization complete")
 
-    async def _run_migrations(self):
+    async def _run_migrations(self) -> None:
         """Run database migrations."""
         async with aiosqlite.connect(
             self.database_path, detect_types=sqlite3.PARSE_DECLTYPES
@@ -206,7 +206,7 @@ class DatabaseManager:
         row = await cursor.fetchone()
         return row[0] if row and row[0] else 0
 
-    async def _set_schema_version(self, conn: aiosqlite.Connection, version: int):
+    async def _set_schema_version(self, conn: aiosqlite.Connection, version: int) -> None:
         """Set schema version."""
         await conn.execute(
             "INSERT INTO schema_version (version) VALUES (?)", (version,)
@@ -312,7 +312,7 @@ class DatabaseManager:
             ),
         ]
 
-    async def _init_pool(self):
+    async def _init_pool(self) -> None:
         """Initialize connection pool."""
         logger.info("Initializing connection pool", size=self._pool_size)
 
@@ -347,7 +347,7 @@ class DatabaseManager:
                 else:
                     await conn.close()
 
-    async def close(self):
+    async def close(self) -> None:
         """Close all connections in pool."""
         logger.info("Closing database connections")
 

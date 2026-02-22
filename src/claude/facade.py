@@ -4,7 +4,7 @@ Provides simple interface for bot handlers.
 """
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import structlog
 
@@ -12,7 +12,7 @@ from ..config.settings import Settings
 from .exceptions import ClaudeToolValidationError
 from .monitor import ToolMonitor
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
-from .session import SessionManager
+from .session import ClaudeSession, SessionManager
 
 logger = structlog.get_logger()
 
@@ -39,10 +39,13 @@ class ClaudeIntegration:
         working_directory: Path,
         user_id: int,
         session_id: Optional[str] = None,
-        on_stream: Optional[Callable[[StreamUpdate], None]] = None,
+        on_stream: Optional[Callable[[StreamUpdate], Awaitable[None]]] = None,
         force_new: bool = False,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
+        assert self.session_manager is not None, "session_manager is required"
+        assert self.tool_monitor is not None, "tool_monitor is required"
+
         logger.info(
             "Running Claude command",
             user_id=user_id,
@@ -73,19 +76,23 @@ class ClaudeIntegration:
             user_id, working_directory, session_id
         )
 
+        # Capture references to satisfy closures
+        _tool_monitor = self.tool_monitor
+        _session_manager = self.session_manager
+
         # Track streaming updates and validate tool calls
         tools_validated = True
-        validation_errors = []
-        blocked_tools = set()
+        validation_errors: List[str] = []
+        blocked_tools_set: set[str] = set()
 
-        async def stream_handler(update: StreamUpdate):
+        async def stream_handler(update: StreamUpdate) -> None:
             nonlocal tools_validated
 
             # Validate tool calls
             if update.tool_calls:
                 for tool_call in update.tool_calls:
                     tool_name = tool_call["name"]
-                    valid, error = await self.tool_monitor.validate_tool_call(
+                    valid, error = await _tool_monitor.validate_tool_call(
                         tool_name,
                         tool_call.get("input", {}),
                         working_directory,
@@ -94,11 +101,12 @@ class ClaudeIntegration:
 
                     if not valid:
                         tools_validated = False
-                        validation_errors.append(error)
+                        if error is not None:
+                            validation_errors.append(error)
 
-                        # Track blocked tools
-                        if "Tool not allowed:" in error:
-                            blocked_tools.add(tool_name)
+                            # Track blocked tools
+                            if "Tool not allowed:" in error:
+                                blocked_tools_set.add(tool_name)
 
                         logger.error(
                             "Tool validation failed",
@@ -111,17 +119,17 @@ class ClaudeIntegration:
                         if tool_name in ["Task", "Read", "Write", "Edit", "Bash"]:
                             # Create comprehensive error message
                             admin_instructions = self._get_admin_instructions(
-                                list(blocked_tools)
+                                list(blocked_tools_set)
                             )
                             error_msg = self._create_tool_error_message(
-                                list(blocked_tools),
+                                list(blocked_tools_set),
                                 self.config.claude_allowed_tools or [],
                                 admin_instructions,
                             )
 
                             raise ClaudeToolValidationError(
                                 error_msg,
-                                blocked_tools=list(blocked_tools),
+                                blocked_tools=list(blocked_tools_set),
                                 allowed_tools=self.config.claude_allowed_tools or [],
                             )
 
@@ -162,10 +170,10 @@ class ClaudeIntegration:
                         error=str(resume_error),
                     )
                     # Clean up the stale session
-                    await self.session_manager.remove_session(session.session_id)
+                    await _session_manager.remove_session(session.session_id)
 
                     # Create a fresh session and retry
-                    session = await self.session_manager.get_or_create_session(
+                    session = await _session_manager.get_or_create_session(
                         user_id, working_directory
                     )
                     response = await self._execute(
@@ -189,15 +197,17 @@ class ClaudeIntegration:
                 response.error_type = "tool_validation_failed"
 
                 # Extract blocked tool names for user feedback
-                blocked_tools = []
-                for error in validation_errors:
-                    if "Tool not allowed:" in error:
-                        tool_name = error.split("Tool not allowed: ")[1]
-                        blocked_tools.append(tool_name)
+                blocked_tool_names: List[str] = []
+                for val_error in validation_errors:
+                    if "Tool not allowed:" in val_error:
+                        tool_name = val_error.split("Tool not allowed: ")[1]
+                        blocked_tool_names.append(tool_name)
 
                 # Create user-friendly error message
-                if blocked_tools:
-                    tool_list = ", ".join(f"`{tool}`" for tool in blocked_tools)
+                if blocked_tool_names:
+                    tool_list = ", ".join(
+                        f"`{tool}`" for tool in blocked_tool_names
+                    )
                     response.content = (
                         f"🚫 **Tool Access Blocked**\n\n"
                         f"Claude tried to use tools not allowed:\n"
@@ -217,7 +227,7 @@ class ClaudeIntegration:
                     )
 
             # Update session (assigns real session_id for new sessions)
-            await self.session_manager.update_session(session, response)
+            await _session_manager.update_session(session, response)
 
             # Ensure response has the session's final ID
             response.session_id = session.session_id
@@ -269,12 +279,13 @@ class ClaudeIntegration:
         self,
         user_id: int,
         working_directory: Path,
-    ) -> Optional["ClaudeSession"]:  # noqa: F821
+    ) -> Optional[ClaudeSession]:
         """Find the most recent resumable session for a user in a directory.
 
         Returns the session if one exists that is non-expired and has a real
         (non-temporary) session ID from Claude. Returns None otherwise.
         """
+        assert self.session_manager is not None, "session_manager is required"
 
         sessions = await self.session_manager._get_user_sessions(user_id)
 
@@ -296,9 +307,11 @@ class ClaudeIntegration:
         user_id: int,
         working_directory: Path,
         prompt: Optional[str] = None,
-        on_stream: Optional[Callable[[StreamUpdate], None]] = None,
+        on_stream: Optional[Callable[[StreamUpdate], Awaitable[None]]] = None,
     ) -> Optional[ClaudeResponse]:
         """Continue the most recent session."""
+        assert self.session_manager is not None, "session_manager is required"
+
         logger.info(
             "Continuing session",
             user_id=user_id,
@@ -335,10 +348,12 @@ class ClaudeIntegration:
 
     async def get_session_info(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session information."""
+        assert self.session_manager is not None, "session_manager is required"
         return await self.session_manager.get_session_info(session_id)
 
     async def get_user_sessions(self, user_id: int) -> List[Dict[str, Any]]:
         """Get all sessions for a user."""
+        assert self.session_manager is not None, "session_manager is required"
         sessions = await self.session_manager._get_user_sessions(user_id)
         return [
             {
@@ -356,14 +371,18 @@ class ClaudeIntegration:
 
     async def cleanup_expired_sessions(self) -> int:
         """Clean up expired sessions."""
+        assert self.session_manager is not None, "session_manager is required"
         return await self.session_manager.cleanup_expired_sessions()
 
     async def get_tool_stats(self) -> Dict[str, Any]:
         """Get tool usage statistics."""
+        assert self.tool_monitor is not None, "tool_monitor is required"
         return self.tool_monitor.get_tool_stats()
 
     async def get_user_summary(self, user_id: int) -> Dict[str, Any]:
         """Get comprehensive user summary."""
+        assert self.session_manager is not None, "session_manager is required"
+        assert self.tool_monitor is not None, "tool_monitor is required"
         session_summary = await self.session_manager.get_user_session_summary(user_id)
         tool_usage = self.tool_monitor.get_user_tool_usage(user_id)
 

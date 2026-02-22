@@ -38,9 +38,13 @@ async def test_command_cd_stays_within_project_root(thread_settings):
     """/cd .. at project root remains pinned to project root in thread mode."""
     settings, project_root = thread_settings
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
     update.effective_user.id = 1
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.args = [".."]
@@ -107,12 +111,16 @@ async def test_start_private_mode_triggers_auto_sync(thread_settings):
         )
     )
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
     update.effective_user.id = 1
     update.effective_user.first_name = "User"
     update.effective_chat.type = "private"
     update.effective_chat.id = 42
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.bot = AsyncMock()
@@ -140,11 +148,15 @@ async def test_sync_threads_private_mode_rejects_non_private_chat(thread_setting
     status_msg = AsyncMock()
     status_msg.edit_text = AsyncMock()
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock(return_value=status_msg)
+
     update = MagicMock()
     update.effective_user.id = 1
     update.effective_chat.type = "group"
     update.effective_chat.id = -1001
-    update.message.reply_text = AsyncMock(return_value=status_msg)
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.bot = AsyncMock()
@@ -185,11 +197,15 @@ async def test_sync_threads_reloads_registry_from_yaml(thread_settings, monkeypa
     status_msg = AsyncMock()
     status_msg.edit_text = AsyncMock()
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock(return_value=status_msg)
+
     update = MagicMock()
     update.effective_user.id = 1
     update.effective_chat.type = "private"
     update.effective_chat.id = 42
-    update.message.reply_text = AsyncMock(return_value=status_msg)
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.bot = AsyncMock()
@@ -242,10 +258,14 @@ async def test_sync_threads_group_mode_rejects_non_target_chat(tmp_path: Path):
     status_msg = AsyncMock()
     status_msg.edit_text = AsyncMock()
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock(return_value=status_msg)
+
     update = MagicMock()
     update.effective_user.id = 1
     update.effective_chat.id = -10099999
-    update.message.reply_text = AsyncMock(return_value=status_msg)
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.bot = AsyncMock()

@@ -180,9 +180,13 @@ async def test_agentic_start_no_keyboard(agentic_settings, deps):
     """Agentic /start sends brief message without inline keyboard."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
     update.effective_user.first_name = "Alice"
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.user_data = {}
@@ -192,8 +196,8 @@ async def test_agentic_start_no_keyboard(agentic_settings, deps):
 
     await orchestrator.agentic_start(update, context)
 
-    update.message.reply_text.assert_called_once()
-    call_kwargs = update.message.reply_text.call_args
+    message_mock.reply_text.assert_called_once()
+    call_kwargs = message_mock.reply_text.call_args
     # No reply_markup argument (no keyboard)
     assert (
         "reply_markup" not in call_kwargs.kwargs
@@ -207,8 +211,12 @@ async def test_agentic_new_resets_session(agentic_settings, deps):
     """Agentic /new clears session and sends brief confirmation."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.user_data = {"claude_session_id": "old-session-123"}
@@ -216,16 +224,20 @@ async def test_agentic_new_resets_session(agentic_settings, deps):
     await orchestrator.agentic_new(update, context)
 
     assert context.user_data["claude_session_id"] is None
-    update.message.reply_text.assert_called_once_with("Session reset. What's next?")
+    message_mock.reply_text.assert_called_once_with("Session reset. What's next?")
 
 
 async def test_agentic_status_compact(agentic_settings, deps):
     """Agentic /status returns compact one-line status."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
     update.effective_user.id = 123
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.user_data = {}
@@ -233,7 +245,7 @@ async def test_agentic_status_compact(agentic_settings, deps):
 
     await orchestrator.agentic_status(update, context)
 
-    call_args = update.message.reply_text.call_args
+    call_args = message_mock.reply_text.call_args
     text = call_args.args[0]
     assert "Session: none" in text
 
@@ -251,17 +263,21 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
     claude_integration = AsyncMock()
     claude_integration.run_command = AsyncMock(return_value=mock_response)
 
-    update = MagicMock()
-    update.effective_user.id = 123
-    update.message.text = "Help me with this code"
-    update.message.message_id = 1
-    update.message.chat.send_action = AsyncMock()
-    update.message.reply_text = AsyncMock()
+    message_mock = MagicMock()
+    message_mock.text = "Help me with this code"
+    message_mock.message_id = 1
+    message_mock.chat.send_action = AsyncMock()
+    message_mock.reply_text = AsyncMock()
 
     # Progress message mock
     progress_msg = AsyncMock()
     progress_msg.delete = AsyncMock()
-    update.message.reply_text.return_value = progress_msg
+    message_mock.reply_text.return_value = progress_msg
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.user_data = {}
@@ -287,8 +303,8 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
     # Response sent without keyboard (reply_markup=None)
     response_calls = [
         c
-        for c in update.message.reply_text.call_args_list
-        if c != update.message.reply_text.call_args_list[0]
+        for c in message_mock.reply_text.call_args_list
+        if c != message_mock.reply_text.call_args_list[0]
     ]
     for call in response_calls:
         assert call.kwargs.get("reply_markup") is None
@@ -320,18 +336,25 @@ async def test_agentic_document_rejects_large_files(agentic_settings, deps):
     """Agentic document handler rejects files over 10MB."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
 
+    document_mock = MagicMock()
+    document_mock.file_name = "big.bin"
+    document_mock.file_size = 20 * 1024 * 1024  # 20MB
+
+    message_mock = MagicMock()
+    message_mock.document = document_mock
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
     update.effective_user.id = 123
-    update.message.document.file_name = "big.bin"
-    update.message.document.file_size = 20 * 1024 * 1024  # 20MB
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.bot_data = {"security_validator": None}
 
     await orchestrator.agentic_document(update, context)
 
-    call_args = update.message.reply_text.call_args
+    call_args = message_mock.reply_text.call_args
     assert "too large" in call_args.args[0].lower()
 
 
@@ -339,16 +362,20 @@ async def test_agentic_start_escapes_html_in_name(agentic_settings, deps):
     """Names with HTML-special characters are escaped safely."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
 
+    message_mock = MagicMock()
+    message_mock.reply_text = AsyncMock()
+
     update = MagicMock()
     update.effective_user.first_name = "A<B>&C"
-    update.message.reply_text = AsyncMock()
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.user_data = {}
 
     await orchestrator.agentic_start(update, context)
 
-    call_kwargs = update.message.reply_text.call_args
+    call_kwargs = message_mock.reply_text.call_args
     text = call_kwargs.args[0]
     # HTML-special characters should be escaped
     assert "A&lt;B&gt;&amp;C" in text
@@ -366,16 +393,20 @@ async def test_agentic_text_logs_failure_on_error(agentic_settings, deps):
     audit_logger = AsyncMock()
     audit_logger.log_command = AsyncMock()
 
-    update = MagicMock()
-    update.effective_user.id = 123
-    update.message.text = "do something"
-    update.message.message_id = 1
-    update.message.chat.send_action = AsyncMock()
-    update.message.reply_text = AsyncMock()
+    message_mock = MagicMock()
+    message_mock.text = "do something"
+    message_mock.message_id = 1
+    message_mock.chat.send_action = AsyncMock()
+    message_mock.reply_text = AsyncMock()
 
     progress_msg = AsyncMock()
     progress_msg.delete = AsyncMock()
-    update.message.reply_text.return_value = progress_msg
+    message_mock.reply_text.return_value = progress_msg
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = message_mock
+    update.message = message_mock
 
     context = MagicMock()
     context.user_data = {}

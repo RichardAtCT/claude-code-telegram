@@ -10,7 +10,7 @@ Features:
 
 import base64
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from telegram import PhotoSize
 
@@ -25,7 +25,7 @@ class ProcessedImage:
     image_type: str
     base64_data: str
     size: int
-    metadata: Dict[str, any] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class ImageHandler:

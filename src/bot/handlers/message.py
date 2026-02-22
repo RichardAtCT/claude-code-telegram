@@ -1,7 +1,7 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from telegram import Update
@@ -25,7 +25,7 @@ from ..utils.html_format import escape_html
 logger = structlog.get_logger()
 
 
-async def _format_progress_update(update_obj) -> Optional[str]:
+async def _format_progress_update(update_obj: Any) -> Optional[str]:
     """Format progress updates with enhanced context and visual indicators."""
     if update_obj.type == "tool_result":
         # Show tool completion status
@@ -92,7 +92,7 @@ async def _format_progress_update(update_obj) -> Optional[str]:
     return None
 
 
-def _format_error_message(error: Exception | str) -> str:
+def _format_error_message(error: "Exception | str") -> str:
     """Format error messages for user-friendly display.
 
     Accepts an exception object (preferred) or a string for backward
@@ -102,7 +102,7 @@ def _format_error_message(error: Exception | str) -> str:
     # Normalise: keep both the object and a string representation.
     if isinstance(error, str):
         error_str = error
-        error_obj: Exception | None = None
+        error_obj: "Exception | None" = None
     else:
         error_str = str(error)
         error_obj = error
@@ -293,8 +293,15 @@ async def handle_text_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """Handle regular text messages as Claude prompts."""
-    user_id = update.effective_user.id
-    message_text = update.message.text
+    user = update.effective_user
+    message = update.message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
+    message_text = message.text or ""
     settings: Settings = context.bot_data["settings"]
 
     # Get services
@@ -314,16 +321,16 @@ async def handle_text_message(
                 user_id, estimated_cost
             )
             if not allowed:
-                await update.message.reply_text(f"⏱️ {limit_message}")
+                await message.reply_text(f"⏱️ {limit_message}")
                 return
 
         # Send typing indicator
-        await update.message.chat.send_action("typing")
+        await message.chat.send_action("typing")
 
         # Create progress message
-        progress_msg = await update.message.reply_text(
+        progress_msg = await message.reply_text(
             "🤔 Processing your request...",
-            reply_to_message_id=update.message.message_id,
+            reply_to_message_id=message.message_id,
         )
 
         # Get Claude integration and storage from context
@@ -331,7 +338,7 @@ async def handle_text_message(
         storage = context.bot_data.get("storage")
 
         if not claude_integration:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ <b>Claude integration not available</b>\n\n"
                 "The Claude Code integration is not properly configured. "
                 "Please contact the administrator.",
@@ -352,7 +359,7 @@ async def handle_text_message(
         force_new = bool(context.user_data.get("force_new_session"))
 
         # Enhanced stream updates handler with progress tracking
-        async def stream_handler(update_obj):
+        async def stream_handler(update_obj: Any) -> None:
             try:
                 progress_text = await _format_progress_update(update_obj)
                 if progress_text:
@@ -428,13 +435,13 @@ async def handle_text_message(
         await progress_msg.delete()
 
         # Send formatted responses (may be multiple messages)
-        for i, message in enumerate(formatted_messages):
+        for i, fmt_msg in enumerate(formatted_messages):
             try:
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=message.reply_markup,
-                    reply_to_message_id=update.message.message_id if i == 0 else None,
+                await message.reply_text(
+                    fmt_msg.text,
+                    parse_mode=fmt_msg.parse_mode,
+                    reply_markup=fmt_msg.reply_markup,
+                    reply_to_message_id=message.message_id if i == 0 else None,
                 )
 
                 # Small delay between messages to avoid rate limits
@@ -448,26 +455,26 @@ async def handle_text_message(
                     message_index=i,
                 )
                 try:
-                    await update.message.reply_text(
-                        message.text,
-                        reply_markup=message.reply_markup,
+                    await message.reply_text(
+                        fmt_msg.text,
+                        reply_markup=fmt_msg.reply_markup,
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            message.message_id if i == 0 else None
                         ),
                     )
                 except Exception as plain_err:
                     # Include what actually went wrong instead of a generic message
-                    await update.message.reply_text(
+                    await message.reply_text(
                         f"Failed to deliver response "
                         f"(Telegram error: {str(plain_err)[:150]}). "
                         f"Please try again.",
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            message.message_id if i == 0 else None
                         ),
                     )
 
         # Update session info
-        context.user_data["last_message"] = update.message.text
+        context.user_data["last_message"] = message.text
 
         # Add conversation enhancements if available
         features = context.bot_data.get("features")
@@ -504,7 +511,7 @@ async def handle_text_message(
                         )
 
                         # Send follow-up suggestions
-                        await update.message.reply_text(
+                        await message.reply_text(
                             "💡 <b>What would you like to do next?</b>",
                             parse_mode="HTML",
                             reply_markup=suggestion_keyboard,
@@ -520,7 +527,7 @@ async def handle_text_message(
             await audit_logger.log_command(
                 user_id=user_id,
                 command="text_message",
-                args=[update.message.text[:100]],  # First 100 chars
+                args=[(message.text or "")[:100]],  # First 100 chars
                 success=True,
             )
 
@@ -533,14 +540,14 @@ async def handle_text_message(
         except Exception:
             pass
 
-        await update.message.reply_text(_format_error_message(e), parse_mode="HTML")
+        await message.reply_text(_format_error_message(e), parse_mode="HTML")
 
         # Log failed processing
         if audit_logger:
             await audit_logger.log_command(
                 user_id=user_id,
                 command="text_message",
-                args=[update.message.text[:100]],
+                args=[(message.text or "")[:100]],
                 success=False,
             )
 
@@ -549,8 +556,17 @@ async def handle_text_message(
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle file uploads."""
-    user_id = update.effective_user.id
-    document = update.message.document
+    user = update.effective_user
+    message = update.message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
+    document = message.document
+    if not document:
+        return
     settings: Settings = context.bot_data["settings"]
 
     # Get services
@@ -560,20 +576,23 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
     rate_limiter: Optional[RateLimiter] = context.bot_data.get("rate_limiter")
 
+    file_name = document.file_name or "unknown"
+    file_size = document.file_size or 0
+
     logger.info(
         "Processing document upload",
         user_id=user_id,
-        filename=document.file_name,
-        file_size=document.file_size,
+        filename=file_name,
+        file_size=file_size,
     )
 
     try:
         # Validate filename using security validator
         if security_validator:
-            valid, error = security_validator.validate_filename(document.file_name)
+            valid, error = security_validator.validate_filename(file_name)
             if not valid:
-                await update.message.reply_text(
-                    f"❌ <b>File Upload Rejected</b>\n\n{escape_html(error)}",
+                await message.reply_text(
+                    f"❌ <b>File Upload Rejected</b>\n\n{escape_html(error or '')}",
                     parse_mode="HTML",
                 )
 
@@ -582,43 +601,44 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     await audit_logger.log_security_violation(
                         user_id=user_id,
                         violation_type="invalid_file_upload",
-                        details=f"Filename: {document.file_name}, Error: {error}",
+                        details=f"Filename: {file_name}, Error: {error}",
                         severity="medium",
                     )
                 return
 
         # Check file size limits
         max_size = 10 * 1024 * 1024  # 10MB
-        if document.file_size > max_size:
-            await update.message.reply_text(
+        if file_size > max_size:
+            await message.reply_text(
                 f"❌ <b>File Too Large</b>\n\n"
                 f"Maximum file size: {max_size // 1024 // 1024}MB\n"
-                f"Your file: {document.file_size / 1024 / 1024:.1f}MB",
+                f"Your file: {file_size / 1024 / 1024:.1f}MB",
                 parse_mode="HTML",
             )
             return
 
         # Check rate limit for file processing
-        file_cost = _estimate_file_processing_cost(document.file_size)
+        file_cost = _estimate_file_processing_cost(file_size)
         if rate_limiter:
             allowed, limit_message = await rate_limiter.check_rate_limit(
                 user_id, file_cost
             )
             if not allowed:
-                await update.message.reply_text(f"⏱️ {limit_message}")
+                await message.reply_text(f"⏱️ {limit_message}")
                 return
 
         # Send processing indicator
-        await update.message.chat.send_action("upload_document")
+        await message.chat.send_action("upload_document")
 
-        progress_msg = await update.message.reply_text(
-            f"📄 Processing file: <code>{document.file_name}</code>...",
+        progress_msg = await message.reply_text(
+            f"📄 Processing file: <code>{file_name}</code>...",
             parse_mode="HTML",
         )
 
         # Check if enhanced file handler is available
         features = context.bot_data.get("features")
         file_handler = features.get_file_handler() if features else None
+        prompt: Optional[str] = None
 
         if file_handler:
             # Use enhanced file handler
@@ -626,13 +646,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 processed_file = await file_handler.handle_document_upload(
                     document,
                     user_id,
-                    update.message.caption or "Please review this file:",
+                    message.caption or "Please review this file:",
                 )
                 prompt = processed_file.prompt
 
                 # Update progress message with file type info
                 await progress_msg.edit_text(
-                    f"📄 Processing {processed_file.type} file: <code>{document.file_name}</code>...",
+                    f"📄 Processing {processed_file.type} file: <code>{file_name}</code>...",
                     parse_mode="HTML",
                 )
 
@@ -661,8 +681,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     )
 
                 # Create prompt with file content
-                caption = update.message.caption or "Please review this file:"
-                prompt = f"{caption}\n\n**File:** `{document.file_name}`\n\n```\n{content}\n```"
+                caption = message.caption or "Please review this file:"
+                prompt = f"{caption}\n\n**File:** `{file_name}`\n\n```\n{content}\n```"
 
             except UnicodeDecodeError:
                 await progress_msg.edit_text(
@@ -681,7 +701,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await progress_msg.delete()
 
         # Create a new progress message for Claude processing
-        claude_progress_msg = await update.message.reply_text(
+        claude_progress_msg = await message.reply_text(
             "🤖 Processing file with Claude...", parse_mode="HTML"
         )
 
@@ -731,12 +751,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await claude_progress_msg.delete()
 
             # Send responses
-            for i, message in enumerate(formatted_messages):
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=message.reply_markup,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+            for i, fmt_msg in enumerate(formatted_messages):
+                await message.reply_text(
+                    fmt_msg.text,
+                    parse_mode=fmt_msg.parse_mode,
+                    reply_markup=fmt_msg.reply_markup,
+                    reply_to_message_id=(message.message_id if i == 0 else None),
                 )
 
                 if i < len(formatted_messages) - 1:
@@ -752,10 +772,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if audit_logger:
             await audit_logger.log_file_access(
                 user_id=user_id,
-                file_path=document.file_name,
+                file_path=file_name,
                 action="upload_processed",
                 success=True,
-                file_size=document.file_size,
+                file_size=file_size,
             )
 
     except Exception as e:
@@ -765,16 +785,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             pass
 
         error_msg = f"❌ <b>Error processing file</b>\n\n{escape_html(str(e))}"
-        await update.message.reply_text(error_msg, parse_mode="HTML")
+        await message.reply_text(error_msg, parse_mode="HTML")
 
         # Log failed file processing
         if audit_logger:
             await audit_logger.log_file_access(
                 user_id=user_id,
-                file_path=document.file_name,
+                file_path=file_name,
                 action="upload_failed",
                 success=False,
-                file_size=document.file_size,
+                file_size=file_size,
             )
 
         logger.error("Error processing document", error=str(e), user_id=user_id)
@@ -782,7 +802,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle photo uploads."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
 
     # Check if enhanced image handler is available
@@ -792,23 +819,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if image_handler:
         try:
             # Send processing indicator
-            progress_msg = await update.message.reply_text(
+            progress_msg = await message.reply_text(
                 "📸 Processing image...", parse_mode="HTML"
             )
 
             # Get the largest photo size
-            photo = update.message.photo[-1]
+            photo = message.photo[-1]
 
             # Process image with enhanced handler
             processed_image = await image_handler.process_image(
-                photo, update.message.caption
+                photo, message.caption
             )
 
             # Delete progress message
             await progress_msg.delete()
 
             # Create Claude progress message
-            claude_progress_msg = await update.message.reply_text(
+            claude_progress_msg = await message.reply_text(
                 "🤖 Analyzing image with Claude...", parse_mode="HTML"
             )
 
@@ -853,13 +880,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 await claude_progress_msg.delete()
 
                 # Send responses
-                for i, message in enumerate(formatted_messages):
-                    await update.message.reply_text(
-                        message.text,
-                        parse_mode=message.parse_mode,
-                        reply_markup=message.reply_markup,
+                for i, fmt_msg in enumerate(formatted_messages):
+                    await message.reply_text(
+                        fmt_msg.text,
+                        parse_mode=fmt_msg.parse_mode,
+                        reply_markup=fmt_msg.reply_markup,
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            message.message_id if i == 0 else None
                         ),
                     )
 
@@ -876,13 +903,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         except Exception as e:
             logger.error("Image processing failed", error=str(e), user_id=user_id)
-            await update.message.reply_text(
+            await message.reply_text(
                 _format_error_message(e),
                 parse_mode="HTML",
             )
     else:
         # Fall back to unsupported message
-        await update.message.reply_text(
+        await message.reply_text(
             "📸 <b>Photo Upload</b>\n\n"
             "Photo processing is not yet supported.\n\n"
             "<b>Currently supported:</b>\n"
@@ -942,7 +969,7 @@ def _estimate_file_processing_cost(file_size: int) -> float:
 
 async def _generate_placeholder_response(
     message_text: str, context: ContextTypes.DEFAULT_TYPE
-) -> dict:
+) -> dict:  # type: ignore[type-arg]
     """Generate placeholder response until Claude integration is implemented."""
     settings: Settings = context.bot_data["settings"]
     current_dir = getattr(
@@ -1012,11 +1039,14 @@ async def _generate_placeholder_response(
 
 
 def _update_working_directory_from_claude_response(
-    claude_response, context, settings, user_id
-):
+    claude_response: Any, context: ContextTypes.DEFAULT_TYPE, settings: Any, user_id: int
+) -> None:
     """Update the working directory based on Claude's response content."""
     import re
     from pathlib import Path
+
+    if context.user_data is None:
+        context.user_data = {}
 
     # Look for directory changes in Claude's response
     # This searches for common patterns that indicate directory changes
@@ -1037,17 +1067,17 @@ def _update_working_directory_from_claude_response(
         for match in matches:
             try:
                 # Clean up the path
-                new_path = match.strip().strip("\"'`")
+                new_path_str = match.strip().strip("\"'`")
 
                 # Handle relative paths
-                if new_path.startswith("./") or new_path.startswith("../"):
-                    new_path = (current_dir / new_path).resolve()
-                elif not new_path.startswith("/"):
+                if new_path_str.startswith("./") or new_path_str.startswith("../"):
+                    new_path = (current_dir / new_path_str).resolve()
+                elif not new_path_str.startswith("/"):
                     # Relative path without ./
-                    new_path = (current_dir / new_path).resolve()
+                    new_path = (current_dir / new_path_str).resolve()
                 else:
                     # Absolute path
-                    new_path = Path(new_path).resolve()
+                    new_path = Path(new_path_str).resolve()
 
                 # Validate that the new path is within the approved directory
                 if (

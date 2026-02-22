@@ -32,7 +32,7 @@ class FeatureRegistry:
         # Initialize features based on config
         self._initialize_features()
 
-    def _initialize_features(self):
+    def _initialize_features(self) -> None:
         """Initialize enabled features"""
         logger.info("Initializing bot features")
 
@@ -126,7 +126,7 @@ class FeatureRegistry:
         """Get all enabled features"""
         return self.features.copy()
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Shutdown all features"""
         logger.info("Shutting down features")
 

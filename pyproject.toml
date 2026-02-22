@@ -63,6 +63,7 @@ isort = "^6.0.1"
 flake8 = "^7.2.0"
 mypy = "^1.16.0"
 autoflake = "^2.3.2"
+types-pyyaml = "^6.0.12.20250915"
 
 [tool.black]
 line-length = 88

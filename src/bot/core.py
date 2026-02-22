@@ -63,12 +63,14 @@ class ClaudeCodeBot:
         # Initialize feature registry
         self.feature_registry = FeatureRegistry(
             config=self.settings,
-            storage=self.deps.get("storage"),
-            security=self.deps.get("security"),
+            storage=self.deps["storage"],
+            security=self.deps["security"],
         )
 
         # Add feature registry to dependencies
         self.deps["features"] = self.feature_registry
+
+        assert self.app is not None  # guaranteed by builder.build() above
 
         # Set bot commands for menu
         await self._set_bot_commands()
@@ -80,22 +82,25 @@ class ClaudeCodeBot:
         self._add_middleware()
 
         # Set error handler
-        self.app.add_error_handler(self._error_handler)
+        self.app.add_error_handler(self._error_handler)  # type: ignore[arg-type]
 
         logger.info("Bot initialization complete")
 
     async def _set_bot_commands(self) -> None:
         """Set bot command menu via orchestrator."""
+        assert self.app is not None
         commands = await self.orchestrator.get_bot_commands()
         await self.app.bot.set_my_commands(commands)
         logger.info("Bot commands set", commands=[cmd.command for cmd in commands])
 
     def _register_handlers(self) -> None:
         """Register handlers via orchestrator (mode-aware)."""
+        assert self.app is not None
         self.orchestrator.register_handlers(self.app)
 
     def _add_middleware(self) -> None:
         """Add middleware to application."""
+        assert self.app is not None
         from .middleware.auth import auth_middleware
         from .middleware.rate_limit import rate_limit_middleware
         from .middleware.security import security_middleware
@@ -127,7 +132,7 @@ class ClaudeCodeBot:
 
         logger.info("Middleware added to bot")
 
-    def _create_middleware_handler(self, middleware_func: Callable) -> Callable:
+    def _create_middleware_handler(self, middleware_func: Callable[..., Any]) -> Callable[..., Any]:
         """Create middleware handler that injects dependencies.
 
         When middleware rejects a request (returns without calling the handler),
@@ -188,10 +193,11 @@ class ClaudeCodeBot:
 
         try:
             self.is_running = True
+            assert self.app is not None
 
             if self.settings.webhook_url:
                 # Webhook mode
-                await self.app.run_webhook(
+                self.app.run_webhook(
                     listen="0.0.0.0",
                     port=self.settings.webhook_port,
                     url_path=self.settings.webhook_path,
@@ -203,6 +209,7 @@ class ClaudeCodeBot:
                 # Polling mode - initialize and start polling manually
                 await self.app.initialize()
                 await self.app.start()
+                assert self.app.updater is not None
                 await self.app.updater.start_polling(
                     allowed_updates=Update.ALL_TYPES,
                     drop_pending_updates=True,
@@ -234,7 +241,7 @@ class ClaudeCodeBot:
 
             if self.app:
                 # Stop the updater if it's running
-                if self.app.updater.running:
+                if self.app.updater and self.app.updater.running:
                     await self.app.updater.stop()
 
                 # Stop the application
@@ -247,16 +254,20 @@ class ClaudeCodeBot:
             raise ClaudeCodeTelegramError(f"Failed to stop bot: {str(e)}") from e
 
     async def _error_handler(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self, update: object, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Handle errors globally."""
         error = context.error
+        tg_update = update if isinstance(update, Update) else None
+
         logger.error(
             "Global error handler triggered",
             error=str(error),
             update_type=type(update).__name__ if update else None,
             user_id=(
-                update.effective_user.id if update and update.effective_user else None
+                tg_update.effective_user.id
+                if tg_update and tg_update.effective_user
+                else None
             ),
         )
 
@@ -268,7 +279,7 @@ class ClaudeCodeBot:
             SecurityError,
         )
 
-        error_messages = {
+        error_messages: Dict[type, str] = {
             AuthenticationError: "🔒 Authentication required. Please contact the administrator.",
             SecurityError: "🛡️ Security violation detected. This incident has been logged.",
             RateLimitExceeded: "⏱️ Rate limit exceeded. Please wait before sending more messages.",
@@ -276,15 +287,15 @@ class ClaudeCodeBot:
             asyncio.TimeoutError: "⏰ Operation timed out. Please try again with a simpler request.",
         }
 
-        error_type = type(error)
+        error_type = type(error) if error is not None else type(None)
         user_message = error_messages.get(
             error_type, "❌ An unexpected error occurred. Please try again."
         )
 
         # Try to notify user
-        if update and update.effective_message:
+        if tg_update and tg_update.effective_message:
             try:
-                await update.effective_message.reply_text(user_message)
+                await tg_update.effective_message.reply_text(user_message)
             except Exception:
                 logger.exception("Failed to send error message to user")
 
@@ -292,10 +303,10 @@ class ClaudeCodeBot:
         from ..security.audit import AuditLogger
 
         audit_logger: Optional[AuditLogger] = context.bot_data.get("audit_logger")
-        if audit_logger and update and update.effective_user:
+        if audit_logger and tg_update and tg_update.effective_user:
             try:
                 await audit_logger.log_security_violation(
-                    user_id=update.effective_user.id,
+                    user_id=tg_update.effective_user.id,
                     violation_type="system_error",
                     details=f"Error type: {error_type.__name__}, Message: {str(error)}",
                     severity="medium",

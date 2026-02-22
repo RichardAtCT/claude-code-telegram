@@ -160,7 +160,7 @@ class QuickActionManager:
         Returns:
             Context dictionary
         """
-        context = {
+        context: Dict[str, Any] = {
             "has_code": True,  # Default assumption
             "has_tests": False,
             "has_package_manager": False,
@@ -169,33 +169,10 @@ class QuickActionManager:
             "has_dependencies": False,
         }
 
-        # Analyze recent messages for context clues
-        if session.context:
-            recent_messages = session.context.get("recent_messages", [])
-            for msg in recent_messages:
-                content = msg.get("content", "").lower()
-
-                # Check for test indicators
-                if any(word in content for word in ["test", "pytest", "unittest"]):
-                    context["has_tests"] = True
-
-                # Check for package manager indicators
-                if any(word in content for word in ["pip", "poetry", "npm", "yarn"]):
-                    context["has_package_manager"] = True
-                    context["has_dependencies"] = True
-
-                # Check for formatter indicators
-                if any(word in content for word in ["black", "prettier", "format"]):
-                    context["has_formatter"] = True
-
-                # Check for linter indicators
-                if any(
-                    word in content for word in ["flake8", "pylint", "eslint", "mypy"]
-                ):
-                    context["has_linter"] = True
-
-        # File-based context analysis could be added here
-        # For now, we'll use heuristics based on session history
+        # Note: SessionModel does not currently have a 'context' field with
+        # recent messages. File-based context analysis could be added here.
+        # For now, we use heuristics based on session metadata.
+        _ = session  # used for future context analysis
 
         return context
 
@@ -264,7 +241,7 @@ class QuickActionManager:
             raise ValueError(f"Unknown action: {action_id}")
 
         self.logger.info(
-            f"Executing quick action: {action.name} for session {session.id}"
+            f"Executing quick action: {action.name} for session {session.session_id}"
         )
 
         # Return the command - actual execution is handled by the bot

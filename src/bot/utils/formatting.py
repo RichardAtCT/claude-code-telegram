@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -35,7 +35,7 @@ class ResponseFormatter:
         )
 
     def format_claude_response(
-        self, text: str, context: Optional[dict] = None
+        self, text: str, context: Optional[Dict[str, Any]] = None
     ) -> List[FormattedMessage]:
         """Enhanced formatting with context awareness and semantic chunking."""
         # Clean and prepare text
@@ -188,7 +188,7 @@ class ResponseFormatter:
 
         return FormattedMessage(text, parse_mode="HTML")
 
-    def _semantic_chunk(self, text: str, context: Optional[dict]) -> List[dict]:
+    def _semantic_chunk(self, text: str, context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Split text into semantic chunks based on content type."""
         chunks = []
 
@@ -210,11 +210,11 @@ class ResponseFormatter:
 
         return chunks
 
-    def _identify_sections(self, text: str) -> List[dict]:
+    def _identify_sections(self, text: str) -> List[Dict[str, Any]]:
         """Identify different content types in the text."""
-        sections = []
+        sections: List[Dict[str, Any]] = []
         lines = text.split("\n")
-        current_section = {"type": "text", "content": "", "start_line": 0}
+        current_section: Dict[str, Any] = {"type": "text", "content": "", "start_line": 0}
         in_code_block = False
 
         for i, line in enumerate(lines):
@@ -288,7 +288,7 @@ class ResponseFormatter:
         ]
         return any(indicator in line for indicator in file_indicators)
 
-    def _chunk_code_block(self, section: dict) -> List[dict]:
+    def _chunk_code_block(self, section: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Handle code block chunking."""
         content = section["content"]
         if len(content) <= self.max_code_block_length:
@@ -316,7 +316,7 @@ class ResponseFormatter:
 
         return chunks
 
-    def _chunk_explanation(self, section: dict) -> List[dict]:
+    def _chunk_explanation(self, section: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Handle explanation text chunking."""
         content = section["content"]
         if len(content) <= self.max_message_length:
@@ -342,12 +342,12 @@ class ResponseFormatter:
 
         return chunks
 
-    def _chunk_mixed_content(self, section: dict) -> List[dict]:
+    def _chunk_mixed_content(self, section: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Handle mixed content sections."""
         # For now, treat as regular text
         return self._chunk_text(section)
 
-    def _chunk_text(self, section: dict) -> List[dict]:
+    def _chunk_text(self, section: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Handle regular text chunking."""
         content = section["content"]
         if len(content) <= self.max_message_length:
@@ -372,11 +372,11 @@ class ResponseFormatter:
 
         return chunks
 
-    def _format_file_operations_section(self, section: dict) -> dict:
+    def _format_file_operations_section(self, section: Dict[str, Any]) -> Dict[str, Any]:
         """Format file operations section."""
         return {"type": "file_operations", "content": section["content"]}
 
-    def _format_chunk(self, chunk: dict) -> List[FormattedMessage]:
+    def _format_chunk(self, chunk: Dict[str, Any]) -> List[FormattedMessage]:
         """Format individual chunks into FormattedMessage objects."""
         chunk_type = chunk["type"]
         content = chunk["content"]
@@ -407,7 +407,7 @@ class ResponseFormatter:
         return self._split_message(text)
 
     def _get_contextual_keyboard(
-        self, context: Optional[dict]
+        self, context: Optional[Dict[str, Any]]
     ) -> Optional[InlineKeyboardMarkup]:
         """Get context-aware quick action keyboard."""
         if not context:
@@ -456,7 +456,7 @@ class ResponseFormatter:
         """
 
         def _truncate_code(m: re.Match) -> str:  # type: ignore[type-arg]
-            full = m.group(0)
+            full: str = m.group(0)
             if len(full) > self.max_code_block_length:
                 # Re-extract and truncate the inner content
                 inner = m.group(1)
@@ -466,12 +466,13 @@ class ResponseFormatter:
                 )
             return full
 
-        return re.sub(
+        result: str = re.sub(
             r"<pre><code[^>]*>(.*?)</code></pre>",
             _truncate_code,
             text,
             flags=re.DOTALL,
         )
+        return result
 
     def _split_message(self, text: str) -> List[FormattedMessage]:
         """Split long messages while preserving formatting."""

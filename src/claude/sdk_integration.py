@@ -173,8 +173,8 @@ class ClaudeSDKManager:
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
                 cwd=str(working_directory),
-                allowed_tools=self.config.claude_allowed_tools,
-                disallowed_tools=self.config.claude_disallowed_tools,
+                allowed_tools=self.config.claude_allowed_tools or [],
+                disallowed_tools=self.config.claude_disallowed_tools or [],
                 cli_path=cli_path,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
@@ -217,6 +217,7 @@ class ClaudeSDKManager:
                     # generator, Python terminates that generator permanently,
                     # causing us to lose all subsequent messages including
                     # the ResultMessage.
+                    assert client._query is not None
                     async for raw_data in client._query.receive_messages():
                         try:
                             message = parse_message(raw_data)
@@ -398,18 +399,18 @@ class ClaudeSDKManager:
                 raise ClaudeProcessError(f"Unexpected error: {str(e)}")
 
     async def _handle_stream_message(
-        self, message: Message, stream_callback: Callable[[StreamUpdate], None]
+        self, message: Message, stream_callback: Callable[[StreamUpdate], Any]
     ) -> None:
         """Handle streaming message from claude-agent-sdk."""
         try:
             if isinstance(message, AssistantMessage):
                 # Extract content from assistant message
-                content = getattr(message, "content", [])
-                text_parts = []
-                tool_calls = []
+                msg_content = getattr(message, "content", [])
+                text_parts: List[str] = []
+                tool_calls: List[Dict[str, Any]] = []
 
-                if content and isinstance(content, list):
-                    for block in content:
+                if msg_content and isinstance(msg_content, list):
+                    for block in msg_content:
                         if isinstance(block, ToolUseBlock):
                             tool_calls.append(
                                 {
@@ -428,20 +429,20 @@ class ClaudeSDKManager:
                         tool_calls=tool_calls if tool_calls else None,
                     )
                     await stream_callback(update)
-                elif content:
+                elif msg_content:
                     # Fallback for non-list content
                     update = StreamUpdate(
                         type="assistant",
-                        content=str(content),
+                        content=str(msg_content),
                     )
                     await stream_callback(update)
 
             elif isinstance(message, UserMessage):
-                content = getattr(message, "content", "")
-                if content:
+                user_content = getattr(message, "content", "")
+                if user_content:
                     update = StreamUpdate(
                         type="user",
-                        content=content,
+                        content=str(user_content),
                     )
                     await stream_callback(update)
 
@@ -499,7 +500,8 @@ class ClaudeSDKManager:
         try:
             with open(config_path) as f:
                 config_data = json.load(f)
-            return config_data.get("mcpServers", {})
+            result: Dict[str, Any] = config_data.get("mcpServers", {})
+            return result
         except (json.JSONDecodeError, OSError) as e:
             logger.error(
                 "Failed to load MCP config", path=str(config_path), error=str(e)

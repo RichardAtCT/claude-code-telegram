@@ -7,11 +7,8 @@ import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from ...claude.facade import ClaudeIntegration
 from ...config.settings import Settings
 from ...projects import PrivateTopicsUnavailableError, load_project_registry
-from ...security.audit import AuditLogger
-from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
 
 logger = structlog.get_logger()
@@ -32,6 +29,8 @@ def _get_thread_project_root(
     """Get thread project root when strict thread mode is active."""
     if not settings.enable_project_threads:
         return None
+    if context.user_data is None:
+        return None
     thread_context = context.user_data.get("_thread_context")
     if not thread_context:
         return None
@@ -47,14 +46,20 @@ def _is_private_chat(update: Update) -> bool:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
     user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
     settings: Settings = context.bot_data["settings"]
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    audit_logger = context.bot_data.get("audit_logger")
     manager = context.bot_data.get("project_threads_manager")
     sync_section = ""
 
     if settings.enable_project_threads and settings.project_threads_mode == "private":
         if not _is_private_chat(update):
-            await update.message.reply_text(
+            await message.reply_text(
                 "🚫 <b>Private Topics Mode</b>\n\n"
                 "Use this bot in a private chat and run <code>/start</code> there.",
                 parse_mode="HTML",
@@ -67,7 +72,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         and _is_private_chat(update)
     ):
         if manager is None:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ <b>Project thread mode is misconfigured</b>\n\n"
                 "Thread manager is not initialized.",
                 parse_mode="HTML",
@@ -75,9 +80,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         try:
+            chat = update.effective_chat
+            if not chat:
+                return
             sync_result = await manager.sync_topics(
                 context.bot,
-                chat_id=update.effective_chat.id,
+                chat_id=chat.id,
             )
             sync_section = (
                 "\n\n🧵 <b>Project Topics Synced</b>\n"
@@ -88,7 +96,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 "Use a project topic thread to start coding."
             )
         except PrivateTopicsUnavailableError:
-            await update.message.reply_text(
+            await message.reply_text(
                 manager.private_topics_unavailable_message(),
                 parse_mode="HTML",
             )
@@ -143,7 +151,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         welcome_message, parse_mode="HTML", reply_markup=reply_markup
     )
 
@@ -156,6 +164,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
+    message = update.effective_message
+    if not message:
+        return
+
     help_text = (
         "🤖 <b>Claude Code Telegram Bot Help</b>\n\n"
         "<b>Navigation Commands:</b>\n"
@@ -198,29 +210,34 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Need more help? Contact your administrator."
     )
 
-    await update.message.reply_text(help_text, parse_mode="HTML")
+    await message.reply_text(help_text, parse_mode="HTML")
 
 
 async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Synchronize project topics in the configured forum chat."""
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+
     settings: Settings = context.bot_data["settings"]
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
-    user_id = update.effective_user.id
+    audit_logger = context.bot_data.get("audit_logger")
+    user_id = user.id
 
     if not settings.enable_project_threads:
-        await update.message.reply_text(
+        await message.reply_text(
             "ℹ️ <b>Project thread mode is disabled.</b>", parse_mode="HTML"
         )
         return
 
     manager = context.bot_data.get("project_threads_manager")
     if not manager:
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ <b>Project thread manager not initialized.</b>", parse_mode="HTML"
         )
         return
 
-    status_msg = await update.message.reply_text(
+    status_msg = await message.reply_text(
         "🔄 <b>Syncing project topics...</b>", parse_mode="HTML"
     )
 
@@ -232,7 +249,10 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 parse_mode="HTML",
             )
             return
-        target_chat_id = update.effective_chat.id
+        chat = update.effective_chat
+        if not chat:
+            return
+        target_chat_id = chat.id
     else:
         if settings.project_threads_chat_id is None:
             await status_msg.edit_text(
@@ -241,9 +261,10 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 parse_mode="HTML",
             )
             return
+        chat = update.effective_chat
         if (
-            not update.effective_chat
-            or update.effective_chat.id != settings.project_threads_chat_id
+            not chat
+            or chat.id != settings.project_threads_chat_id
         ):
             await status_msg.edit_text(
                 "❌ <b>Group Thread Mode</b>\n\n"
@@ -303,6 +324,12 @@ async def sync_threads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /new command - explicitly starts a fresh session, clearing previous context."""
+    message = update.effective_message
+    if not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
     settings: Settings = context.bot_data["settings"]
 
     # Get current directory (default to approved directory)
@@ -343,7 +370,7 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         f"🆕 <b>New Claude Code Session</b>\n\n"
         f"📂 Working directory: <code>{relative_path}/</code>{cleared_info}\n\n"
         f"Context has been cleared. Send a message to start fresh, "
@@ -355,10 +382,17 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /continue command with optional prompt."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
-    claude_integration: ClaudeIntegration = context.bot_data.get("claude_integration")
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    claude_integration = context.bot_data.get("claude_integration")
+    audit_logger = context.bot_data.get("audit_logger")
 
     # Parse optional prompt from command arguments
     # If no prompt provided, use a default to continue the conversation
@@ -371,7 +405,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         if not claude_integration:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ <b>Claude Integration Not Available</b>\n\n"
                 "Claude integration is not properly configured."
             )
@@ -382,7 +416,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         if claude_session_id:
             # We have a session in context, continue it directly
-            status_msg = await update.message.reply_text(
+            status_msg = await message.reply_text(
                 f"🔄 <b>Continuing Session</b>\n\n"
                 f"Session ID: <code>{claude_session_id[:8]}...</code>\n"
                 f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
@@ -400,7 +434,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
         else:
             # No session in context, try to find the most recent session
-            status_msg = await update.message.reply_text(
+            status_msg = await message.reply_text(
                 "🔍 <b>Looking for Recent Session</b>\n\n"
                 "Searching for your most recent session in this directory...",
                 parse_mode="HTML",
@@ -429,7 +463,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
 
             for msg in formatted_messages:
-                await update.message.reply_text(
+                await message.reply_text(
                     msg.text,
                     parse_mode=msg.parse_mode,
                     reply_markup=msg.reply_markup,
@@ -481,7 +515,7 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             pass
 
         # Send error response
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ <b>Error Continuing Session</b>\n\n"
             f"An error occurred while trying to continue your session:\n\n"
             f"<code>{error_msg}</code>\n\n"
@@ -504,9 +538,16 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /ls command."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    audit_logger = context.bot_data.get("audit_logger")
 
     # Get current directory
     current_dir = context.user_data.get(
@@ -544,18 +585,18 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # Format response
         relative_path = current_dir.relative_to(settings.approved_directory)
         if not items:
-            message = f"📂 <code>{relative_path}/</code>\n\n<i>(empty directory)</i>"
+            msg_text = f"📂 <code>{relative_path}/</code>\n\n<i>(empty directory)</i>"
         else:
-            message = f"📂 <code>{relative_path}/</code>\n\n"
+            msg_text = f"📂 <code>{relative_path}/</code>\n\n"
 
             # Limit items shown to prevent message being too long
             max_items = 50
             if len(items) > max_items:
                 shown_items = items[:max_items]
-                message += "\n".join(shown_items)
-                message += f"\n\n<i>... and {len(items) - max_items} more items</i>"
+                msg_text += "\n".join(shown_items)
+                msg_text += f"\n\n<i>... and {len(items) - max_items} more items</i>"
             else:
-                message += "\n".join(items)
+                msg_text += "\n".join(items)
 
         # Add navigation buttons if not at root
         keyboard = []
@@ -578,8 +619,8 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
-        await update.message.reply_text(
-            message, parse_mode="HTML", reply_markup=reply_markup
+        await message.reply_text(
+            msg_text, parse_mode="HTML", reply_markup=reply_markup
         )
 
         # Log successful command
@@ -588,7 +629,7 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     except Exception as e:
         error_msg = f"❌ Error listing directory: {str(e)}"
-        await update.message.reply_text(error_msg)
+        await message.reply_text(error_msg)
 
         # Log failed command
         if audit_logger:
@@ -599,14 +640,21 @@ async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /cd command."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
-    security_validator: SecurityValidator = context.bot_data.get("security_validator")
-    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    security_validator = context.bot_data.get("security_validator")
+    audit_logger = context.bot_data.get("audit_logger")
 
     # Parse arguments
     if not context.args:
-        await update.message.reply_text(
+        await message.reply_text(
             "<b>Usage:</b> <code>/cd &lt;directory&gt;</code>\n\n"
             "<b>Examples:</b>\n"
             "• <code>/cd myproject</code> - Enter subdirectory\n"
@@ -628,6 +676,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         # Handle known navigation shortcuts first
+        resolved_path: Path
         if target_path == "/":
             resolved_path = directory_root
         elif target_path == "..":
@@ -637,12 +686,12 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         else:
             # Validate path using security validator
             if security_validator:
-                valid, resolved_path, error = security_validator.validate_path(
+                valid, validated_path, error = security_validator.validate_path(
                     target_path, current_dir
                 )
 
                 if not valid:
-                    await update.message.reply_text(
+                    await message.reply_text(
                         f"❌ <b>Access Denied</b>\n\n{error}"
                     )
 
@@ -655,12 +704,12 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                             severity="medium",
                         )
                     return
+                resolved_path = validated_path
             else:
-                resolved_path = current_dir / target_path
-                resolved_path = resolved_path.resolve()
+                resolved_path = (current_dir / target_path).resolve()
 
         if project_root and not _is_within_root(resolved_path, project_root):
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ <b>Access Denied</b>\n\n"
                 "In thread mode, navigation is limited to the current project root.",
                 parse_mode="HTML",
@@ -669,13 +718,13 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         # Check if directory exists and is actually a directory
         if not resolved_path.exists():
-            await update.message.reply_text(
+            await message.reply_text(
                 f"❌ <b>Directory Not Found</b>\n\n<code>{target_path}</code> does not exist."
             )
             return
 
         if not resolved_path.is_dir():
-            await update.message.reply_text(
+            await message.reply_text(
                 f"❌ <b>Not a Directory</b>\n\n<code>{target_path}</code> is not a directory."
             )
             return
@@ -684,9 +733,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data["current_directory"] = resolved_path
 
         # Look up existing session for the new directory instead of clearing
-        claude_integration: ClaudeIntegration = context.bot_data.get(
-            "claude_integration"
-        )
+        claude_integration = context.bot_data.get("claude_integration")
         resumed_session_info = ""
         if claude_integration:
             existing_session = await claude_integration._find_resumable_session(
@@ -709,7 +756,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         relative_base = project_root or settings.approved_directory
         relative_path = resolved_path.relative_to(relative_base)
         relative_display = "/" if str(relative_path) == "." else f"{relative_path}/"
-        await update.message.reply_text(
+        await message.reply_text(
             f"✅ <b>Directory Changed</b>\n\n"
             f"📂 Current directory: <code>{relative_display}</code>"
             f"{resumed_session_info}",
@@ -722,7 +769,7 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     except Exception as e:
         error_msg = f"❌ <b>Error changing directory</b>\n\n{str(e)}"
-        await update.message.reply_text(error_msg, parse_mode="HTML")
+        await message.reply_text(error_msg, parse_mode="HTML")
 
         # Log failed command
         if audit_logger:
@@ -735,6 +782,12 @@ async def print_working_directory(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """Handle /pwd command."""
+    message = update.effective_message
+    if not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
     settings: Settings = context.bot_data["settings"]
     current_dir = context.user_data.get(
         "current_directory", settings.approved_directory
@@ -752,7 +805,7 @@ async def print_working_directory(
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         f"📍 <b>Current Directory</b>\n\n"
         f"Relative: <code>{relative_path}/</code>\n"
         f"Absolute: <code>{absolute_path}</code>",
@@ -763,6 +816,10 @@ async def print_working_directory(
 
 async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /projects command."""
+    message = update.effective_message
+    if not message:
+        return
+
     settings: Settings = context.bot_data["settings"]
 
     try:
@@ -772,7 +829,7 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             if manager and getattr(manager, "registry", None):
                 registry = manager.registry
             if not registry:
-                await update.message.reply_text(
+                await message.reply_text(
                     "❌ <b>Project registry is not initialized.</b>",
                     parse_mode="HTML",
                 )
@@ -780,7 +837,7 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
             projects = registry.list_enabled()
             if not projects:
-                await update.message.reply_text(
+                await message.reply_text(
                     "📁 <b>No Projects Found</b>\n\n"
                     "No enabled projects found in projects config.",
                     parse_mode="HTML",
@@ -796,20 +853,20 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ]
             )
 
-            await update.message.reply_text(
+            await message.reply_text(
                 f"📁 <b>Configured Projects</b>\n\n{project_list}",
                 parse_mode="HTML",
             )
             return
 
         # Get directories in approved directory (these are "projects")
-        projects = []
+        projects_list = []
         for item in sorted(settings.approved_directory.iterdir()):
             if item.is_dir() and not item.name.startswith("."):
-                projects.append(item.name)
+                projects_list.append(item.name)
 
-        if not projects:
-            await update.message.reply_text(
+        if not projects_list:
+            await message.reply_text(
                 "📁 <b>No Projects Found</b>\n\n"
                 "No subdirectories found in your approved directory.\n"
                 "Create some directories to organize your projects!"
@@ -818,11 +875,11 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         # Create inline keyboard with project buttons
         keyboard = []
-        for i in range(0, len(projects), 2):
+        for i in range(0, len(projects_list), 2):
             row = []
             for j in range(2):
-                if i + j < len(projects):
-                    project = projects[i + j]
+                if i + j < len(projects_list):
+                    project = projects_list[i + j]
                     row.append(
                         InlineKeyboardButton(
                             f"📁 {project}", callback_data=f"cd:{project}"
@@ -842,24 +899,31 @@ async def show_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        project_list = "\n".join([f"• <code>{project}/</code>" for project in projects])
+        project_list_text = "\n".join([f"• <code>{project}/</code>" for project in projects_list])
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"📁 <b>Available Projects</b>\n\n"
-            f"{project_list}\n\n"
+            f"{project_list_text}\n\n"
             f"Click a project below to navigate to it:",
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error loading projects: {str(e)}")
+        await message.reply_text(f"❌ Error loading projects: {str(e)}")
         logger.error("Error in show_projects command", error=str(e))
 
 
 async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /status command."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
 
     # Get session info
@@ -887,9 +951,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Check if there's a resumable session from the database
     resumable_info = ""
     if not claude_session_id:
-        claude_integration: ClaudeIntegration = context.bot_data.get(
-            "claude_integration"
-        )
+        claude_integration = context.bot_data.get("claude_integration")
         if claude_integration:
             existing = await claude_integration._find_resumable_session(
                 user_id, current_dir
@@ -901,13 +963,15 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
 
     # Format status message
+    msg_date = message.date
+    date_str = msg_date.strftime('%H:%M:%S UTC') if msg_date else "N/A"
     status_lines = [
         "📊 <b>Session Status</b>",
         "",
         f"📂 Directory: <code>{relative_path}/</code>",
         f"🤖 Claude Session: {'✅ Active' if claude_session_id else '❌ None'}",
         usage_info.rstrip(),
-        f"🕐 Last Update: {update.message.date.strftime('%H:%M:%S UTC')}",
+        f"🕐 Last Update: {date_str}",
     ]
 
     if claude_session_id:
@@ -945,21 +1009,26 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         "\n".join(status_lines), parse_mode="HTML", reply_markup=reply_markup
     )
 
 
 async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /export command."""
-    update.effective_user.id
+    message = update.effective_message
+    if not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
     features = context.bot_data.get("features")
 
     # Check if session export is available
     session_exporter = features.get_session_export() if features else None
 
     if not session_exporter:
-        await update.message.reply_text(
+        await message.reply_text(
             "📤 <b>Export Session</b>\n\n"
             "Session export functionality is not available.\n\n"
             "<b>Planned features:</b>\n"
@@ -974,7 +1043,7 @@ async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     claude_session_id = context.user_data.get("claude_session_id")
 
     if not claude_session_id:
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ <b>No Active Session</b>\n\n"
             "There's no active Claude session to export.\n\n"
             "<b>What you can do:</b>\n"
@@ -997,7 +1066,7 @@ async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         "📤 <b>Export Session</b>\n\n"
         f"Ready to export session: <code>{claude_session_id[:8]}...</code>\n\n"
         "<b>Choose export format:</b>",
@@ -1008,14 +1077,21 @@ async def export_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /end command to terminate the current session."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
 
     # Check if there's an active session
     claude_session_id = context.user_data.get("claude_session_id")
 
     if not claude_session_id:
-        await update.message.reply_text(
+        await message.reply_text(
             "ℹ️ <b>No Active Session</b>\n\n"
             "There's no active Claude session to end.\n\n"
             "<b>What you can do:</b>\n"
@@ -1051,7 +1127,7 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text(
+    await message.reply_text(
         "✅ <b>Session Ended</b>\n\n"
         f"Your Claude session has been terminated.\n\n"
         f"<b>Current Status:</b>\n"
@@ -1071,12 +1147,19 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /actions command to show quick actions."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
     features = context.bot_data.get("features")
 
     if not features or not features.is_enabled("quick_actions"):
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ <b>Quick Actions Disabled</b>\n\n"
             "Quick actions feature is not enabled.\n"
             "Contact your administrator to enable this feature."
@@ -1091,7 +1174,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     try:
         quick_action_manager = features.get_quick_actions()
         if not quick_action_manager:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ <b>Quick Actions Unavailable</b>\n\n"
                 "Quick actions service is not available."
             )
@@ -1103,7 +1186,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
         if not actions:
-            await update.message.reply_text(
+            await message.reply_text(
                 "🤖 <b>No Actions Available</b>\n\n"
                 "No quick actions are available for the current context.\n\n"
                 "<b>Try:</b>\n"
@@ -1117,7 +1200,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         keyboard = quick_action_manager.create_inline_keyboard(actions, max_columns=2)
 
         relative_path = current_dir.relative_to(settings.approved_directory)
-        await update.message.reply_text(
+        await message.reply_text(
             f"⚡ <b>Quick Actions</b>\n\n"
             f"📂 Context: <code>{relative_path}/</code>\n\n"
             f"Select an action to execute:",
@@ -1126,18 +1209,25 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ <b>Error Loading Actions</b>\n\n{str(e)}")
+        await message.reply_text(f"❌ <b>Error Loading Actions</b>\n\n{str(e)}")
         logger.error("Error in quick_actions command", error=str(e), user_id=user_id)
 
 
 async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /git command to show git repository information."""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    message = update.effective_message
+    if not user or not message:
+        return
+    if context.user_data is None:
+        context.user_data = {}
+
+    user_id = user.id
     settings: Settings = context.bot_data["settings"]
     features = context.bot_data.get("features")
 
     if not features or not features.is_enabled("git"):
-        await update.message.reply_text(
+        await message.reply_text(
             "❌ <b>Git Integration Disabled</b>\n\n"
             "Git integration feature is not enabled.\n"
             "Contact your administrator to enable this feature."
@@ -1152,7 +1242,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         git_integration = features.get_git_integration()
         if not git_integration:
-            await update.message.reply_text(
+            await message.reply_text(
                 "❌ <b>Git Integration Unavailable</b>\n\n"
                 "Git integration service is not available."
             )
@@ -1160,7 +1250,7 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         # Check if current directory is a git repository
         if not (current_dir / ".git").exists():
-            await update.message.reply_text(
+            await message.reply_text(
                 f"📂 <b>Not a Git Repository</b>\n\n"
                 f"Current directory <code>{current_dir.relative_to(settings.approved_directory)}/</code> is not a git repository.\n\n"
                 f"<b>Options:</b>\n"
@@ -1212,22 +1302,23 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
+        await message.reply_text(
             status_message, parse_mode="HTML", reply_markup=reply_markup
         )
 
     except Exception as e:
-        await update.message.reply_text(f"❌ <b>Git Error</b>\n\n{str(e)}")
+        await message.reply_text(f"❌ <b>Git Error</b>\n\n{str(e)}")
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
-def _format_file_size(size: int) -> str:
+def _format_file_size(size_bytes: int) -> str:
     """Format file size in human-readable format."""
+    size_f = float(size_bytes)
     for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.1f}{unit}" if unit != "B" else f"{size}B"
-        size /= 1024
-    return f"{size:.1f}TB"
+        if size_f < 1024:
+            return f"{size_f:.1f}{unit}" if unit != "B" else f"{int(size_f)}B"
+        size_f /= 1024
+    return f"{size_f:.1f}TB"
 
 
 def _escape_markdown(text: str) -> str:

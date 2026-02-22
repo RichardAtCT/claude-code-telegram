@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -112,6 +112,8 @@ class MessageOrchestrator:
             for key, value in self.deps.items():
                 context.bot_data[key] = value
             context.bot_data["settings"] = self.settings
+            if context.user_data is None:
+                context.user_data = {}
             context.user_data.pop("_thread_context", None)
 
             is_sync_bypass = handler.__name__ == "sync_threads"
@@ -157,6 +159,9 @@ class MessageOrchestrator:
         message = update.effective_message
         if not chat or not message:
             return False
+
+        if context.user_data is None:
+            context.user_data = {}
 
         if self.settings.project_threads_mode == "group":
             if chat.id != self.settings.project_threads_chat_id:
@@ -215,6 +220,8 @@ class MessageOrchestrator:
 
     def _persist_thread_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Persist compatibility keys back into per-thread state."""
+        if context.user_data is None:
+            return
         thread_context = context.user_data.get("_thread_context")
         if not thread_context:
             return
@@ -266,21 +273,21 @@ class MessageOrchestrator:
                 await query.answer()
             except Exception:
                 pass
-            if query.message:
+            if isinstance(query.message, Message):
                 await query.message.reply_text(message, parse_mode="HTML")
             return
 
         if update.effective_message:
             await update.effective_message.reply_text(message, parse_mode="HTML")
 
-    def register_handlers(self, app: Application) -> None:
+    def register_handlers(self, app: Application) -> None:  # type: ignore[type-arg]
         """Register handlers based on mode."""
         if self.settings.agentic_mode:
             self._register_agentic_handlers(app)
         else:
             self._register_classic_handlers(app)
 
-    def _register_agentic_handlers(self, app: Application) -> None:
+    def _register_agentic_handlers(self, app: Application) -> None:  # type: ignore[type-arg]
         """Register agentic handlers: commands + text/file/photo."""
         from .handlers import command
 
@@ -331,7 +338,7 @@ class MessageOrchestrator:
 
         logger.info("Agentic handlers registered")
 
-    def _register_classic_handlers(self, app: Application) -> None:
+    def _register_classic_handlers(self, app: Application) -> None:  # type: ignore[type-arg]
         """Register full classic handler set (moved from core.py)."""
         from .handlers import callback, command, message
 
@@ -419,6 +426,12 @@ class MessageOrchestrator:
     ) -> None:
         """Brief welcome, no buttons."""
         user = update.effective_user
+        message = update.effective_message
+        if not user or not message:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
         sync_line = ""
         if (
             self.settings.enable_project_threads
@@ -428,7 +441,7 @@ class MessageOrchestrator:
                 not update.effective_chat
                 or getattr(update.effective_chat, "type", "") != "private"
             ):
-                await update.message.reply_text(
+                await message.reply_text(
                     "🚫 <b>Private Topics Mode</b>\n\n"
                     "Use this bot in a private chat and run <code>/start</code> there.",
                     parse_mode="HTML",
@@ -446,7 +459,7 @@ class MessageOrchestrator:
                         f" (created {result.created}, reused {result.reused})."
                     )
                 except PrivateTopicsUnavailableError:
-                    await update.message.reply_text(
+                    await message.reply_text(
                         manager.private_topics_unavailable_message(),
                         parse_mode="HTML",
                     )
@@ -459,7 +472,7 @@ class MessageOrchestrator:
         dir_display = f"<code>{current_dir}/</code>"
 
         safe_name = escape_html(user.first_name)
-        await update.message.reply_text(
+        await message.reply_text(
             f"Hi {safe_name}! I'm your AI coding assistant.\n"
             f"Just tell me what you need — I can read, write, and run code.\n\n"
             f"Working in: {dir_display}\n"
@@ -472,16 +485,29 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Reset session, one-line confirmation."""
+        message = update.effective_message
+        if not message:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
 
-        await update.message.reply_text("Session reset. What's next?")
+        await message.reply_text("Session reset. What's next?")
 
     async def agentic_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Compact one-line status, no buttons."""
+        user = update.effective_user
+        message = update.effective_message
+        if not user or not message:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
@@ -495,19 +521,21 @@ class MessageOrchestrator:
         rate_limiter = context.bot_data.get("rate_limiter")
         if rate_limiter:
             try:
-                user_status = rate_limiter.get_user_status(update.effective_user.id)
+                user_status = rate_limiter.get_user_status(user.id)
                 cost_usage = user_status.get("cost_usage", {})
                 current_cost = cost_usage.get("current", 0.0)
                 cost_str = f" · Cost: ${current_cost:.2f}"
             except Exception:
                 pass
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"📂 {dir_display} · Session: {session_status}{cost_str}"
         )
 
     def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Return effective verbose level: per-user override or global default."""
+        if context.user_data is None:
+            return self.settings.verbose_level
         user_override = context.user_data.get("verbose_level")
         if user_override is not None:
             return int(user_override)
@@ -517,11 +545,17 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Set output verbosity: /verbose [0|1|2]."""
-        args = update.message.text.split()[1:] if update.message.text else []
+        message = update.effective_message
+        if not message:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
+        args = message.text.split()[1:] if message.text else []
         if not args:
             current = self._get_verbose_level(context)
             labels = {0: "quiet", 1: "normal", 2: "detailed"}
-            await update.message.reply_text(
+            await message.reply_text(
                 f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
                 "Usage: <code>/verbose 0|1|2</code>\n"
                 "  0 = quiet (final response only)\n"
@@ -536,14 +570,14 @@ class MessageOrchestrator:
             if level not in (0, 1, 2):
                 raise ValueError
         except ValueError:
-            await update.message.reply_text(
+            await message.reply_text(
                 "Please use: /verbose 0, /verbose 1, or /verbose 2"
             )
             return
 
         context.user_data["verbose_level"] = level
         labels = {0: "quiet", 1: "normal", 2: "detailed"}
-        await update.message.reply_text(
+        await message.reply_text(
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
             parse_mode="HTML",
         )
@@ -593,21 +627,21 @@ class MessageOrchestrator:
             path = tool_input.get("file_path") or tool_input.get("path", "")
             if path:
                 # Show just the filename, not the full path
-                return path.rsplit("/", 1)[-1]
+                return str(path).rsplit("/", 1)[-1]
         if tool_name in ("Glob", "Grep"):
             pattern = tool_input.get("pattern", "")
             if pattern:
-                return pattern[:60]
+                return str(pattern)[:60]
         if tool_name == "Bash":
             cmd = tool_input.get("command", "")
             if cmd:
-                return _redact_secrets(cmd[:100])[:80]
+                return _redact_secrets(str(cmd)[:100])[:80]
         if tool_name in ("WebFetch", "WebSearch"):
-            return (tool_input.get("url", "") or tool_input.get("query", ""))[:60]
+            return str(tool_input.get("url", "") or tool_input.get("query", ""))[:60]
         if tool_name == "Task":
             desc = tool_input.get("description", "")
             if desc:
-                return desc[:60]
+                return str(desc)[:60]
         # Generic: show first key's value
         for v in tool_input.values():
             if isinstance(v, str) and v:
@@ -691,8 +725,15 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Direct Claude passthrough. Simple progress. No suggestions."""
-        user_id = update.effective_user.id
-        message_text = update.message.text
+        user = update.effective_user
+        message = update.effective_message
+        if not user or not message:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
+        user_id = user.id
+        message_text = message.text or ""
 
         logger.info(
             "Agentic text message",
@@ -705,14 +746,14 @@ class MessageOrchestrator:
         if rate_limiter:
             allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.001)
             if not allowed:
-                await update.message.reply_text(f"⏱️ {limit_message}")
+                await message.reply_text(f"⏱️ {limit_message}")
                 return
 
-        chat = update.message.chat
+        chat = message.chat
         await chat.send_action("typing")
 
         verbose_level = self._get_verbose_level(context)
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await message.reply_text("Working...")
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
@@ -807,15 +848,15 @@ class MessageOrchestrator:
 
         await progress_msg.delete()
 
-        for i, message in enumerate(formatted_messages):
-            if not message.text or not message.text.strip():
+        for i, fmt_msg in enumerate(formatted_messages):
+            if not fmt_msg.text or not fmt_msg.text.strip():
                 continue
             try:
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
+                await message.reply_text(
+                    fmt_msg.text,
+                    parse_mode=fmt_msg.parse_mode,
                     reply_markup=None,  # No keyboards in agentic mode
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(message.message_id if i == 0 else None),
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -826,20 +867,20 @@ class MessageOrchestrator:
                     message_index=i,
                 )
                 try:
-                    await update.message.reply_text(
-                        message.text,
+                    await message.reply_text(
+                        fmt_msg.text,
                         reply_markup=None,
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            message.message_id if i == 0 else None
                         ),
                     )
                 except Exception as plain_err:
-                    await update.message.reply_text(
+                    await message.reply_text(
                         f"Failed to deliver response "
                         f"(Telegram error: {str(plain_err)[:150]}). "
                         f"Please try again.",
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            message.message_id if i == 0 else None
                         ),
                     )
 
@@ -857,34 +898,46 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Process file upload -> Claude, minimal chrome."""
-        user_id = update.effective_user.id
-        document = update.message.document
+        user = update.effective_user
+        msg = update.effective_message
+        if not user or not msg:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
+        user_id = user.id
+        document = msg.document
+        if not document:
+            return
+
+        file_name = document.file_name or "unknown"
+        file_size = document.file_size or 0
 
         logger.info(
             "Agentic document upload",
             user_id=user_id,
-            filename=document.file_name,
+            filename=file_name,
         )
 
         # Security validation
         security_validator = context.bot_data.get("security_validator")
         if security_validator:
-            valid, error = security_validator.validate_filename(document.file_name)
+            valid, error = security_validator.validate_filename(file_name)
             if not valid:
-                await update.message.reply_text(f"File rejected: {error}")
+                await msg.reply_text(f"File rejected: {error}")
                 return
 
         # Size check
         max_size = 10 * 1024 * 1024
-        if document.file_size > max_size:
-            await update.message.reply_text(
-                f"File too large ({document.file_size / 1024 / 1024:.1f}MB). Max: 10MB."
+        if file_size > max_size:
+            await msg.reply_text(
+                f"File too large ({file_size / 1024 / 1024:.1f}MB). Max: 10MB."
             )
             return
 
-        chat = update.message.chat
+        chat = msg.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await msg.reply_text("Working...")
 
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
@@ -896,7 +949,7 @@ class MessageOrchestrator:
                 processed_file = await file_handler.handle_document_upload(
                     document,
                     user_id,
-                    update.message.caption or "Please review this file:",
+                    msg.caption or "Please review this file:",
                 )
                 prompt = processed_file.prompt
             except Exception:
@@ -909,9 +962,9 @@ class MessageOrchestrator:
                 content = file_bytes.decode("utf-8")
                 if len(content) > 50000:
                     content = content[:50000] + "\n... (truncated)"
-                caption = update.message.caption or "Please review this file:"
+                caption = msg.caption or "Please review this file:"
                 prompt = (
-                    f"{caption}\n\n**File:** `{document.file_name}`\n\n"
+                    f"{caption}\n\n**File:** `{file_name}`\n\n"
                     f"```\n{content}\n```"
                 )
             except UnicodeDecodeError:
@@ -974,12 +1027,12 @@ class MessageOrchestrator:
 
             await progress_msg.delete()
 
-            for i, message in enumerate(formatted_messages):
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
+            for i, fmt_msg in enumerate(formatted_messages):
+                await msg.reply_text(
+                    fmt_msg.text,
+                    parse_mode=fmt_msg.parse_mode,
                     reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(msg.message_id if i == 0 else None),
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -996,23 +1049,30 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Process photo -> Claude, minimal chrome."""
-        user_id = update.effective_user.id
+        user = update.effective_user
+        msg = update.effective_message
+        if not user or not msg:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
+        user_id = user.id
 
         features = context.bot_data.get("features")
         image_handler = features.get_image_handler() if features else None
 
         if not image_handler:
-            await update.message.reply_text("Photo processing is not available.")
+            await msg.reply_text("Photo processing is not available.")
             return
 
-        chat = update.message.chat
+        chat = msg.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await msg.reply_text("Working...")
 
         try:
-            photo = update.message.photo[-1]
+            photo = msg.photo[-1]
             processed_image = await image_handler.process_image(
-                photo, update.message.caption
+                photo, msg.caption
             )
 
             claude_integration = context.bot_data.get("claude_integration")
@@ -1064,12 +1124,12 @@ class MessageOrchestrator:
 
             await progress_msg.delete()
 
-            for i, message in enumerate(formatted_messages):
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
+            for i, fmt_msg in enumerate(formatted_messages):
+                await msg.reply_text(
+                    fmt_msg.text,
+                    parse_mode=fmt_msg.parse_mode,
                     reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(msg.message_id if i == 0 else None),
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -1087,10 +1147,17 @@ class MessageOrchestrator:
     ) -> None:
         """List repos in workspace or switch to one.
 
-        /repo          — list subdirectories with git indicators
-        /repo <name>   — switch to that directory, resume session if available
+        /repo          -- list subdirectories with git indicators
+        /repo <name>   -- switch to that directory, resume session if available
         """
-        args = update.message.text.split()[1:] if update.message.text else []
+        user = update.effective_user
+        message = update.effective_message
+        if not user or not message:
+            return
+        if context.user_data is None:
+            context.user_data = {}
+
+        args = message.text.split()[1:] if message.text else []
         base = self.settings.approved_directory
         current_dir = context.user_data.get("current_directory", base)
 
@@ -1099,7 +1166,7 @@ class MessageOrchestrator:
             target_name = args[0]
             target_path = base / target_name
             if not target_path.is_dir():
-                await update.message.reply_text(
+                await message.reply_text(
                     f"Directory not found: <code>{escape_html(target_name)}</code>",
                     parse_mode="HTML",
                 )
@@ -1112,7 +1179,7 @@ class MessageOrchestrator:
             session_id = None
             if claude_integration:
                 existing = await claude_integration._find_resumable_session(
-                    update.effective_user.id, target_path
+                    user.id, target_path
                 )
                 if existing:
                     session_id = existing.session_id
@@ -1122,7 +1189,7 @@ class MessageOrchestrator:
             git_badge = " (git)" if is_git else ""
             session_badge = " · session resumed" if session_id else ""
 
-            await update.message.reply_text(
+            await message.reply_text(
                 f"Switched to <code>{escape_html(target_name)}/</code>"
                 f"{git_badge}{session_badge}",
                 parse_mode="HTML",
@@ -1140,11 +1207,11 @@ class MessageOrchestrator:
                 key=lambda d: d.name,
             )
         except OSError as e:
-            await update.message.reply_text(f"Error reading workspace: {e}")
+            await message.reply_text(f"Error reading workspace: {e}")
             return
 
         if not entries:
-            await update.message.reply_text(
+            await message.reply_text(
                 f"No repos in <code>{escape_html(str(base))}</code>.\n"
                 'Clone one by telling me, e.g. <i>"clone org/repo"</i>.',
                 parse_mode="HTML",
@@ -1172,7 +1239,7 @@ class MessageOrchestrator:
 
         reply_markup = InlineKeyboardMarkup(keyboard_rows)
 
-        await update.message.reply_text(
+        await message.reply_text(
             "<b>Repos</b>\n\n" + "\n".join(lines),
             parse_mode="HTML",
             reply_markup=reply_markup,
@@ -1183,7 +1250,11 @@ class MessageOrchestrator:
     ) -> None:
         """Handle cd: callbacks — switch directory and resume session if available."""
         query = update.callback_query
+        if not query or not query.data:
+            return
         await query.answer()
+        if context.user_data is None:
+            context.user_data = {}
 
         data = query.data
         _, project_name = data.split(":", 1)

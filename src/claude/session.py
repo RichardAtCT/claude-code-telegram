@@ -122,7 +122,7 @@ class SessionStorage:
 class InMemorySessionStorage(SessionStorage):
     """In-memory session storage for development/testing."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize in-memory storage."""
         self.sessions: Dict[str, ClaudeSession] = {}
 
@@ -187,11 +187,13 @@ class SessionManager:
 
         # Try to load from storage
         if session_id:
-            session = await self.storage.load_session(session_id)
-            if session and not session.is_expired(self.config.session_timeout_hours):
-                self.active_sessions[session_id] = session
+            loaded_session = await self.storage.load_session(session_id)
+            if loaded_session and not loaded_session.is_expired(
+                self.config.session_timeout_hours
+            ):
+                self.active_sessions[session_id] = loaded_session
                 logger.info("Loaded session from storage", session_id=session_id)
-                return session
+                return loaded_session
 
         # Check user session limit
         user_sessions = await self._get_user_sessions(user_id)

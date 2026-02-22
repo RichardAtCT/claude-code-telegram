@@ -6,7 +6,7 @@ import logging
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -105,16 +105,20 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     await storage.initialize()
 
     # Create security components
-    providers = []
+    from src.security.auth import AuthProvider
+
+    providers: List[AuthProvider] = []
 
     # Add whitelist provider if users are configured
     if config.allowed_users:
         providers.append(WhitelistAuthProvider(config.allowed_users))
 
     # Add token provider if enabled
-    if config.enable_token_auth:
+    if config.enable_token_auth and config.auth_token_secret:
         token_storage = InMemoryTokenStorage()  # TODO: Use database storage
-        providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
+        providers.append(
+            TokenAuthProvider(config.auth_token_secret.get_secret_value(), token_storage)
+        )
 
     # Fall back to allowing all users in development mode
     if not providers and config.development_mode:
@@ -264,6 +268,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                     raise ConfigurationError(
                         "Group thread mode requires PROJECT_THREADS_CHAT_ID"
                     )
+                assert bot.app is not None
                 sync_result = await project_threads_manager.sync_topics(
                     bot.app.bot,
                     chat_id=config.project_threads_chat_id,
@@ -280,6 +285,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 )
 
         # Now wire up components that need the Telegram Bot instance
+        assert bot.app is not None
         telegram_bot = bot.app.bot
 
         # Start event bus
@@ -295,7 +301,7 @@ async def run_application(app: Dict[str, Any]) -> None:
         await notification_service.start()
 
         # Collect concurrent tasks
-        tasks = []
+        tasks: List[asyncio.Task[Any]] = []
 
         # Bot task — use start() which handles its own initialization check
         bot_task = asyncio.create_task(bot.start())
