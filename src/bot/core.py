@@ -64,7 +64,7 @@ class ClaudeCodeBot:
         self.feature_registry = FeatureRegistry(
             config=self.settings,
             storage=self.deps["storage"],
-            security=self.deps["security"],
+            security=self.deps["security_validator"],
         )
 
         # Add feature registry to dependencies

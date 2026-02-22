@@ -608,7 +608,7 @@ class MessageOrchestrator:
             else:
                 # Tool call
                 icon = _tool_icon(entry["name"])
-                if verbose_level >= 2 and entry.get("detail"):
+                if entry.get("detail"):
                     lines.append(f"{icon} {entry['name']}: {entry['detail']}")
                 else:
                     lines.append(f"{icon} {entry['name']}")

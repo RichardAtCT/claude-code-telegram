@@ -314,12 +314,49 @@ class ClaudeSDKManager:
             )
 
         except asyncio.TimeoutError:
+            timeout_secs = self.config.claude_timeout_seconds
             logger.error(
                 "Claude SDK command timed out",
-                timeout_seconds=self.config.claude_timeout_seconds,
+                timeout_seconds=timeout_secs,
+                collected_messages=len(messages),
             )
+
+            # Recover partial content from messages collected before timeout
+            partial_content = self._extract_content_from_messages(messages)
+            if partial_content.strip():
+                duration_ms = int(
+                    (asyncio.get_event_loop().time() - start_time) * 1000
+                )
+                logger.info(
+                    "Recovered partial response from timed-out request",
+                    content_length=len(partial_content),
+                )
+                return ClaudeResponse(
+                    content=(
+                        f"{partial_content}\n\n"
+                        f"---\n"
+                        f"⏰ <i>Response truncated — Claude timed out "
+                        f"after {timeout_secs}s. The above is what was "
+                        f"completed before the timeout. You can continue "
+                        f"the conversation to pick up where it left off.</i>"
+                    ),
+                    session_id=session_id or "",
+                    cost=0.0,
+                    duration_ms=duration_ms,
+                    num_turns=len(
+                        [
+                            m
+                            for m in messages
+                            if isinstance(m, (UserMessage, AssistantMessage))
+                        ]
+                    ),
+                    is_error=True,
+                    error_type="timeout_partial",
+                    tools_used=self._extract_tools_from_messages(messages),
+                )
+
             raise ClaudeTimeoutError(
-                f"Claude SDK timed out after {self.config.claude_timeout_seconds}s"
+                f"Claude SDK timed out after {timeout_secs}s"
             )
 
         except CLINotFoundError as e:

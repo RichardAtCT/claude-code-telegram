@@ -10,7 +10,7 @@ class DevelopmentConfig:
     development_mode: bool = True
     log_level: str = "DEBUG"
     rate_limit_requests: int = 100  # More lenient for testing
-    claude_timeout_seconds: int = 600  # Longer timeout for debugging
+    claude_timeout_seconds: int = 900  # Longer timeout for debugging
     enable_telemetry: bool = False
 
     @classmethod

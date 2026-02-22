@@ -16,7 +16,7 @@ def bot_with_builder(monkeypatch):
     settings = create_test_config()
     deps = {
         "storage": MagicMock(),
-        "security": MagicMock(),
+        "security_validator": MagicMock(),
     }
     bot = ClaudeCodeBot(settings, deps)
 
