@@ -593,30 +593,44 @@ class MessageOrchestrator:
             return "Working..."
 
         elapsed = time.time() - start_time
-        lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
+        # Show elapsed time in a friendly format
+        if elapsed < 60:
+            time_str = f"{elapsed:.0f}s"
+        else:
+            time_str = f"{elapsed / 60:.0f}m{elapsed % 60:.0f}s"
 
-        for entry in activity_log[-15:]:  # Show last 15 entries max
+        tool_count = sum(1 for e in activity_log if e.get("kind") == "tool")
+        lines: List[str] = [
+            f"Working... ({time_str} \u2022 {tool_count} tools)\n"
+        ]
+
+        # Show last 12 entries for readability
+        for entry in activity_log[-12:]:
             kind = entry.get("kind", "tool")
             if kind == "text":
-                # Claude's intermediate reasoning/commentary
+                # Claude's reasoning — show generous amount
                 snippet = entry.get("detail", "")
                 if verbose_level >= 2:
-                    lines.append(f"\U0001f4ac {snippet}")
+                    lines.append(f"\U0001f4ac {snippet[:200]}")
                 else:
-                    # Level 1: one short line
-                    lines.append(f"\U0001f4ac {snippet[:80]}")
+                    lines.append(f"\U0001f4ac {snippet[:140]}")
             else:
-                # Tool call
+                # Tool call — always show name + detail
                 icon = _tool_icon(entry["name"])
-                if entry.get("detail"):
-                    lines.append(f"{icon} {entry['name']}: {entry['detail']}")
+                detail = entry.get("detail", "")
+                if detail:
+                    lines.append(f"{icon} {entry['name']}: {detail}")
                 else:
                     lines.append(f"{icon} {entry['name']}")
 
-        if len(activity_log) > 15:
-            lines.insert(1, f"... ({len(activity_log) - 15} earlier entries)\n")
+        if len(activity_log) > 12:
+            lines.insert(1, f"... ({len(activity_log) - 12} earlier)\n")
 
-        return "\n".join(lines)
+        # Telegram message limit is 4096 chars
+        text = "\n".join(lines)
+        if len(text) > 4000:
+            text = text[:3990] + "\n..."
+        return text
 
     @staticmethod
     def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
@@ -694,6 +708,7 @@ class MessageOrchestrator:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
+        last_text = [""]  # avoid no-op edits
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
             # Capture tool calls
@@ -707,22 +722,40 @@ class MessageOrchestrator:
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
                 if text and verbose_level >= 1:
-                    # Collapse to first meaningful line, cap length
-                    first_line = text.split("\n", 1)[0].strip()
-                    if first_line:
-                        tool_log.append({"kind": "text", "detail": first_line[:120]})
+                    # Keep multiple meaningful lines for context
+                    meaningful = [
+                        ln.strip()
+                        for ln in text.split("\n")
+                        if ln.strip()
+                    ]
+                    for line in meaningful[:3]:
+                        if line:
+                            tool_log.append(
+                                {"kind": "text", "detail": line[:180]}
+                            )
 
-            # Throttle progress message edits to avoid Telegram rate limits
+            # Adaptive throttle: fast at start, slower for long tasks
             now = time.time()
-            if (now - last_edit_time[0]) >= 2.0 and tool_log:
-                last_edit_time[0] = now
+            elapsed = now - start_time
+            if elapsed < 30:
+                interval = 3.0  # first 30s: update every 3s
+            elif elapsed < 120:
+                interval = 10.0  # 30s-2min: every 10s
+            else:
+                interval = 30.0  # after 2min: every 30s
+
+            if (now - last_edit_time[0]) >= interval and tool_log:
                 new_text = self._format_verbose_progress(
                     tool_log, verbose_level, start_time
                 )
-                try:
-                    await progress_msg.edit_text(new_text)
-                except Exception:
-                    pass
+                # Skip if nothing changed
+                if new_text != last_text[0]:
+                    last_edit_time[0] = now
+                    last_text[0] = new_text
+                    try:
+                        await progress_msg.edit_text(new_text)
+                    except Exception:
+                        pass
 
         return _on_stream
 

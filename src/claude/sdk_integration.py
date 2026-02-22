@@ -173,6 +173,7 @@ class ClaudeSDKManager:
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
                 cwd=str(working_directory),
+                permission_mode="bypassPermissions",
                 allowed_tools=self.config.claude_allowed_tools or [],
                 disallowed_tools=self.config.claude_disallowed_tools or [],
                 cli_path=cli_path,
