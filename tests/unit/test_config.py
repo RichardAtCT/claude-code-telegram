@@ -407,6 +407,36 @@ def test_project_threads_validation_group_mode_empty_chat_id_fails(tmp_path):
     assert "project_threads_chat_id required" in str(exc_info.value)
 
 
+def test_project_threads_sync_action_interval_validation(tmp_path):
+    """Thread sync action interval should accept non-negative values only."""
+    project_dir = tmp_path / "projects"
+    project_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(project_dir),
+        project_threads_sync_action_interval_seconds=0,
+    )
+    assert settings.project_threads_sync_action_interval_seconds == 0
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(project_dir),
+        project_threads_sync_action_interval_seconds="1.1",
+    )
+    assert settings.project_threads_sync_action_interval_seconds == pytest.approx(1.1)
+
+    with pytest.raises(ValidationError):
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(project_dir),
+            project_threads_sync_action_interval_seconds=-0.1,
+        )
+
+
 def test_project_threads_validation_invalid_mode(tmp_path):
     """Invalid project thread mode should fail validation."""
     project_dir = tmp_path / "projects"

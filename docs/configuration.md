@@ -73,8 +73,8 @@ CLAUDE_TIMEOUT_SECONDS=300
 # Maximum cost per user in USD
 CLAUDE_MAX_COST_PER_USER=10.0
 
-# Allowed Claude tools (comma-separated list)
-CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
+# Allowed Claude tools (comma-separated list; see docs/tools.md for descriptions)
+CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,TaskOutput,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
 ```
 
 #### Rate Limiting
@@ -163,6 +163,10 @@ PROJECTS_CONFIG_PATH=config/projects.yaml
 
 # Required only for PROJECT_THREADS_MODE=group
 PROJECT_THREADS_CHAT_ID=-1001234567890
+
+# Minimum delay (seconds) between Telegram API calls during topic sync
+# Set 0 to disable pacing
+PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS=1.1
 ```
 
 `PROJECTS_CONFIG_PATH` schema:

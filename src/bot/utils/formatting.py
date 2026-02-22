@@ -58,6 +58,9 @@ class ResponseFormatter:
         if messages and self.settings.enable_quick_actions:
             messages[-1].reply_markup = self._get_contextual_keyboard(context)
 
+        # Filter out any empty messages produced by formatting/splitting
+        messages = [m for m in messages if m.text and m.text.strip()]
+
         return (
             messages
             if messages
@@ -472,6 +475,8 @@ class ResponseFormatter:
 
     def _split_message(self, text: str) -> List[FormattedMessage]:
         """Split long messages while preserving formatting."""
+        if not text or not text.strip():
+            return []
         if len(text) <= self.max_message_length:
             return [FormattedMessage(text)]
 

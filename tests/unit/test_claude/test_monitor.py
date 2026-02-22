@@ -1,11 +1,17 @@
 """Test Claude tool monitor — especially bash directory boundary checking."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from src.claude.monitor import ToolMonitor, check_bash_directory_boundary
+from src.claude.monitor import (
+    ToolMonitor,
+
+    check_bash_directory_boundary,
+)
 from src.config.settings import Settings
+from src.security.validators import SecurityValidator
 
 
 class TestCheckBashDirectoryBoundary:
@@ -292,3 +298,6 @@ class TestToolMonitorBashBoundary:
         )
         assert not valid
         assert "dangerous command pattern" in error.lower()
+
+
+

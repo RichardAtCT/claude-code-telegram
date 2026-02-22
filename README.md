@@ -1,7 +1,7 @@
 # Claude Code Telegram Bot
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 A Telegram bot that gives you remote access to [Claude Code](https://claude.ai/code). Chat naturally with Claude about your projects from anywhere -- no terminal commands needed.
 
@@ -33,18 +33,36 @@ Bot: Running pytest...
 
 ### 1. Prerequisites
 
-- **Python 3.10+** -- [Download here](https://www.python.org/downloads/)
-- **Poetry** -- Modern Python dependency management
+- **Python 3.11+** -- [Download here](https://www.python.org/downloads/)
 - **Claude Code CLI** -- [Install from here](https://claude.ai/code)
 - **Telegram Bot Token** -- Get one from [@BotFather](https://t.me/botfather)
 
 ### 2. Install
 
+Choose your preferred method:
+
+#### Option A: Install from a release tag (Recommended)
+
+```bash
+# Using uv (recommended — installs in an isolated environment)
+uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+
+# Or using pip
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+
+# Track the latest stable release
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+```
+
+#### Option B: From source (for development)
+
 ```bash
 git clone https://github.com/RichardAtCT/claude-code-telegram.git
 cd claude-code-telegram
-make dev
+make dev  # requires Poetry
 ```
+
+> **Note:** Always install from a tagged release (not `main`) for stability. See [Releases](https://github.com/RichardAtCT/claude-code-telegram/releases) for available versions.
 
 ### 3. Configure
 
@@ -189,6 +207,7 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 
 - Tunable verbose output showing Claude's tool usage and reasoning in real-time
 - Persistent typing indicator so users always know the bot is working
+- 16 configurable tools with allowlist/disallowlist control (see [docs/tools.md](docs/tools.md))
 
 ### Planned Enhancements
 
@@ -259,6 +278,10 @@ PROJECTS_CONFIG_PATH=config/projects.yaml
 
 # Required only when PROJECT_THREADS_MODE=group
 PROJECT_THREADS_CHAT_ID=-1001234567890
+
+# Minimum delay (seconds) between Telegram API calls during topic sync
+# Set 0 to disable pacing
+PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS=1.1
 ```
 
 In strict mode, only `/start` and `/sync_threads` work outside mapped project topics.
@@ -283,7 +306,7 @@ Message [@userinfobot](https://t.me/userinfobot) on Telegram -- it will reply wi
 **Claude integration not working:**
 - SDK mode (default): Check `claude auth status` or verify `ANTHROPIC_API_KEY`
 - CLI mode: Verify `claude --version` and `claude auth status`
-- Check `CLAUDE_ALLOWED_TOOLS` includes necessary tools
+- Check `CLAUDE_ALLOWED_TOOLS` includes necessary tools (see [docs/tools.md](docs/tools.md) for the full reference)
 
 **High usage costs:**
 - Adjust `CLAUDE_MAX_COST_PER_USER` to set spending limits
@@ -313,6 +336,18 @@ make format        # Auto-format code
 make run-debug     # Run with debug logging
 ```
 
+### Version Management
+
+The version is defined once in `pyproject.toml` and read at runtime via `importlib.metadata`. To cut a release:
+
+```bash
+make bump-patch    # 1.2.0 -> 1.2.1 (bug fixes)
+make bump-minor    # 1.2.0 -> 1.3.0 (new features)
+make bump-major    # 1.2.0 -> 2.0.0 (breaking changes)
+```
+
+Each command commits, tags, and pushes automatically, triggering CI tests and a GitHub Release with auto-generated notes.
+
 ### Contributing
 
 1. Fork the repository
@@ -320,7 +355,7 @@ make run-debug     # Run with debug logging
 3. Make changes with tests: `make test && make lint`
 4. Submit a Pull Request
 
-**Code standards:** Python 3.10+, Black formatting (88 chars), type hints required, pytest with >85% coverage.
+**Code standards:** Python 3.11+, Black formatting (88 chars), type hints required, pytest with >85% coverage.
 
 ## License
 

@@ -11,9 +11,17 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
 )
+from claude_agent_sdk.types import StreamEvent
 
 from src.claude.sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from src.config.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _patch_parse_message():
+    """Patch parse_message as identity so mocks can yield typed Message objects."""
+    with patch("src.claude.sdk_integration.parse_message", side_effect=lambda x: x):
+        yield
 
 
 def _make_assistant_message(text="Test response"):
@@ -43,18 +51,22 @@ def _make_result_message(**kwargs):
 def _mock_client(*messages):
     """Create a mock ClaudeSDKClient that yields the given messages.
 
-    Returns a factory function suitable for patching ClaudeSDKClient.
+    Returns a client mock with _query.receive_messages() that yields
+    the given messages as raw data (parse_message must be patched
+    as a passthrough for typed Message objects to work).
     """
     client = AsyncMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
     client.query = AsyncMock()
 
-    async def receive_response():
+    async def receive_raw_messages():
         for msg in messages:
             yield msg
 
-    client.receive_response = receive_response
+    query_mock = AsyncMock()
+    query_mock.receive_messages = receive_raw_messages
+    client._query = query_mock
 
     return client
 
@@ -232,7 +244,9 @@ class TestClaudeSDKManager:
             await asyncio.sleep(5)  # Exceeds 2s timeout
             yield  # Never reached
 
-        client.receive_response = hanging_receive
+        query_mock = AsyncMock()
+        query_mock.receive_messages = hanging_receive
+        client._query = query_mock
 
         with patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client):
             with pytest.raises(ClaudeTimeoutError):
@@ -541,3 +555,138 @@ class TestClaudeMCPErrors:
                 )
 
         assert "MCP" in str(exc_info.value)
+
+
+class TestSessionIdFallback:
+    """Test fallback session ID extraction from StreamEvent messages."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+        )
+
+    @pytest.fixture
+    def sdk_manager(self, config):
+        return ClaudeSDKManager(config)
+
+    async def test_session_id_from_stream_event_fallback(self, sdk_manager):
+        """Test that session_id is extracted from StreamEvent when ResultMessage has None."""
+        stream_event = StreamEvent(
+            uuid="evt-1",
+            session_id="stream-session-123",
+            event={"type": "content_block_delta"},
+        )
+        mock_factory = _mock_client_factory(
+            stream_event,
+            _make_assistant_message("Test response"),
+            _make_result_message(session_id=None, result="Done"),
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+            )
+
+        assert response.session_id == "stream-session-123"
+
+    async def test_session_id_from_stream_event_empty_string(self, sdk_manager):
+        """Test fallback triggers when ResultMessage session_id is empty string."""
+        stream_event = StreamEvent(
+            uuid="evt-1",
+            session_id="stream-session-456",
+            event={"type": "content_block_delta"},
+        )
+        mock_factory = _mock_client_factory(
+            stream_event,
+            _make_assistant_message("Test response"),
+            _make_result_message(session_id="", result="Done"),
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+            )
+
+        assert response.session_id == "stream-session-456"
+
+    async def test_no_fallback_when_result_has_session_id(self, sdk_manager):
+        """Test that ResultMessage session_id takes priority over StreamEvent."""
+        stream_event = StreamEvent(
+            uuid="evt-1",
+            session_id="stream-session-999",
+            event={"type": "content_block_delta"},
+        )
+        mock_factory = _mock_client_factory(
+            stream_event,
+            _make_assistant_message("Test response"),
+            _make_result_message(session_id="result-session-abc", result="Done"),
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+            )
+
+        # ResultMessage session_id should win
+        assert response.session_id == "result-session-abc"
+
+    async def test_fallback_skips_stream_events_without_session_id(self, sdk_manager):
+        """Test that StreamEvents without session_id are skipped in fallback."""
+        stream_event_no_id = StreamEvent(
+            uuid="evt-1",
+            session_id=None,
+            event={"type": "content_block_start"},
+        )
+        stream_event_with_id = StreamEvent(
+            uuid="evt-2",
+            session_id="found-session",
+            event={"type": "content_block_delta"},
+        )
+        mock_factory = _mock_client_factory(
+            stream_event_no_id,
+            stream_event_with_id,
+            _make_assistant_message("Test response"),
+            _make_result_message(session_id=None, result="Done"),
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+            )
+
+        assert response.session_id == "found-session"
+
+    async def test_no_session_id_anywhere_falls_back_to_input(self, sdk_manager):
+        """Test that input session_id is used when neither ResultMessage nor StreamEvent provide one."""
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(session_id=None, result="Done"),
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+                session_id="input-session-id",
+            )
+
+        # Should fall back to the input session_id
+        assert response.session_id == "input-session-id"

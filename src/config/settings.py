@@ -21,6 +21,7 @@ from src.utils.constants import (
     DEFAULT_CLAUDE_TIMEOUT_SECONDS,
     DEFAULT_DATABASE_URL,
     DEFAULT_MAX_SESSIONS_PER_USER,
+    DEFAULT_PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS,
     DEFAULT_RATE_LIMIT_BURST,
     DEFAULT_RATE_LIMIT_REQUESTS,
     DEFAULT_RATE_LIMIT_WINDOW,
@@ -84,6 +85,10 @@ class Settings(BaseSettings):
     claude_max_cost_per_user: float = Field(
         DEFAULT_CLAUDE_MAX_COST_PER_USER, description="Max cost per user"
     )
+    # NOTE: When changing this list, also update docs/tools.md,
+    # docs/configuration.md, .env.example,
+    # src/claude/facade.py (_get_admin_instructions),
+    # and src/bot/orchestrator.py (_TOOL_ICONS).
     claude_allowed_tools: Optional[List[str]] = Field(
         default=[
             "Read",
@@ -94,6 +99,7 @@ class Settings(BaseSettings):
             "Grep",
             "LS",
             "Task",
+            "TaskOutput",
             "MultiEdit",
             "NotebookRead",
             "NotebookEdit",
@@ -101,6 +107,7 @@ class Settings(BaseSettings):
             "TodoRead",
             "TodoWrite",
             "WebSearch",
+            "Skill",
         ],
         description="List of allowed Claude tools",
     )
@@ -212,6 +219,13 @@ class Settings(BaseSettings):
     )
     projects_config_path: Optional[Path] = Field(
         None, description="Path to YAML project registry for thread mode"
+    )
+    project_threads_sync_action_interval_seconds: float = Field(
+        DEFAULT_PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS,
+        description=(
+            "Minimum delay between Telegram API calls during project topic sync"
+        ),
+        ge=0.0,
     )
 
     model_config = SettingsConfigDict(

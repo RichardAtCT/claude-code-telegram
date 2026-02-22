@@ -17,6 +17,8 @@ import structlog
 from ..config.settings import Settings
 from ..security.validators import SecurityValidator
 
+
+
 logger = structlog.get_logger()
 
 # Commands that modify the filesystem or change context and should have paths checked

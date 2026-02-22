@@ -28,6 +28,8 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+from claude_agent_sdk._errors import MessageParseError
+from claude_agent_sdk._internal.message_parser import parse_message
 
 from ..config.settings import Settings
 from .exceptions import (
@@ -207,8 +209,28 @@ class ClaudeSDKManager:
             async def _run_client() -> None:
                 async with ClaudeSDKClient(options) as client:
                     await client.query(prompt)
-                    async for message in client.receive_response():
+
+                    # Iterate over raw messages and parse them ourselves
+                    # so that MessageParseError (e.g. from rate_limit_event)
+                    # doesn't kill the underlying async generator. When
+                    # parse_message raises inside the SDK's receive_messages()
+                    # generator, Python terminates that generator permanently,
+                    # causing us to lose all subsequent messages including
+                    # the ResultMessage.
+                    async for raw_data in client._query.receive_messages():
+                        try:
+                            message = parse_message(raw_data)
+                        except MessageParseError as e:
+                            logger.debug(
+                                "Skipping unparseable message",
+                                error=str(e),
+                            )
+                            continue
+
                         messages.append(message)
+
+                        if isinstance(message, ResultMessage):
+                            break
 
                         # Handle streaming callback
                         if stream_callback:
@@ -241,6 +263,19 @@ class ClaudeSDKManager:
                     result_content = getattr(message, "result", None)
                     tools_used = self._extract_tools_from_messages(messages)
                     break
+
+            # Fallback: extract session_id from StreamEvent messages if
+            # ResultMessage didn't provide one (can happen with some CLI versions)
+            if not claude_session_id:
+                for message in messages:
+                    msg_session_id = getattr(message, "session_id", None)
+                    if msg_session_id and not isinstance(message, ResultMessage):
+                        claude_session_id = msg_session_id
+                        logger.info(
+                            "Got session ID from stream event (fallback)",
+                            session_id=claude_session_id,
+                        )
+                        break
 
             # Calculate duration
             duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
