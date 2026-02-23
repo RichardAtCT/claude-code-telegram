@@ -180,3 +180,83 @@ async def testagentic_repo_callback_encodes_root_name(
         assert not parts[
             1
         ].isdigit(), f"Root identifier should be a name, not an index: {cd!r}"
+
+
+# ---------------------------------------------------------------------------
+# Legacy callback format compatibility shim
+# ---------------------------------------------------------------------------
+
+
+async def _invoke_agentic_callback(settings, query_data: str, context_user_data=None):
+    """Helper: invoke _agentic_callback with a synthetic query."""
+    from src.bot.orchestrator import MessageOrchestrator
+
+    orchestrator = MagicMock(spec=MessageOrchestrator)
+    orchestrator.settings = settings
+    orchestrator._agentic_callback = MessageOrchestrator._agentic_callback.__get__(
+        orchestrator
+    )
+
+    query = AsyncMock()
+    query.data = query_data
+    query.edit_message_text = AsyncMock()
+    query.answer = AsyncMock()
+
+    update = MagicMock()
+    update.callback_query = query
+    update.effective_user.id = 1
+
+    context = MagicMock()
+    context.user_data = context_user_data if context_user_data is not None else {}
+    context.bot_data = {"claude_integration": None}
+
+    await orchestrator._agentic_callback(update, context)
+    return query, context
+
+
+async def test_legacy_callback_format_routes_to_matching_root(
+    dual_root_settings, tmp_path: Path
+):
+    """Old cd:<name> format finds the directory in the correct approved root."""
+    settings, root1, root2 = dual_root_settings
+    # project_a lives in root1, blog lives in root2
+
+    query, context = await _invoke_agentic_callback(settings, query_data="cd:blog")
+
+    assert context.user_data.get("current_directory") == (root2 / "blog").resolve()
+    query.edit_message_text.assert_called_once()
+    confirmation = query.edit_message_text.call_args[0][0]
+    assert "blog" in confirmation
+    assert "not found" not in confirmation.lower()
+
+
+async def test_legacy_callback_format_falls_back_to_first_root_when_not_found(
+    dual_root_settings, tmp_path: Path
+):
+    """Old cd:<name> with an unknown dir falls back to first root (is_dir check catches it)."""
+    settings, root1, root2 = dual_root_settings
+
+    query, context = await _invoke_agentic_callback(
+        settings, query_data="cd:nonexistent"
+    )
+
+    # Should show directory-not-found, not crash
+    query.edit_message_text.assert_called_once()
+    call_text = query.edit_message_text.call_args[0][0]
+    assert "not found" in call_text.lower()
+    assert "current_directory" not in context.user_data
+
+
+async def test_new_callback_format_still_works(dual_root_settings, tmp_path: Path):
+    """New cd:<root_name>:<name> format routes correctly — not broken by the shim."""
+    settings, root1, root2 = dual_root_settings
+
+    query, context = await _invoke_agentic_callback(
+        settings, query_data=f"cd:{root1.name}:project_a"
+    )
+
+    assert context.user_data.get("current_directory") == (root1 / "project_a").resolve()
+    query.edit_message_text.assert_called_once()
+    confirmation = query.edit_message_text.call_args[0][0]
+    assert "project_a" in confirmation
+    assert "not found" not in confirmation.lower()
