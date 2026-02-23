@@ -142,6 +142,7 @@ With `ClaudeSDKClient`:
 ## Finding 2: Tool Validation Duplicates `can_use_tool` and Hooks
 
 **Impact: HIGH** | **Files: `monitor.py`, `facade.py`**
+**Status: COMPLETE** (Phase 3 branch, 2026-02-20)
 
 ### What the SDK provides
 
@@ -289,13 +290,14 @@ None of these **enforce** a limit. They only report after the fact.
 
 `disallowed_tools` is now passed directly to `ClaudeAgentOptions` in
 `sdk_integration.py`, so the SDK enforces it before any tool executes.
-The `ToolMonitor` still has its own runtime check as a redundant safety layer.
+The redundant `ToolMonitor` runtime check was removed in Phase 3.
 
 ---
 
 ## Finding 6: Bash Pattern Blocklist vs Sandbox + `can_use_tool`
 
 **Impact: MEDIUM** | **Files: `monitor.py`**
+**Status: COMPLETE** (Phase 3 branch, 2026-02-20)
 
 ### The current approach
 
@@ -439,19 +441,20 @@ PR #56 removed `active_sessions` dict and `_update_session()` from
 | ~~`integration.py`~~ | ~~594~~ | **0** | — | ✅ Deleted |
 | ~~`parser.py`~~ | ~~338~~ | **0** | — | ✅ Deleted |
 | `session.py` | 340 | 342 | **~250** | Keep thin persistence model |
-| `monitor.py` | 333 | 349 | **~280** | Replace with `can_use_tool` |
-| `facade.py` | 568 | ~340 | **~150** | Remove interception, admin messages |
-| `sdk_integration.py` | 513 | 480 | **~60** | Remove CLI discovery |
-| `exceptions.py` | 50 | 40 | **~10** | Remove `ClaudeToolValidationError` |
-| **Total** | **2,774** | **~1,550** | **~750** | **~48% remaining reduction** |
+| `monitor.py` | 333 | **~110** | — | ✅ `ToolMonitor` deleted, kept `check_bash_directory_boundary()` |
+| `facade.py` | 568 | **~280** | — | ✅ Removed interception, admin messages, tool_monitor |
+| `sdk_integration.py` | 513 | **~530** | **~60** | Added `can_use_tool` callback; remove CLI discovery |
+| `exceptions.py` | 50 | **~30** | — | ✅ Removed `ClaudeToolValidationError` |
+| **Total** | **2,774** | **~1,290** | **~310** | **~24% remaining reduction** |
 
-**Completed so far:** ~1,220 net lines removed across PR #56 and F3/F5 work.
+**Completed so far:** ~1,480 net lines removed across PR #56, F3/F5, and Phase 3.
 
 Post-refactor, the `src/claude/` module should be roughly **~800 lines** with
 clearer responsibilities:
 
 - `sdk_integration.py` — Thin wrapper around `ClaudeSDKClient`, builds options,
-  handles `can_use_tool` callback
+  `can_use_tool` callback for path/boundary enforcement
+- `monitor.py` — `check_bash_directory_boundary()` utility used by `can_use_tool`
 - `session.py` — Thin persistence (SQLite read/write of session IDs)
 - `facade.py` — Simplified public API for bot handlers
 - `exceptions.py` — Minimal custom exceptions
@@ -482,21 +485,19 @@ step should be a separate PR that can be tested independently.
 
 ### Phase 3: Replace `ToolMonitor` with `can_use_tool`
 
-5. **Implement `can_use_tool` callback**
-   - Create a callback function that encapsulates:
-     - Path validation (from `SecurityValidator.validate_path()`)
-     - Directory boundary checks (from `check_bash_directory_boundary()`)
-   - Wire it into `ClaudeAgentOptions`
-   - ~50 lines of new code
+5. ~~**Implement `can_use_tool` callback**~~
+   ✅ **DONE** (Phase 3 branch) — `_make_can_use_tool_callback()` in
+   `sdk_integration.py` encapsulates path validation and directory boundary
+   checks. Wired into `ClaudeAgentOptions` via `SecurityValidator` injection
+   into `ClaudeSDKManager`. Uses `connect(None)` + `query(prompt)` pattern
+   to satisfy SDK's `AsyncIterable` requirement for `can_use_tool`.
 
-6. **Remove `ToolMonitor` and facade interception**
-   - Delete `monitor.py` (except `check_bash_directory_boundary` if still used)
-   - Remove `stream_handler` wrapper from `facade.py.run_command()`
-   - Remove `_get_admin_instructions()`, `_create_tool_error_message()`
-   - ~400 lines removed
-   - **Risk**: Security regression if `can_use_tool` callback doesn't cover all
-     cases. Mitigate by writing thorough tests for the callback before removing
-     `ToolMonitor`.
+6. ~~**Remove `ToolMonitor` and facade interception**~~
+   ✅ **DONE** (Phase 3 branch) — Deleted `ToolMonitor` class from `monitor.py`
+   (kept `check_bash_directory_boundary()`), removed `stream_handler` wrapper,
+   `_get_admin_instructions()`, `_create_tool_error_message()`,
+   `ClaudeToolValidationError`. Removed dead catch blocks from orchestrator
+   and message handler. ~350 net lines removed.
 
 ### Phase 4: Switch to `ClaudeSDKClient`
 
@@ -570,12 +571,13 @@ Before any refactor:
 |------|:---:|:---:|---------|
 | 2026-02-20 | [#56](https://github.com/RichardAtCT/claude-code-telegram/pull/56) | F1 (partial), F8, F9 | Migrated `query()` → `ClaudeSDKClient`, eliminated `temp_*` IDs and session swapping, uses `ResultMessage.result`, removed dead `active_sessions` state |
 | 2026-02-20 | [#59](https://github.com/RichardAtCT/claude-code-telegram/pull/59) | F3 (complete), F5 (complete) | Deleted CLI subprocess backend (`integration.py`, `parser.py`), removed `use_sdk` flag, passed `disallowed_tools` to SDK, ~1,060 lines removed |
+| 2026-02-20 | Phase 3 branch | F2 (complete), F6 (complete) | Replaced `ToolMonitor` with SDK's `can_use_tool` callback, removed bash pattern blocklist, removed facade interception + admin message helpers, removed `ClaudeToolValidationError`, ~350 lines removed |
 
 ### Next Steps
 
-The recommended next action is **Phase 3** (replace `ToolMonitor` with SDK's
-`can_use_tool` callback) — the highest-impact remaining work (~400 lines).
-After that, slim down `SessionManager` (Phase 4, step 7 remainder).
+The recommended next action is **Phase 4, step 7** — slim down `SessionManager`
+to thin persistence (~250 lines removable). After that, add `max_budget_usd`
+(step 8) and remove CLI path discovery (Phase 5, step 9).
 
 ---
 

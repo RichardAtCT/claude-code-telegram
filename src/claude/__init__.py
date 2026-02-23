@@ -8,7 +8,6 @@ from .exceptions import (
     ClaudeTimeoutError,
 )
 from .facade import ClaudeIntegration
-from .monitor import ToolMonitor
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import (
     ClaudeSession,
@@ -34,5 +33,4 @@ __all__ = [
     "SessionStorage",
     "InMemorySessionStorage",
     "ClaudeSession",
-    "ToolMonitor",
 ]
