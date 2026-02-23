@@ -157,6 +157,9 @@ def _validate_config(settings: Settings) -> None:
     if settings.claude_max_cost_per_user <= 0:
         raise InvalidConfigError("claude_max_cost_per_user must be positive")
 
+    if settings.claude_max_cost_per_request <= 0:
+        raise InvalidConfigError("claude_max_cost_per_request must be positive")
+
 
 def _get_enabled_features_summary(settings: Settings) -> list[str]:
     """Get a summary of enabled features for logging."""

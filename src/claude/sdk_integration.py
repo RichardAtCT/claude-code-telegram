@@ -250,6 +250,7 @@ class ClaudeSDKManager:
             cli_path = find_claude_cli(self.config.claude_cli_path)
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
+                max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
                 disallowed_tools=self.config.claude_disallowed_tools,

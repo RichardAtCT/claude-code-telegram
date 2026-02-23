@@ -349,6 +349,26 @@ class TestClaudeSDKManager:
         assert len(captured_options) == 1
         assert captured_options[0].resume == "existing-session-id"
 
+    async def test_execute_command_passes_max_budget_usd(self, sdk_manager, config):
+        """Test that max_budget_usd is passed from config to ClaudeAgentOptions."""
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=Path("/test"),
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].max_budget_usd == config.claude_max_cost_per_request
+
     async def test_execute_command_no_resume_for_new_session(self, sdk_manager):
         """Test that resume is not set for new sessions."""
         captured_options = []
