@@ -8,8 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.claude.facade import ClaudeIntegration
-from src.claude.session import ClaudeSession, InMemorySessionStorage, SessionManager
+from src.claude.session import ClaudeSession, SessionManager
 from src.config.settings import Settings
+
+from .conftest import InMemorySessionStorage
 
 
 def _make_mock_response(session_id: str = "new-session-id") -> MagicMock:

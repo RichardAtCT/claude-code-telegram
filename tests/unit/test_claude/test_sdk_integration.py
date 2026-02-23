@@ -262,10 +262,6 @@ class TestClaudeSDKManager:
                     working_directory=Path("/test"),
                 )
 
-    def test_get_active_process_count(self, sdk_manager):
-        """Test active process count is always 0."""
-        assert sdk_manager.get_active_process_count() == 0
-
     async def test_execute_command_passes_mcp_config(self, tmp_path):
         """Test that MCP config is passed to ClaudeAgentOptions when enabled."""
         # Create a valid MCP config file

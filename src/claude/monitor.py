@@ -1,22 +1,11 @@
-"""Bash directory boundary enforcement for Claude tool calls.
-
-Provides the check_bash_directory_boundary() function used by the SDK's
-can_use_tool callback to prevent filesystem-modifying commands from
-operating outside the approved directory.
-"""
+"""Bash directory boundary enforcement for Claude tool calls."""
 
 import shlex
 from pathlib import Path
 from typing import Optional, Set, Tuple
 
-import structlog
-
 # Subdirectories under ~/.claude/ that Claude Code uses internally.
-# File operations targeting these paths are allowed even when they fall
-# outside the project's approved directory.
 _CLAUDE_INTERNAL_SUBDIRS: Set[str] = {"plans", "todos", "settings.json"}
-
-logger = structlog.get_logger()
 
 # Commands that modify the filesystem or change context and should have paths checked
 _FS_MODIFYING_COMMANDS: Set[str] = {
@@ -74,15 +63,7 @@ def check_bash_directory_boundary(
     working_directory: Path,
     approved_directory: Path,
 ) -> Tuple[bool, Optional[str]]:
-    """Check if a bash command's absolute paths stay within the approved directory.
-
-    This function parses the command string (including chained commands) and
-    verifies that any filesystem-modifying or context-changing command (like cd)
-    only targets paths within the approved boundary.
-
-    Returns (True, None) if the command is safe, or (False, error_message) if it
-    attempts to operate outside the approved directory boundary.
-    """
+    """Check if a bash command's paths stay within the approved directory."""
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -162,16 +143,7 @@ def check_bash_directory_boundary(
 
 
 def _is_claude_internal_path(file_path: str) -> bool:
-    """Check whether *file_path* points inside the ``~/.claude/`` directory.
-
-    Claude Code keeps internal state (plan-mode drafts, todo lists, etc.)
-    under ``$HOME/.claude/``.  These paths are outside the project's
-    ``approved_directory`` but are safe to read/write because they are
-    controlled entirely by Claude Code itself.
-
-    Only the specific subdirectories listed in ``_CLAUDE_INTERNAL_SUBDIRS``
-    are allowed; arbitrary files directly under ``~/.claude/`` are not.
-    """
+    """Check whether *file_path* points inside ``~/.claude/`` (allowed subdirs only)."""
     try:
         resolved = Path(file_path).resolve()
         home = Path.home().resolve()

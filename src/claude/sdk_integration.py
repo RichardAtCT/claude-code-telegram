@@ -1,11 +1,4 @@
-"""Claude Code Python SDK integration.
-
-Features:
-- Native Claude Code SDK integration
-- Async streaming support
-- Tool execution management
-- Session persistence
-"""
+"""Claude Code Python SDK integration."""
 
 import asyncio
 import os
@@ -45,67 +38,6 @@ from .exceptions import (
 from .monitor import _is_claude_internal_path, check_bash_directory_boundary
 
 logger = structlog.get_logger()
-
-
-def find_claude_cli(claude_cli_path: Optional[str] = None) -> Optional[str]:
-    """Find Claude CLI in common locations."""
-    import glob
-    import shutil
-
-    # First check if a specific path was provided via config or env
-    if claude_cli_path:
-        if os.path.exists(claude_cli_path) and os.access(claude_cli_path, os.X_OK):
-            return claude_cli_path
-
-    # Check CLAUDE_CLI_PATH environment variable
-    env_path = os.environ.get("CLAUDE_CLI_PATH")
-    if env_path and os.path.exists(env_path) and os.access(env_path, os.X_OK):
-        return env_path
-
-    # Check if claude is already in PATH
-    claude_path = shutil.which("claude")
-    if claude_path:
-        return claude_path
-
-    # Check common installation locations
-    common_paths = [
-        # NVM installations
-        os.path.expanduser("~/.nvm/versions/node/*/bin/claude"),
-        # Direct npm global install
-        os.path.expanduser("~/.npm-global/bin/claude"),
-        os.path.expanduser("~/node_modules/.bin/claude"),
-        # System locations
-        "/usr/local/bin/claude",
-        "/usr/bin/claude",
-        # Windows locations (for cross-platform support)
-        os.path.expanduser("~/AppData/Roaming/npm/claude.cmd"),
-    ]
-
-    for pattern in common_paths:
-        matches = glob.glob(pattern)
-        if matches:
-            # Return the first match
-            return matches[0]
-
-    return None
-
-
-def update_path_for_claude(claude_cli_path: Optional[str] = None) -> bool:
-    """Update PATH to include Claude CLI if found."""
-    claude_path = find_claude_cli(claude_cli_path)
-
-    if claude_path:
-        # Add the directory containing claude to PATH
-        claude_dir = os.path.dirname(claude_path)
-        current_path = os.environ.get("PATH", "")
-
-        if claude_dir not in current_path:
-            os.environ["PATH"] = f"{claude_dir}:{current_path}"
-            logger.info("Updated PATH for Claude CLI", claude_path=claude_path)
-
-        return True
-
-    return False
 
 
 @dataclass
@@ -205,13 +137,6 @@ class ClaudeSDKManager:
         self.config = config
         self.security_validator = security_validator
 
-        # Try to find and update PATH for Claude CLI
-        if not update_path_for_claude(config.claude_cli_path):
-            logger.warning(
-                "Claude CLI not found in PATH or common locations. "
-                "SDK may fail if Claude is not installed or not in PATH."
-            )
-
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
         if config.anthropic_api_key_str:
@@ -247,14 +172,13 @@ class ClaudeSDKManager:
                 logger.debug("Claude CLI stderr", line=line)
 
             # Build Claude Agent options
-            cli_path = find_claude_cli(self.config.claude_cli_path)
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=self.config.claude_allowed_tools,
                 disallowed_tools=self.config.claude_disallowed_tools,
-                cli_path=cli_path,
+                cli_path=self.config.claude_cli_path,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
                     "autoAllowBashIfSandboxed": True,
@@ -357,7 +281,22 @@ class ClaudeSDKManager:
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
                     claude_session_id = getattr(message, "session_id", None)
                     result_content = getattr(message, "result", None)
-                    tools_used = self._extract_tools_from_messages(messages)
+                    current_time = asyncio.get_event_loop().time()
+                    for msg in messages:
+                        if isinstance(msg, AssistantMessage):
+                            msg_content = getattr(msg, "content", [])
+                            if msg_content and isinstance(msg_content, list):
+                                for block in msg_content:
+                                    if isinstance(block, ToolUseBlock):
+                                        tools_used.append(
+                                            {
+                                                "name": getattr(
+                                                    block, "name", "unknown"
+                                                ),
+                                                "timestamp": current_time,
+                                                "input": getattr(block, "input", {}),
+                                            }
+                                        )
                     break
 
             # Fallback: extract session_id from StreamEvent messages if
@@ -387,11 +326,20 @@ class ClaudeSDKManager:
                 )
 
             # Use ResultMessage.result if available, fall back to message extraction
-            content = (
-                result_content
-                if result_content is not None
-                else self._extract_content_from_messages(messages)
-            )
+            if result_content is not None:
+                content = result_content
+            else:
+                content_parts = []
+                for msg in messages:
+                    if isinstance(msg, AssistantMessage):
+                        msg_content = getattr(msg, "content", [])
+                        if msg_content and isinstance(msg_content, list):
+                            for block in msg_content:
+                                if hasattr(block, "text"):
+                                    content_parts.append(block.text)
+                        elif msg_content:
+                            content_parts.append(str(msg_content))
+                content = "\n".join(content_parts)
 
             return ClaudeResponse(
                 content=content,
@@ -463,40 +411,26 @@ class ClaudeSDKManager:
             raise ClaudeProcessError(f"Claude SDK error: {str(e)}")
 
         except Exception as e:
-            # Handle ExceptionGroup from TaskGroup operations (Python 3.11+)
-            if type(e).__name__ == "ExceptionGroup" or hasattr(e, "exceptions"):
+            exceptions = getattr(e, "exceptions", None)
+            if exceptions is not None:
+                # ExceptionGroup from TaskGroup operations (Python 3.11+)
                 logger.error(
                     "Task group error in Claude SDK",
                     error=str(e),
                     error_type=type(e).__name__,
-                    exception_count=len(getattr(e, "exceptions", [])),
-                    exceptions=[
-                        str(ex) for ex in getattr(e, "exceptions", [])[:3]
-                    ],  # Log first 3 exceptions
+                    exception_count=len(exceptions),
+                    exceptions=[str(ex) for ex in exceptions[:3]],
                 )
-                # Extract the most relevant exception from the group
-                exceptions = getattr(e, "exceptions", [e])
-                main_exception = exceptions[0] if exceptions else e
                 raise ClaudeProcessError(
-                    f"Claude SDK task error: {str(main_exception)}"
+                    f"Claude SDK task error: {exceptions[0] if exceptions else e}"
                 )
 
-            # Check if it's an ExceptionGroup disguised as a regular exception
-            elif hasattr(e, "__notes__") and "TaskGroup" in str(e):
-                logger.error(
-                    "TaskGroup related error in Claude SDK",
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                raise ClaudeProcessError(f"Claude SDK task error: {str(e)}")
-
-            else:
-                logger.error(
-                    "Unexpected error in Claude SDK",
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                raise ClaudeProcessError(f"Unexpected error: {str(e)}")
+            logger.error(
+                "Unexpected error in Claude SDK",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise ClaudeProcessError(f"Unexpected error: {str(e)}")
 
     async def _handle_stream_message(
         self, message: Message, stream_callback: Callable[[StreamUpdate], None]
@@ -549,47 +483,6 @@ class ClaudeSDKManager:
         except Exception as e:
             logger.warning("Stream callback failed", error=str(e))
 
-    def _extract_content_from_messages(self, messages: List[Message]) -> str:
-        """Extract content from message list."""
-        content_parts = []
-
-        for message in messages:
-            if isinstance(message, AssistantMessage):
-                content = getattr(message, "content", [])
-                if content and isinstance(content, list):
-                    # Extract text from TextBlock objects
-                    for block in content:
-                        if hasattr(block, "text"):
-                            content_parts.append(block.text)
-                elif content:
-                    # Fallback for non-list content
-                    content_parts.append(str(content))
-
-        return "\n".join(content_parts)
-
-    def _extract_tools_from_messages(
-        self, messages: List[Message]
-    ) -> List[Dict[str, Any]]:
-        """Extract tools used from message list."""
-        tools_used = []
-        current_time = asyncio.get_event_loop().time()
-
-        for message in messages:
-            if isinstance(message, AssistantMessage):
-                content = getattr(message, "content", [])
-                if content and isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, ToolUseBlock):
-                            tools_used.append(
-                                {
-                                    "name": getattr(block, "name", "unknown"),
-                                    "timestamp": current_time,
-                                    "input": getattr(block, "input", {}),
-                                }
-                            )
-
-        return tools_used
-
     def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:
         """Load MCP server configuration from a JSON file.
 
@@ -606,7 +499,3 @@ class ClaudeSDKManager:
                 "Failed to load MCP config", path=str(config_path), error=str(e)
             )
             return {}
-
-    def get_active_process_count(self) -> int:
-        """Get number of active sessions (always 0, per-request clients)."""
-        return 0
