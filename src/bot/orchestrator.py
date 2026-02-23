@@ -34,8 +34,8 @@ from ..projects import PrivateTopicsUnavailableError
 from .utils.html_format import escape_html
 from .utils.image_extractor import (
     ImageAttachment,
-    extract_images_from_response,
     should_send_as_photo,
+    validate_image_path,
 )
 
 logger = structlog.get_logger()
@@ -655,20 +655,47 @@ class MessageOrchestrator:
         progress_msg: Any,
         tool_log: List[Dict[str, Any]],
         start_time: float,
+        mcp_images: Optional[List[ImageAttachment]] = None,
+        approved_directory: Optional[Path] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
-        Returns None when verbose_level is 0 (nothing to display).
+        When *mcp_images* is provided, the callback also intercepts
+        ``send_image_to_user`` tool calls and collects validated
+        :class:`ImageAttachment` objects for later Telegram delivery.
+
+        Returns None when verbose_level is 0 **and** no MCP image
+        collection is requested.
         Typing indicators are handled by a separate heartbeat task.
         """
-        if verbose_level == 0:
+        need_mcp_intercept = mcp_images is not None and approved_directory is not None
+
+        if verbose_level == 0 and not need_mcp_intercept:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
-            # Capture tool calls
-            if update_obj.tool_calls:
+            # Intercept send_image_to_user MCP tool calls.
+            # The SDK namespaces MCP tools as "mcp__<server>__<tool>",
+            # so match both the bare name and the namespaced variant.
+            if update_obj.tool_calls and need_mcp_intercept:
+                for tc in update_obj.tool_calls:
+                    tc_name = tc.get("name", "")
+                    if tc_name == "send_image_to_user" or tc_name.endswith(
+                        "__send_image_to_user"
+                    ):
+                        tc_input = tc.get("input", {})
+                        file_path = tc_input.get("file_path", "")
+                        caption = tc_input.get("caption", "")
+                        img = validate_image_path(
+                            file_path, approved_directory, caption
+                        )
+                        if img:
+                            mcp_images.append(img)
+
+            # Capture tool calls for verbose log
+            if update_obj.tool_calls and verbose_level >= 1:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
@@ -684,16 +711,17 @@ class MessageOrchestrator:
                         tool_log.append({"kind": "text", "detail": first_line[:120]})
 
             # Throttle progress message edits to avoid Telegram rate limits
-            now = time.time()
-            if (now - last_edit_time[0]) >= 2.0 and tool_log:
-                last_edit_time[0] = now
-                new_text = self._format_verbose_progress(
-                    tool_log, verbose_level, start_time
-                )
-                try:
-                    await progress_msg.edit_text(new_text)
-                except Exception:
-                    pass
+            if verbose_level >= 1:
+                now = time.time()
+                if (now - last_edit_time[0]) >= 2.0 and tool_log:
+                    last_edit_time[0] = now
+                    new_text = self._format_verbose_progress(
+                        tool_log, verbose_level, start_time
+                    )
+                    try:
+                        await progress_msg.edit_text(new_text)
+                    except Exception:
+                        pass
 
         return _on_stream
 
@@ -832,8 +860,14 @@ class MessageOrchestrator:
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
+        mcp_images: List[ImageAttachment] = []
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, start_time
+            verbose_level,
+            progress_msg,
+            tool_log,
+            start_time,
+            mcp_images=mcp_images,
+            approved_directory=self.settings.approved_directory,
         )
 
         # Independent typing heartbeat — stays alive even with no stream events
@@ -899,18 +933,8 @@ class MessageOrchestrator:
 
         await progress_msg.delete()
 
-        # Extract images before sending text — we may embed text as caption
-        images: List[ImageAttachment] = []
-        if success:
-            try:
-                images = extract_images_from_response(
-                    claude_response.content,
-                    working_directory=Path(str(current_dir)),
-                    approved_directory=self.settings.approved_directory,
-                    tools_used=claude_response.tools_used,
-                )
-            except Exception as img_err:
-                logger.warning("Image extraction failed", error=str(img_err))
+        # Use MCP-collected images (from send_image_to_user tool calls)
+        images: List[ImageAttachment] = mcp_images
 
         # Try to combine text + images in one message when possible
         caption_sent = False
@@ -1075,8 +1099,14 @@ class MessageOrchestrator:
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
+        mcp_images_doc: List[ImageAttachment] = []
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, time.time()
+            verbose_level,
+            progress_msg,
+            tool_log,
+            time.time(),
+            mcp_images=mcp_images_doc,
+            approved_directory=self.settings.approved_directory,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
@@ -1110,16 +1140,8 @@ class MessageOrchestrator:
 
             await progress_msg.delete()
 
-            images: List[ImageAttachment] = []
-            try:
-                images = extract_images_from_response(
-                    claude_response.content,
-                    working_directory=Path(str(current_dir)),
-                    approved_directory=self.settings.approved_directory,
-                    tools_used=claude_response.tools_used,
-                )
-            except Exception as img_err:
-                logger.warning("Image extraction failed", error=str(img_err))
+            # Use MCP-collected images (from send_image_to_user tool calls)
+            images: List[ImageAttachment] = mcp_images_doc
 
             caption_sent = False
             if images and len(formatted_messages) == 1:
@@ -1208,8 +1230,14 @@ class MessageOrchestrator:
 
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
+            mcp_images_photo: List[ImageAttachment] = []
             on_stream = self._make_stream_callback(
-                verbose_level, progress_msg, tool_log, time.time()
+                verbose_level,
+                progress_msg,
+                tool_log,
+                time.time(),
+                mcp_images=mcp_images_photo,
+                approved_directory=self.settings.approved_directory,
             )
 
             heartbeat = self._start_typing_heartbeat(chat)
@@ -1239,16 +1267,8 @@ class MessageOrchestrator:
 
             await progress_msg.delete()
 
-            images: List[ImageAttachment] = []
-            try:
-                images = extract_images_from_response(
-                    claude_response.content,
-                    working_directory=Path(str(current_dir)),
-                    approved_directory=self.settings.approved_directory,
-                    tools_used=claude_response.tools_used,
-                )
-            except Exception as img_err:
-                logger.warning("Image extraction failed", error=str(img_err))
+            # Use MCP-collected images (from send_image_to_user tool calls)
+            images: List[ImageAttachment] = mcp_images_photo
 
             caption_sent = False
             if images and len(formatted_messages) == 1:

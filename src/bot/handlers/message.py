@@ -1,7 +1,6 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
-from pathlib import Path
 from typing import Optional
 
 import structlog
@@ -22,8 +21,9 @@ from ...security.rate_limiter import RateLimiter
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
 from ..utils.image_extractor import (
-    extract_images_from_response,
+    ImageAttachment,
     should_send_as_photo,
+    validate_image_path,
 )
 
 logger = structlog.get_logger()
@@ -355,8 +355,28 @@ async def handle_text_message(
         # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(context.user_data.get("force_new_session"))
 
+        # MCP image collection via stream intercept
+        mcp_images: list[ImageAttachment] = []
+
         # Enhanced stream updates handler with progress tracking
         async def stream_handler(update_obj):
+            # Intercept send_image_to_user MCP tool calls.
+            # The SDK namespaces MCP tools as "mcp__<server>__<tool>".
+            if update_obj.tool_calls:
+                for tc in update_obj.tool_calls:
+                    tc_name = tc.get("name", "")
+                    if tc_name == "send_image_to_user" or tc_name.endswith(
+                        "__send_image_to_user"
+                    ):
+                        tc_input = tc.get("input", {})
+                        file_path = tc_input.get("file_path", "")
+                        caption = tc_input.get("caption", "")
+                        img = validate_image_path(
+                            file_path, settings.approved_directory, caption
+                        )
+                        if img:
+                            mcp_images.append(img)
+
             try:
                 progress_text = await _format_progress_update(update_obj)
                 if progress_text:
@@ -419,18 +439,8 @@ async def handle_text_message(
         # Delete progress message
         await progress_msg.delete()
 
-        # Extract images before sending — may embed text as caption
-        images = []
-        if claude_response:
-            try:
-                images = extract_images_from_response(
-                    claude_response.content,
-                    working_directory=Path(str(current_dir)),
-                    approved_directory=settings.approved_directory,
-                    tools_used=claude_response.tools_used,
-                )
-            except Exception as img_err:
-                logger.warning("Image extraction failed", error=str(img_err))
+        # Use MCP-collected images (from send_image_to_user tool calls)
+        images: list[ImageAttachment] = mcp_images
 
         # Try to combine text + images when response fits in a caption
         caption_sent = False

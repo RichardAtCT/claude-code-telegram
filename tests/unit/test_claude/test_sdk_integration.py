@@ -100,6 +100,7 @@ class TestClaudeSDKManager:
             telegram_bot_username="testbot",
             approved_directory=tmp_path,
             claude_timeout_seconds=2,  # Short timeout for testing
+            enable_mcp=False,
         )
 
     @pytest.fixture
