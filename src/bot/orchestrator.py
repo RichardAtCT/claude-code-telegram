@@ -1205,19 +1205,30 @@ class MessageOrchestrator:
         await query.answer()
 
         data = query.data
-        _, root_name, project_name = data.split(":", 2)
+        parts = data.split(":", 2)
         approved_roots = self.settings.approved_directories
-        # Find the root whose directory name matches what was encoded at render time.
-        # Using names instead of positional indexes means a reordering of
-        # APPROVED_DIRECTORIES between keyboard render and button press cannot
-        # silently route to the wrong root.
-        base = next((r for r in approved_roots if r.name == root_name), None)
-        if base is None:
-            await query.edit_message_text(
-                "Directory root not found. Run /repo again.",
-                parse_mode="HTML",
+        if len(parts) == 3:
+            # New format: cd:<root_name>:<project_name>
+            _, root_name, project_name = parts
+            # Find the root whose directory name matches what was encoded at render time.
+            # Using names instead of positional indexes means a reordering of
+            # APPROVED_DIRECTORIES between keyboard render and button press cannot
+            # silently route to the wrong root.
+            base = next((r for r in approved_roots if r.name == root_name), None)
+            if base is None:
+                await query.edit_message_text(
+                    "Directory root not found. Run /repo again.",
+                    parse_mode="HTML",
+                )
+                return
+        else:
+            # Legacy format: cd:<project_name> (pre-multi-directory keyboards)
+            # Search all approved roots for the named directory; fall back to first root.
+            _, project_name = parts
+            base = next(
+                (r for r in approved_roots if (r / project_name).is_dir()),
+                approved_roots[0],
             )
-            return
         new_path = (base / project_name).resolve()
 
         if not new_path.is_dir():

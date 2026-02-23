@@ -135,7 +135,7 @@ class StreamUpdate:
 def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
-    approved_directory: Path,
+    approved_directories: List[Path],
 ) -> Any:
     """Create a can_use_tool callback for SDK-level tool permission validation.
 
@@ -175,7 +175,9 @@ def _make_can_use_tool_callback(
             command = tool_input.get("command", "")
             if command:
                 valid, error = check_bash_directory_boundary(
-                    command, working_directory, approved_directory
+                    command,
+                    working_directory,
+                    approved_directories=approved_directories,
                 )
                 if not valid:
                     logger.warning(
@@ -279,7 +281,7 @@ class ClaudeSDKManager:
                 options.can_use_tool = _make_can_use_tool_callback(
                     security_validator=self.security_validator,
                     working_directory=working_directory,
-                    approved_directory=self.config.approved_directory,
+                    approved_directories=self.config.approved_directories,
                 )
 
             # Resume previous session if we have a session_id

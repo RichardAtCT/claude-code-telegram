@@ -616,7 +616,7 @@ class TestCanUseToolCallback:
         return _make_can_use_tool_callback(
             security_validator=security_validator,
             working_directory=working_dir,
-            approved_directory=approved_dir,
+            approved_directories=[approved_dir],
         )
 
     @pytest.fixture
