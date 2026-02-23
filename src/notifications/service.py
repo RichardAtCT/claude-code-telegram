@@ -5,13 +5,18 @@ through the Telegram bot API with rate limiting (1 msg/sec per chat).
 """
 
 import asyncio
+from pathlib import Path
 from typing import List, Optional
 
 import structlog
-from telegram import Bot
+from telegram import Bot, InputMediaPhoto
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
+from ..bot.utils.image_extractor import (
+    PHOTO_SIZE_LIMIT,
+    TELEGRAM_PHOTO_EXTENSIONS,
+)
 from ..events.bus import Event, EventBus
 from ..events.types import AgentResponseEvent
 
@@ -116,11 +121,77 @@ class NotificationService:
                 if len(chunks) > 1:
                     await asyncio.sleep(SEND_INTERVAL_SECONDS)
 
+            # Send any image attachments as album
+            if event.image_paths:
+                await asyncio.sleep(SEND_INTERVAL_SECONDS)
+                photos: list[Path] = []
+                documents: list[Path] = []
+                for img_path_str in event.image_paths:
+                    img_path = Path(img_path_str)
+                    if not img_path.is_file():
+                        continue
+                    ext = img_path.suffix.lower()
+                    size = img_path.stat().st_size
+                    if ext in TELEGRAM_PHOTO_EXTENSIONS and size <= PHOTO_SIZE_LIMIT:
+                        photos.append(img_path)
+                    else:
+                        documents.append(img_path)
+
+                if photos:
+                    try:
+                        if len(photos) == 1:
+                            with open(photos[0], "rb") as f:
+                                await self.bot.send_photo(chat_id=chat_id, photo=f)
+                        else:
+                            media = []
+                            file_handles = []
+                            for p in photos[:10]:
+                                fh = open(p, "rb")  # noqa: SIM115
+                                file_handles.append(fh)
+                                media.append(InputMediaPhoto(media=fh))
+                            try:
+                                await self.bot.send_media_group(
+                                    chat_id=chat_id, media=media
+                                )
+                            finally:
+                                for fh in file_handles:
+                                    fh.close()
+                        self._last_send_per_chat[chat_id] = (
+                            asyncio.get_event_loop().time()
+                        )
+                    except Exception as img_err:
+                        logger.warning(
+                            "Failed to send photo album",
+                            chat_id=chat_id,
+                            error=str(img_err),
+                        )
+
+                for doc_path in documents:
+                    try:
+                        await asyncio.sleep(SEND_INTERVAL_SECONDS)
+                        with open(doc_path, "rb") as f:
+                            await self.bot.send_document(
+                                chat_id=chat_id,
+                                document=f,
+                                filename=doc_path.name,
+                            )
+                        self._last_send_per_chat[chat_id] = (
+                            asyncio.get_event_loop().time()
+                        )
+                    except Exception as img_err:
+                        logger.warning(
+                            "Failed to send document image",
+                            chat_id=chat_id,
+                            path=str(doc_path),
+                            error=str(img_err),
+                        )
+
             logger.info(
                 "Notification sent",
                 chat_id=chat_id,
                 text_length=len(text),
                 chunks=len(chunks),
+                images=len(event.image_paths),
                 originating_event=event.originating_event_id,
             )
         except TelegramError as e:

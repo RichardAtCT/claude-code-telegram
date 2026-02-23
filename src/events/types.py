@@ -52,3 +52,4 @@ class AgentResponseEvent(Event):
     reply_to_message_id: Optional[int] = None
     source: str = "agent"
     originating_event_id: Optional[str] = None
+    image_paths: List[str] = field(default_factory=list)

@@ -1,10 +1,11 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 import structlog
-from telegram import Update
+from telegram import InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
 from ...claude.exceptions import (
@@ -20,6 +21,10 @@ from ...security.audit import AuditLogger
 from ...security.rate_limiter import RateLimiter
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
+from ..utils.image_extractor import (
+    extract_images_from_response,
+    should_send_as_photo,
+)
 
 logger = structlog.get_logger()
 
@@ -414,48 +419,154 @@ async def handle_text_message(
         # Delete progress message
         await progress_msg.delete()
 
-        # Send formatted responses (may be multiple messages)
-        for i, message in enumerate(formatted_messages):
+        # Extract images before sending — may embed text as caption
+        images = []
+        if claude_response:
             try:
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=message.reply_markup,
-                    reply_to_message_id=update.message.message_id if i == 0 else None,
+                images = extract_images_from_response(
+                    claude_response.content,
+                    working_directory=Path(str(current_dir)),
+                    approved_directory=settings.approved_directory,
+                    tools_used=claude_response.tools_used,
                 )
+            except Exception as img_err:
+                logger.warning("Image extraction failed", error=str(img_err))
 
-                # Small delay between messages to avoid rate limits
-                if i < len(formatted_messages) - 1:
-                    await asyncio.sleep(0.5)
+        # Try to combine text + images when response fits in a caption
+        caption_sent = False
+        if images and len(formatted_messages) == 1:
+            msg = formatted_messages[0]
+            if msg.text and len(msg.text) <= 1024:
+                photos = [i for i in images if should_send_as_photo(i.path)]
+                documents = [i for i in images if not should_send_as_photo(i.path)]
+                if photos and not documents:
+                    try:
+                        if len(photos) == 1:
+                            with open(photos[0].path, "rb") as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    caption=msg.text,
+                                    parse_mode=msg.parse_mode,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                            caption_sent = True
+                        else:
+                            media = []
+                            file_handles = []
+                            for idx, img in enumerate(photos[:10]):
+                                fh = open(img.path, "rb")  # noqa: SIM115
+                                file_handles.append(fh)
+                                media.append(
+                                    InputMediaPhoto(
+                                        media=fh,
+                                        caption=msg.text if idx == 0 else None,
+                                        parse_mode=(
+                                            msg.parse_mode if idx == 0 else None
+                                        ),
+                                    )
+                                )
+                            try:
+                                await update.message.chat.send_media_group(
+                                    media=media,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                                caption_sent = True
+                            finally:
+                                for fh in file_handles:
+                                    fh.close()
+                    except Exception as album_err:
+                        logger.warning(
+                            "Failed to send photo+caption", error=str(album_err)
+                        )
 
-            except Exception as send_err:
-                logger.warning(
-                    "Failed to send HTML response, retrying as plain text",
-                    error=str(send_err),
-                    message_index=i,
-                )
+        if not caption_sent:
+            # Send formatted responses (may be multiple messages)
+            for i, message in enumerate(formatted_messages):
                 try:
                     await update.message.reply_text(
                         message.text,
+                        parse_mode=message.parse_mode,
                         reply_markup=message.reply_markup,
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
                     )
-                except Exception as plain_err:
-                    logger.error(
-                        "Failed to send plain text fallback response",
-                        error=str(plain_err),
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+                except Exception as send_err:
+                    logger.warning(
+                        "Failed to send HTML response, retrying as plain text",
+                        error=str(send_err),
+                        message_index=i,
                     )
-                    # Include what actually went wrong instead of a generic message
-                    await update.message.reply_text(
-                        f"Failed to deliver response "
-                        f"(Telegram error: {str(plain_err)[:150]}). "
-                        f"Please try again.",
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
+                    try:
+                        await update.message.reply_text(
+                            message.text,
+                            reply_markup=message.reply_markup,
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                        )
+                    except Exception as plain_err:
+                        logger.error(
+                            "Failed to send plain text fallback response",
+                            error=str(plain_err),
+                        )
+                        await update.message.reply_text(
+                            f"Failed to deliver response "
+                            f"(Telegram error: {str(plain_err)[:150]}). "
+                            f"Please try again.",
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                        )
+
+            # Send images separately
+            if images:
+                photos = [i for i in images if should_send_as_photo(i.path)]
+                documents = [i for i in images if not should_send_as_photo(i.path)]
+                if photos:
+                    try:
+                        if len(photos) == 1:
+                            with open(photos[0].path, "rb") as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                        else:
+                            media = []
+                            file_handles = []
+                            for img in photos[:10]:
+                                fh = open(img.path, "rb")  # noqa: SIM115
+                                file_handles.append(fh)
+                                media.append(InputMediaPhoto(media=fh))
+                            try:
+                                await update.message.chat.send_media_group(
+                                    media=media,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                            finally:
+                                for fh in file_handles:
+                                    fh.close()
+                    except Exception as album_err:
+                        logger.warning(
+                            "Failed to send photo album", error=str(album_err)
+                        )
+                for img in documents:
+                    try:
+                        with open(img.path, "rb") as f:
+                            await update.message.reply_document(
+                                document=f,
+                                filename=img.path.name,
+                                reply_to_message_id=update.message.message_id,
+                            )
+                        await asyncio.sleep(0.5)
+                    except Exception as doc_err:
+                        logger.warning(
+                            "Failed to send document image",
+                            path=str(img.path),
+                            error=str(doc_err),
+                        )
 
         # Update session info
         context.user_data["last_message"] = update.message.text

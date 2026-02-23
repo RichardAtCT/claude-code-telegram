@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ..bot.utils.image_extractor import extract_images_from_response
 from ..claude.facade import ClaudeIntegration
 from .bus import Event, EventBus
 from .types import AgentResponseEvent, ScheduledEvent, WebhookEvent
@@ -63,6 +64,18 @@ class AgentHandler:
             )
 
             if response.content:
+                # Extract image paths from the response
+                image_paths: list[str] = []
+                try:
+                    images = extract_images_from_response(
+                        response.content,
+                        working_directory=self.default_working_directory,
+                        approved_directory=self.default_working_directory,
+                    )
+                    image_paths = [str(img.path) for img in images]
+                except Exception:
+                    logger.debug("Image extraction failed for webhook response")
+
                 # We don't know which chat to send to from a webhook alone.
                 # The notification service needs configured target chats.
                 # Publish with chat_id=0 — the NotificationService
@@ -72,6 +85,7 @@ class AgentHandler:
                         chat_id=0,
                         text=response.content,
                         originating_event_id=event.id,
+                        image_paths=image_paths,
                     )
                 )
         except Exception:
@@ -108,12 +122,25 @@ class AgentHandler:
             )
 
             if response.content:
+                # Extract image paths from the response
+                image_paths: list[str] = []
+                try:
+                    images = extract_images_from_response(
+                        response.content,
+                        working_directory=working_dir,
+                        approved_directory=self.default_working_directory,
+                    )
+                    image_paths = [str(img.path) for img in images]
+                except Exception:
+                    logger.debug("Image extraction failed for scheduled response")
+
                 for chat_id in event.target_chat_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
                             chat_id=chat_id,
                             text=response.content,
                             originating_event_id=event.id,
+                            image_paths=image_paths,
                         )
                     )
 
@@ -124,6 +151,7 @@ class AgentHandler:
                             chat_id=0,
                             text=response.content,
                             originating_event_id=event.id,
+                            image_paths=image_paths,
                         )
                     )
         except Exception:
