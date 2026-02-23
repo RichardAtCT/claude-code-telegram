@@ -52,6 +52,7 @@ class ClaudeResponse:
     is_error: bool = False
     error_type: Optional[str] = None
     tools_used: List[Dict[str, Any]] = field(default_factory=list)
+    interrupted: bool = False
 
 
 @dataclass
@@ -152,6 +153,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        interrupt_event: Optional[asyncio.Event] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -237,6 +239,7 @@ class ClaudeSDKManager:
 
             # Collect messages via ClaudeSDKClient
             messages: List[Message] = []
+            interrupted = False
 
             async def _run_client() -> None:
                 # Use connect(None) + query(prompt) pattern because
@@ -244,6 +247,19 @@ class ClaudeSDKManager:
                 # a plain string. connect(None) uses an empty async
                 # iterable internally, satisfying the requirement.
                 client = ClaudeSDKClient(options)
+
+                # Spawn interrupt watcher if an event was provided
+                interrupt_task: Optional[asyncio.Task[None]] = None
+                if interrupt_event is not None:
+
+                    async def _watch_interrupt() -> None:
+                        nonlocal interrupted
+                        await interrupt_event.wait()
+                        await client.interrupt()
+                        interrupted = True
+
+                    interrupt_task = asyncio.create_task(_watch_interrupt())
+
                 try:
                     await client.connect()
                     await client.query(prompt)
@@ -251,10 +267,10 @@ class ClaudeSDKManager:
                     # Iterate over raw messages and parse them ourselves
                     # so that MessageParseError (e.g. from rate_limit_event)
                     # doesn't kill the underlying async generator. When
-                    # parse_message raises inside the SDK's receive_messages()
-                    # generator, Python terminates that generator permanently,
-                    # causing us to lose all subsequent messages including
-                    # the ResultMessage.
+                    # parse_message raises inside the SDK's
+                    # receive_messages() generator, Python terminates that
+                    # generator permanently, causing us to lose all
+                    # subsequent messages including the ResultMessage.
                     async for raw_data in client._query.receive_messages():
                         try:
                             message = parse_message(raw_data)
@@ -283,6 +299,8 @@ class ClaudeSDKManager:
                                     error_type=type(callback_error).__name__,
                                 )
                 finally:
+                    if interrupt_task is not None:
+                        interrupt_task.cancel()
                     await client.disconnect()
 
             # Execute with timeout
@@ -374,6 +392,7 @@ class ClaudeSDKManager:
                     ]
                 ),
                 tools_used=tools_used,
+                interrupted=interrupted,
             )
 
         except asyncio.TimeoutError:
