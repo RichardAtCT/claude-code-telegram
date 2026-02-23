@@ -1083,13 +1083,28 @@ class MessageOrchestrator:
         /repo <name>   — switch to that directory, resume session if available
         """
         args = update.message.text.split()[1:] if update.message.text else []
-        base = self.settings.approved_directory
-        current_dir = context.user_data.get("current_directory", base)
+        approved_roots = self.settings.approved_directories
+        current_dir = context.user_data.get(
+            "current_directory", self.settings.approved_directory
+        )
+        current_root = (
+            self.settings.get_approved_root_for_path(current_dir)
+            or self.settings.approved_directory
+        )
 
         if args:
             # Switch to named repo
             target_name = args[0]
-            target_path = base / target_name
+            target_path = next(
+                (
+                    (root / target_name).resolve()
+                    for root in approved_roots
+                    if (root / target_name).is_dir()
+                ),
+                None,
+            )
+            if target_path is None:
+                target_path = (current_root / target_name).resolve()
             if not target_path.is_dir():
                 await update.message.reply_text(
                     f"Directory not found: <code>{escape_html(target_name)}</code>",
@@ -1123,21 +1138,19 @@ class MessageOrchestrator:
 
         # No args — list repos
         try:
-            entries = sorted(
-                [
-                    d
-                    for d in base.iterdir()
-                    if d.is_dir() and not d.name.startswith(".")
-                ],
-                key=lambda d: d.name,
-            )
+            entries = []
+            for root_idx, root in enumerate(approved_roots):
+                for directory in root.iterdir():
+                    if directory.is_dir() and not directory.name.startswith("."):
+                        entries.append((root_idx, directory))
+            entries.sort(key=lambda item: (item[0], item[1].name))
         except OSError as e:
             await update.message.reply_text(f"Error reading workspace: {e}")
             return
 
         if not entries:
             await update.message.reply_text(
-                f"No repos in <code>{escape_html(str(base))}</code>.\n"
+                f"No repos in <code>{escape_html(str(current_root))}</code>.\n"
                 'Clone one by telling me, e.g. <i>"clone org/repo"</i>.',
                 parse_mode="HTML",
             )
@@ -1145,21 +1158,35 @@ class MessageOrchestrator:
 
         lines: List[str] = []
         keyboard_rows: List[list] = []  # type: ignore[type-arg]
-        current_name = current_dir.name if current_dir != base else None
+        current_name = current_dir.name if current_dir != current_root else None
 
-        for d in entries:
+        for root_idx, d in entries:
             is_git = (d / ".git").is_dir()
             icon = "\U0001f4e6" if is_git else "\U0001f4c1"
+            prefix = (
+                f"{escape_html(approved_roots[root_idx].name)}/"
+                if len(approved_roots) > 1
+                else ""
+            )
             marker = " \u25c0" if d.name == current_name else ""
-            lines.append(f"{icon} <code>{escape_html(d.name)}/</code>{marker}")
+            lines.append(f"{icon} <code>{prefix}{escape_html(d.name)}/</code>{marker}")
 
-        # Build inline keyboard (2 per row)
+        # Build inline keyboard (2 per row).
+        # Encode the root by its directory *name* rather than its positional index
+        # so that reordering APPROVED_DIRECTORIES between keyboard render and button
+        # press cannot silently route to a different root.
         for i in range(0, len(entries), 2):
             row = []
             for j in range(2):
                 if i + j < len(entries):
-                    name = entries[i + j].name
-                    row.append(InlineKeyboardButton(name, callback_data=f"cd:{name}"))
+                    root_idx, directory = entries[i + j]
+                    root_name = approved_roots[root_idx].name
+                    row.append(
+                        InlineKeyboardButton(
+                            directory.name,
+                            callback_data=f"cd:{root_name}:{directory.name}",
+                        )
+                    )
             keyboard_rows.append(row)
 
         reply_markup = InlineKeyboardMarkup(keyboard_rows)
@@ -1178,10 +1205,31 @@ class MessageOrchestrator:
         await query.answer()
 
         data = query.data
-        _, project_name = data.split(":", 1)
-
-        base = self.settings.approved_directory
-        new_path = base / project_name
+        parts = data.split(":", 2)
+        approved_roots = self.settings.approved_directories
+        if len(parts) == 3:
+            # New format: cd:<root_name>:<project_name>
+            _, root_name, project_name = parts
+            # Find the root whose directory name matches what was encoded at render time.
+            # Using names instead of positional indexes means a reordering of
+            # APPROVED_DIRECTORIES between keyboard render and button press cannot
+            # silently route to the wrong root.
+            base = next((r for r in approved_roots if r.name == root_name), None)
+            if base is None:
+                await query.edit_message_text(
+                    "Directory root not found. Run /repo again.",
+                    parse_mode="HTML",
+                )
+                return
+        else:
+            # Legacy format: cd:<project_name> (pre-multi-directory keyboards)
+            # Search all approved roots for the named directory; fall back to first root.
+            _, project_name = parts
+            base = next(
+                (r for r in approved_roots if (r / project_name).is_dir()),
+                approved_roots[0],
+            )
+        new_path = (base / project_name).resolve()
 
         if not new_path.is_dir():
             await query.edit_message_text(
