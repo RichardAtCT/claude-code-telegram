@@ -168,6 +168,13 @@ class ClaudeSDKManager:
         )
 
         try:
+            # Capture stderr from Claude CLI for better error diagnostics
+            stderr_lines: List[str] = []
+
+            def _stderr_callback(line: str) -> None:
+                stderr_lines.append(line)
+                logger.debug("Claude CLI stderr", line=line)
+
             # Build Claude Agent options
             cli_path = find_claude_cli(self.config.claude_cli_path)
             options = ClaudeAgentOptions(
@@ -185,6 +192,7 @@ class ClaudeSDKManager:
                     f"All file operations must stay within {working_directory}. "
                     "Use relative paths."
                 ),
+                stderr=_stderr_callback,
             )
 
             # Pass MCP server configuration if enabled
@@ -335,10 +343,15 @@ class ClaudeSDKManager:
 
         except ProcessError as e:
             error_str = str(e)
+            # Include captured stderr for better diagnostics
+            captured_stderr = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
+            if captured_stderr:
+                error_str = f"{error_str}\nStderr: {captured_stderr}"
             logger.error(
                 "Claude process failed",
                 error=error_str,
                 exit_code=getattr(e, "exit_code", None),
+                stderr=captured_stderr or None,
             )
             # Check if the process error is MCP-related
             if "mcp" in error_str.lower():

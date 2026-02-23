@@ -150,12 +150,10 @@ class ClaudeIntegration:
                     stream_callback=stream_handler,
                 )
             except Exception as resume_error:
-                # If resume failed (e.g., session expired on Claude's side),
-                # retry as a fresh session
-                if (
-                    should_continue
-                    and "no conversation found" in str(resume_error).lower()
-                ):
+                # If resume failed (e.g., session expired/missing on Claude's side),
+                # retry as a fresh session.  The CLI returns a generic exit-code-1
+                # when the session is gone, so we catch *any* error during resume.
+                if should_continue:
                     logger.warning(
                         "Session resume failed, starting fresh session",
                         failed_session_id=claude_session_id,
