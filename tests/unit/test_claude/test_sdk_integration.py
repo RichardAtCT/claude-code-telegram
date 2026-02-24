@@ -529,6 +529,85 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].sandbox["enabled"] is False
 
+    async def test_claude_md_appended_to_system_prompt_when_present(
+        self, sdk_manager, tmp_path
+    ):
+        """Test that CLAUDE.md content is appended to system_prompt when it exists."""
+        claude_md = tmp_path / "CLAUDE.md"
+        claude_md.write_text("Project conventions: use snake_case.", encoding="utf-8")
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        opts = captured_options[0]
+        assert str(tmp_path) in opts.system_prompt
+        assert "Project conventions: use snake_case." in opts.system_prompt
+
+    async def test_system_prompt_unchanged_when_no_claude_md(
+        self, sdk_manager, tmp_path
+    ):
+        """Test that system_prompt is not modified when CLAUDE.md does not exist."""
+        # Ensure no CLAUDE.md exists in tmp_path
+        assert not (tmp_path / "CLAUDE.md").exists()
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        opts = captured_options[0]
+        expected_prompt = (
+            f"All file operations must stay within {tmp_path}. "
+            "Use relative paths."
+        )
+        assert opts.system_prompt == expected_prompt
+
+    async def test_setting_sources_project_passed_to_options(
+        self, sdk_manager, tmp_path
+    ):
+        """Test that setting_sources=['project'] is passed to ClaudeAgentOptions."""
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].setting_sources == ["project"]
+
 
 class TestClaudeMCPErrors:
     """Test MCP-specific error handling."""
