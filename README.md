@@ -295,6 +295,21 @@ To use topics with your bot, enable them in BotFather:
 
 Message [@userinfobot](https://t.me/userinfobot) on Telegram -- it will reply with your user ID number.
 
+## Viewing Logs
+
+If running as a systemd user service (see [SYSTEMD_SETUP.md](SYSTEMD_SETUP.md)):
+
+```bash
+# Live logs (follow mode)
+journalctl --user -u claude-telegram-bot -f
+
+# Recent logs (last 50 lines)
+journalctl --user -u claude-telegram-bot -n 50
+
+# Check service status
+systemctl --user status claude-telegram-bot
+```
+
 ## Troubleshooting
 
 **Bot doesn't respond:**

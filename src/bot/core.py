@@ -51,6 +51,7 @@ class ClaudeCodeBot:
         builder = Application.builder()
         builder.token(self.settings.telegram_token_str)
         builder.rate_limiter(AIORateLimiter(max_retries=1))
+        builder.concurrent_updates(True)
 
         # Configure connection settings
         builder.connect_timeout(30)
