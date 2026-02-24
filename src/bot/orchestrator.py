@@ -103,6 +103,9 @@ class MessageOrchestrator:
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
         self.deps = deps
+        # Per-update thread state for concurrent handler safety.
+        # telegram.Update uses __slots__ so we cannot set arbitrary attributes.
+        self._update_thread_states: Dict[int, Dict[str, Any]] = {}
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
         """Wrap handler to inject dependencies into context.bot_data."""
@@ -135,7 +138,7 @@ class MessageOrchestrator:
                 await handler(update, context)
             finally:
                 if should_enforce:
-                    self._persist_thread_state(context)
+                    self._persist_thread_state(update, context)
 
         return wrapped
 
@@ -202,7 +205,7 @@ class MessageOrchestrator:
 
         context.user_data["current_directory"] = current_dir
         context.user_data["claude_session_id"] = state.get("claude_session_id")
-        context.user_data["_thread_context"] = {
+        thread_ctx_dict = {
             "chat_id": chat.id,
             "message_thread_id": message_thread_id,
             "state_key": state_key,
@@ -210,16 +213,36 @@ class MessageOrchestrator:
             "project_root": str(project_root),
             "project_name": project.name,
         }
+        context.user_data["_thread_context"] = thread_ctx_dict
+
+        # Per-update isolated copy for concurrent handler safety.
+        # context.user_data is shared per-user, so concurrent handlers for
+        # different topics would overwrite each other's values.
+        # Note: telegram.Update uses __slots__, so we store state in a dict
+        # on the orchestrator instance, keyed by update_id.
+        self._update_thread_states[update.update_id] = {
+            "current_directory": current_dir,
+            "claude_session_id": state.get("claude_session_id"),
+            "_thread_context": thread_ctx_dict,
+        }
         return True
 
-    def _persist_thread_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+    def _persist_thread_state(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         """Persist compatibility keys back into per-thread state."""
-        thread_context = context.user_data.get("_thread_context")
+        # Read from per-update storage to avoid races with concurrent handlers.
+        _ts = self._update_thread_states.pop(update.update_id, {})
+        thread_context = _ts.get("_thread_context") or context.user_data.get(
+            "_thread_context"
+        )
         if not thread_context:
             return
 
         project_root = Path(thread_context["project_root"])
-        current_dir = context.user_data.get("current_directory", project_root)
+        current_dir = _ts.get("current_directory") or context.user_data.get(
+            "current_directory", project_root
+        )
         if not isinstance(current_dir, Path):
             current_dir = Path(str(current_dir))
         current_dir = current_dir.resolve()
@@ -229,7 +252,8 @@ class MessageOrchestrator:
         thread_states = context.user_data.setdefault("thread_state", {})
         thread_states[thread_context["state_key"]] = {
             "current_directory": str(current_dir),
-            "claude_session_id": context.user_data.get("claude_session_id"),
+            "claude_session_id": _ts.get("claude_session_id")
+            or context.user_data.get("claude_session_id"),
             "project_slug": thread_context["project_slug"],
         }
 
@@ -693,6 +717,19 @@ class MessageOrchestrator:
         user_id = update.effective_user.id
         message_text = update.message.text
 
+        # Capture thread-specific state immediately (before any await) to avoid
+        # race conditions with concurrent handlers for different topics.
+        _ts = self._update_thread_states.get(update.update_id, {})
+        current_dir = (
+            _ts.get("current_directory")
+            or context.user_data.get("current_directory")
+            or self.settings.approved_directory
+        )
+        session_id = _ts.get("claude_session_id") or context.user_data.get(
+            "claude_session_id"
+        )
+        force_new = bool(context.user_data.get("force_new_session"))
+
         logger.info(
             "Agentic text message",
             user_id=user_id,
@@ -720,15 +757,6 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
-
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
-
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
@@ -755,6 +783,9 @@ class MessageOrchestrator:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+            # Also persist to per-update storage for _persist_thread_state
+            if update.update_id in self._update_thread_states:
+                self._update_thread_states[update.update_id]["claude_session_id"] = claude_response.session_id
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
@@ -852,6 +883,18 @@ class MessageOrchestrator:
         user_id = update.effective_user.id
         document = update.message.document
 
+        # Capture thread-specific state immediately (before any await).
+        _ts = self._update_thread_states.get(update.update_id, {})
+        current_dir = (
+            _ts.get("current_directory")
+            or context.user_data.get("current_directory")
+            or self.settings.approved_directory
+        )
+        session_id = _ts.get("claude_session_id") or context.user_data.get(
+            "claude_session_id"
+        )
+        force_new = bool(context.user_data.get("force_new_session"))
+
         logger.info(
             "Agentic document upload",
             user_id=user_id,
@@ -920,15 +963,6 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
-
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
-
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         on_stream = self._make_stream_callback(
@@ -950,6 +984,8 @@ class MessageOrchestrator:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+            if update.update_id in self._update_thread_states:
+                self._update_thread_states[update.update_id]["claude_session_id"] = claude_response.session_id
 
             from .handlers.message import _update_working_directory_from_claude_response
 
@@ -990,6 +1026,18 @@ class MessageOrchestrator:
         """Process photo -> Claude, minimal chrome."""
         user_id = update.effective_user.id
 
+        # Capture thread-specific state immediately (before any await).
+        _ts = self._update_thread_states.get(update.update_id, {})
+        current_dir = (
+            _ts.get("current_directory")
+            or context.user_data.get("current_directory")
+            or self.settings.approved_directory
+        )
+        session_id = _ts.get("claude_session_id") or context.user_data.get(
+            "claude_session_id"
+        )
+        force_new = bool(context.user_data.get("force_new_session"))
+
         features = context.bot_data.get("features")
         image_handler = features.get_image_handler() if features else None
 
@@ -1014,15 +1062,6 @@ class MessageOrchestrator:
                 )
                 return
 
-            current_dir = context.user_data.get(
-                "current_directory", self.settings.approved_directory
-            )
-            session_id = context.user_data.get("claude_session_id")
-
-            # Check if /new was used — skip auto-resume for this first message.
-            # Flag is only cleared after a successful run so retries keep the intent.
-            force_new = bool(context.user_data.get("force_new_session"))
-
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
             on_stream = self._make_stream_callback(
@@ -1046,6 +1085,8 @@ class MessageOrchestrator:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+            if update.update_id in self._update_thread_states:
+                self._update_thread_states[update.update_id]["claude_session_id"] = claude_response.session_id
 
             from .utils.formatting import ResponseFormatter
 

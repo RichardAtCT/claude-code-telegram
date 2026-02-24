@@ -14,7 +14,13 @@ import structlog
 # Subdirectories under ~/.claude/ that Claude Code uses internally.
 # File operations targeting these paths are allowed even when they fall
 # outside the project's approved directory.
-_CLAUDE_INTERNAL_SUBDIRS: Set[str] = {"plans", "todos", "settings.json"}
+_CLAUDE_INTERNAL_SUBDIRS: Set[str] = {
+    "plans",
+    "todos",
+    "projects",
+    "tasks",
+    "settings.json",
+}
 
 logger = structlog.get_logger()
 
@@ -162,30 +168,45 @@ def check_bash_directory_boundary(
 
 
 def _is_claude_internal_path(file_path: str) -> bool:
-    """Check whether *file_path* points inside the ``~/.claude/`` directory.
+    """Check whether *file_path* points inside a Claude Code internal directory.
 
-    Claude Code keeps internal state (plan-mode drafts, todo lists, etc.)
-    under ``$HOME/.claude/``.  These paths are outside the project's
-    ``approved_directory`` but are safe to read/write because they are
-    controlled entirely by Claude Code itself.
+    Claude Code keeps internal state (plan-mode drafts, todo lists,
+    compressed tool results, task agent outputs, etc.) under
+    ``$HOME/.claude/`` and ``/tmp/claude-<uid>/``.  These paths are
+    outside the project's ``approved_directory`` but are safe to
+    read/write because they are controlled entirely by Claude Code itself.
 
     Only the specific subdirectories listed in ``_CLAUDE_INTERNAL_SUBDIRS``
-    are allowed; arbitrary files directly under ``~/.claude/`` are not.
+    are allowed under ``~/.claude/``; arbitrary files directly under
+    ``~/.claude/`` are not.  All paths under ``/tmp/claude-<uid>/`` are
+    allowed (Claude Code uses this for Task agent output files).
     """
     try:
         resolved = Path(file_path).resolve()
+
+        # Check ~/.claude/ internal paths
         home = Path.home().resolve()
         claude_dir = home / ".claude"
 
-        # Path must be inside ~/.claude/
         try:
             rel = resolved.relative_to(claude_dir)
+            # Must be in one of the known subdirectories (or a known file)
+            top_part = rel.parts[0] if rel.parts else ""
+            return top_part in _CLAUDE_INTERNAL_SUBDIRS
         except ValueError:
-            return False
+            pass
 
-        # Must be in one of the known subdirectories (or a known file)
-        top_part = rel.parts[0] if rel.parts else ""
-        return top_part in _CLAUDE_INTERNAL_SUBDIRS
+        # Check /tmp/claude-<uid>/ paths (Task agent output files)
+        import os
+
+        tmp_claude_dir = Path(f"/tmp/claude-{os.getuid()}")
+        try:
+            resolved.relative_to(tmp_claude_dir)
+            return True
+        except ValueError:
+            pass
+
+        return False
 
     except Exception:
         return False
