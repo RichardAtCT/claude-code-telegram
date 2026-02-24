@@ -161,6 +161,15 @@ class Settings(BaseSettings):
     )
     enable_git_integration: bool = Field(True, description="Enable git commands")
     enable_file_uploads: bool = Field(True, description="Enable file upload handling")
+    enable_voice_messages: bool = Field(
+        True, description="Enable voice message transcription via Mistral"
+    )
+    mistral_api_key: Optional[SecretStr] = Field(
+        None, description="Mistral API key for voice transcription"
+    )
+    voice_transcription_model: str = Field(
+        "voxtral-mini-latest", description="Mistral model for voice transcription"
+    )
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
         True,
@@ -419,3 +428,8 @@ class Settings(BaseSettings):
             if self.anthropic_api_key
             else None
         )
+
+    @property
+    def mistral_api_key_str(self) -> Optional[str]:
+        """Get Mistral API key as string."""
+        return self.mistral_api_key.get_secret_value() if self.mistral_api_key else None

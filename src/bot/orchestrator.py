@@ -320,6 +320,12 @@ class MessageOrchestrator:
             group=10,
         )
 
+        # Voice messages -> transcribe -> Claude
+        app.add_handler(
+            MessageHandler(filters.VOICE, self._inject_deps(self.agentic_voice)),
+            group=10,
+        )
+
         # Only cd: callbacks (for project selection), scoped by pattern
         app.add_handler(
             CallbackQueryHandler(
@@ -370,6 +376,10 @@ class MessageOrchestrator:
         )
         app.add_handler(
             MessageHandler(filters.PHOTO, self._inject_deps(message.handle_photo)),
+            group=10,
+        )
+        app.add_handler(
+            MessageHandler(filters.VOICE, self._inject_deps(message.handle_voice)),
             group=10,
         )
         app.add_handler(
@@ -1072,6 +1082,140 @@ class MessageOrchestrator:
             await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
             logger.error(
                 "Claude photo processing failed", error=str(e), user_id=user_id
+            )
+
+    async def agentic_voice(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Transcribe voice message -> Claude, minimal chrome."""
+        user_id = update.effective_user.id
+
+        features = context.bot_data.get("features")
+        voice_handler = features.get_voice_handler() if features else None
+
+        if not voice_handler:
+            await update.message.reply_text(
+                "Voice processing is not available. "
+                "Set MISTRAL_API_KEY to enable transcription."
+            )
+            return
+
+        chat = update.message.chat
+        await chat.send_action("typing")
+        progress_msg = await update.message.reply_text("Transcribing...")
+
+        try:
+            voice = update.message.voice
+            processed_voice = await voice_handler.process_voice_message(
+                voice, update.message.caption
+            )
+
+            await progress_msg.edit_text("Working...")
+
+            claude_integration = context.bot_data.get("claude_integration")
+            if not claude_integration:
+                await progress_msg.edit_text(
+                    "Claude integration not available. Check configuration."
+                )
+                return
+
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = context.user_data.get("claude_session_id")
+            force_new = bool(context.user_data.get("force_new_session"))
+
+            verbose_level = self._get_verbose_level(context)
+            tool_log: List[Dict[str, Any]] = []
+            mcp_images_voice: List[ImageAttachment] = []
+            on_stream = self._make_stream_callback(
+                verbose_level,
+                progress_msg,
+                tool_log,
+                time.time(),
+                mcp_images=mcp_images_voice,
+                approved_directory=self.settings.approved_directory,
+            )
+
+            heartbeat = self._start_typing_heartbeat(chat)
+            try:
+                claude_response = await claude_integration.run_command(
+                    prompt=processed_voice.prompt,
+                    working_directory=current_dir,
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_stream=on_stream,
+                    force_new=force_new,
+                )
+            finally:
+                heartbeat.cancel()
+
+            if force_new:
+                context.user_data["force_new_session"] = False
+
+            context.user_data["claude_session_id"] = claude_response.session_id
+
+            from .handlers.message import _update_working_directory_from_claude_response
+
+            _update_working_directory_from_claude_response(
+                claude_response, context, self.settings, user_id
+            )
+
+            from .utils.formatting import ResponseFormatter
+
+            formatter = ResponseFormatter(self.settings)
+            formatted_messages = formatter.format_claude_response(
+                claude_response.content
+            )
+
+            await progress_msg.delete()
+
+            images: List[ImageAttachment] = mcp_images_voice
+
+            caption_sent = False
+            if images and len(formatted_messages) == 1:
+                msg = formatted_messages[0]
+                if msg.text and len(msg.text) <= 1024:
+                    try:
+                        caption_sent = await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                            caption=msg.text,
+                            caption_parse_mode=msg.parse_mode,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image+caption send failed", error=str(img_err))
+
+            if not caption_sent:
+                for i, message in enumerate(formatted_messages):
+                    await update.message.reply_text(
+                        message.text,
+                        parse_mode=message.parse_mode,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+
+                if images:
+                    try:
+                        await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image send failed", error=str(img_err))
+
+        except Exception as e:
+            from .handlers.message import _format_error_message
+
+            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
+            logger.error(
+                "Claude voice processing failed", error=str(e), user_id=user_id
             )
 
     async def agentic_repo(

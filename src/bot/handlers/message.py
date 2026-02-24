@@ -891,6 +891,98 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle voice message uploads."""
+    user_id = update.effective_user.id
+    settings: Settings = context.bot_data["settings"]
+
+    features = context.bot_data.get("features")
+    voice_handler = features.get_voice_handler() if features else None
+
+    if not voice_handler:
+        await update.message.reply_text(
+            "🎙️ <b>Voice Messages</b>\n\n"
+            "Voice transcription is not available.\n"
+            "Set <code>MISTRAL_API_KEY</code> to enable.",
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        progress_msg = await update.message.reply_text(
+            "🎙️ Transcribing voice message...", parse_mode="HTML"
+        )
+
+        voice = update.message.voice
+        processed_voice = await voice_handler.process_voice_message(
+            voice, update.message.caption
+        )
+
+        await progress_msg.edit_text(
+            "🤖 Processing transcription with Claude...", parse_mode="HTML"
+        )
+
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            await progress_msg.edit_text(
+                "❌ <b>Claude integration not available</b>\n\n"
+                "The Claude Code integration is not properly configured.",
+                parse_mode="HTML",
+            )
+            return
+
+        current_dir = context.user_data.get(
+            "current_directory", settings.approved_directory
+        )
+        session_id = context.user_data.get("claude_session_id")
+
+        try:
+            claude_response = await claude_integration.run_command(
+                prompt=processed_voice.prompt,
+                working_directory=current_dir,
+                user_id=user_id,
+                session_id=session_id,
+            )
+
+            context.user_data["claude_session_id"] = claude_response.session_id
+
+            _update_working_directory_from_claude_response(
+                claude_response, context, settings, user_id
+            )
+
+            from ..utils.formatting import ResponseFormatter
+
+            formatter = ResponseFormatter(settings)
+            formatted_messages = formatter.format_claude_response(
+                claude_response.content
+            )
+
+            await progress_msg.delete()
+
+            for i, message in enumerate(formatted_messages):
+                await update.message.reply_text(
+                    message.text,
+                    parse_mode=message.parse_mode,
+                    reply_markup=message.reply_markup,
+                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                )
+                if i < len(formatted_messages) - 1:
+                    await asyncio.sleep(0.5)
+
+        except Exception as e:
+            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
+            logger.error(
+                "Claude voice processing failed", error=str(e), user_id=user_id
+            )
+
+    except Exception as e:
+        logger.error("Voice processing failed", error=str(e), user_id=user_id)
+        await update.message.reply_text(
+            _format_error_message(e),
+            parse_mode="HTML",
+        )
+
+
 def _estimate_text_processing_cost(text: str) -> float:
     """Estimate cost for processing text message."""
     # Base cost

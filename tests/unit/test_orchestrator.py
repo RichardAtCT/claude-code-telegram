@@ -128,7 +128,7 @@ def test_classic_registers_13_commands(classic_settings, deps):
 
 
 def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
-    """Agentic mode registers text, document, and photo message handlers."""
+    """Agentic mode registers text, document, photo, and voice message handlers."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -148,8 +148,8 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    # 3 message handlers (text, document, photo)
-    assert len(msg_handlers) == 3
+    # 4 message handlers (text, document, photo, voice)
+    assert len(msg_handlers) == 4
     # 1 callback handler (for cd: only)
     assert len(cb_handlers) == 1
 
