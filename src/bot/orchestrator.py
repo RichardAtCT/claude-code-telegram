@@ -807,7 +807,7 @@ class MessageOrchestrator:
                     message.text,
                     parse_mode=message.parse_mode,
                     reply_markup=None,  # No keyboards in agentic mode
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(update.message.message_id if i == 0 and self.settings.reply_quote else None),
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -822,7 +822,7 @@ class MessageOrchestrator:
                         message.text,
                         reply_markup=None,
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            update.message.message_id if i == 0 and self.settings.reply_quote else None
                         ),
                     )
                 except Exception as plain_err:
@@ -831,7 +831,7 @@ class MessageOrchestrator:
                         f"(Telegram error: {str(plain_err)[:150]}). "
                         f"Please try again.",
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            update.message.message_id if i == 0 and self.settings.reply_quote else None
                         ),
                     )
 
@@ -971,7 +971,7 @@ class MessageOrchestrator:
                     message.text,
                     parse_mode=message.parse_mode,
                     reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(update.message.message_id if i == 0 and self.settings.reply_quote else None),
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -1061,7 +1061,7 @@ class MessageOrchestrator:
                     message.text,
                     parse_mode=message.parse_mode,
                     reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(update.message.message_id if i == 0 and self.settings.reply_quote else None),
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)

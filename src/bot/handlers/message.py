@@ -322,7 +322,7 @@ async def handle_text_message(
         # Create progress message
         progress_msg = await update.message.reply_text(
             "🤔 Processing your request...",
-            reply_to_message_id=update.message.message_id,
+            reply_to_message_id=update.message.message_id if settings.reply_quote else None,
         )
 
         # Get Claude integration and storage from context
@@ -421,7 +421,7 @@ async def handle_text_message(
                     message.text,
                     parse_mode=message.parse_mode,
                     reply_markup=message.reply_markup,
-                    reply_to_message_id=update.message.message_id if i == 0 else None,
+                    reply_to_message_id=(update.message.message_id if i == 0 and settings.reply_quote else None),
                 )
 
                 # Small delay between messages to avoid rate limits
@@ -439,7 +439,7 @@ async def handle_text_message(
                         message.text,
                         reply_markup=message.reply_markup,
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            update.message.message_id if i == 0 and settings.reply_quote else None
                         ),
                     )
                 except Exception as plain_err:
@@ -453,7 +453,7 @@ async def handle_text_message(
                         f"(Telegram error: {str(plain_err)[:150]}). "
                         f"Please try again.",
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            update.message.message_id if i == 0 and settings.reply_quote else None
                         ),
                     )
 
@@ -853,7 +853,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                         parse_mode=message.parse_mode,
                         reply_markup=message.reply_markup,
                         reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
+                            update.message.message_id if i == 0 and settings.reply_quote else None
                         ),
                     )
 
