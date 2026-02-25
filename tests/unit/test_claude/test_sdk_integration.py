@@ -581,8 +581,7 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         opts = captured_options[0]
         expected_prompt = (
-            f"All file operations must stay within {tmp_path}. "
-            "Use relative paths."
+            f"All file operations must stay within {tmp_path}. " "Use relative paths."
         )
         assert opts.system_prompt == expected_prompt
 
