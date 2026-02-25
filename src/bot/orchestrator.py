@@ -797,7 +797,10 @@ class MessageOrchestrator:
         finally:
             heartbeat.cancel()
 
-        await progress_msg.delete()
+        try:
+            await progress_msg.delete()
+        except Exception:
+            logger.debug("Failed to delete progress message, ignoring")
 
         for i, message in enumerate(formatted_messages):
             if not message.text or not message.text.strip():
@@ -964,7 +967,10 @@ class MessageOrchestrator:
                 claude_response.content
             )
 
-            await progress_msg.delete()
+            try:
+                await progress_msg.delete()
+            except Exception:
+                logger.debug("Failed to delete progress message, ignoring")
 
             for i, message in enumerate(formatted_messages):
                 await update.message.reply_text(
@@ -1054,7 +1060,10 @@ class MessageOrchestrator:
                 claude_response.content
             )
 
-            await progress_msg.delete()
+            try:
+                await progress_msg.delete()
+            except Exception:
+                logger.debug("Failed to delete progress message, ignoring")
 
             for i, message in enumerate(formatted_messages):
                 await update.message.reply_text(
