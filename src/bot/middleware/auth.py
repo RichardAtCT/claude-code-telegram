@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict
 
 import structlog
 
+from ..i18n import t
+
 logger = structlog.get_logger()
 
 
@@ -35,10 +37,10 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
 
     if not auth_manager:
         logger.error("Authentication manager not available in middleware context")
+        settings = data.get("settings")
+        lang = settings.bot_language if settings else "en"
         if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 Authentication system unavailable. Please try again later."
-            )
+            await event.effective_message.reply_text(t("auth_unavailable", lang))
         return
 
     # Check if user is already authenticated
@@ -83,10 +85,11 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
         )
 
         # Welcome message for new session
+        settings = data.get("settings")
+        lang = settings.bot_language if settings else "en"
         if event.effective_message:
             await event.effective_message.reply_text(
-                f"🔓 Welcome! You are now authenticated.\n"
-                f"Session started at {datetime.now(UTC).strftime('%H:%M:%S UTC')}"
+                t("auth_welcome", lang, time=datetime.now(UTC).strftime('%H:%M:%S UTC'))
             )
 
         # Continue to handler
@@ -96,13 +99,11 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
         # Authentication failed
         logger.warning("Authentication failed", user_id=user_id, username=username)
 
+        settings = data.get("settings")
+        lang = settings.bot_language if settings else "en"
         if event.effective_message:
             await event.effective_message.reply_text(
-                "🔒 <b>Authentication Required</b>\n\n"
-                "You are not authorized to use this bot.\n"
-                "Please contact the administrator for access.\n\n"
-                f"Your Telegram ID: <code>{user_id}</code>\n"
-                "Share this ID with the administrator to request access.",
+                t("auth_failed", lang, user_id=user_id),
                 parse_mode="HTML",
             )
         return  # Stop processing
@@ -117,10 +118,10 @@ async def require_auth(handler: Callable, event: Any, data: Dict[str, Any]) -> A
     auth_manager = data.get("auth_manager")
 
     if not auth_manager or not auth_manager.is_authenticated(user_id):
+        settings = data.get("settings")
+        lang = settings.bot_language if settings else "en"
         if event.effective_message:
-            await event.effective_message.reply_text(
-                "🔒 Authentication required to use this command."
-            )
+            await event.effective_message.reply_text(t("auth_required", lang))
         return
 
     return await handler(event, data)
