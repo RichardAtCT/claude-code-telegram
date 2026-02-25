@@ -74,10 +74,11 @@ class FeatureFlags:
     @property
     def voice_messages_enabled(self) -> bool:
         """Check if voice message transcription is enabled."""
-        return (
-            self.settings.enable_voice_messages
-            and self.settings.mistral_api_key is not None
-        )
+        if not self.settings.enable_voice_messages:
+            return False
+        if self.settings.voice_provider == "openai":
+            return self.settings.openai_api_key is not None
+        return self.settings.mistral_api_key is not None
 
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""

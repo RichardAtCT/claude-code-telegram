@@ -162,13 +162,24 @@ class Settings(BaseSettings):
     enable_git_integration: bool = Field(True, description="Enable git commands")
     enable_file_uploads: bool = Field(True, description="Enable file upload handling")
     enable_voice_messages: bool = Field(
-        True, description="Enable voice message transcription via Mistral"
+        True, description="Enable voice message transcription"
+    )
+    voice_provider: str = Field(
+        "mistral",
+        description="Voice transcription provider: 'mistral' or 'openai'",
     )
     mistral_api_key: Optional[SecretStr] = Field(
         None, description="Mistral API key for voice transcription"
     )
-    voice_transcription_model: str = Field(
-        "voxtral-mini-latest", description="Mistral model for voice transcription"
+    openai_api_key: Optional[SecretStr] = Field(
+        None, description="OpenAI API key for Whisper voice transcription"
+    )
+    voice_transcription_model: Optional[str] = Field(
+        None,
+        description=(
+            "Model for voice transcription. "
+            "Defaults to 'voxtral-mini-latest' (Mistral) or 'whisper-1' (OpenAI)"
+        ),
     )
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
@@ -433,3 +444,17 @@ class Settings(BaseSettings):
     def mistral_api_key_str(self) -> Optional[str]:
         """Get Mistral API key as string."""
         return self.mistral_api_key.get_secret_value() if self.mistral_api_key else None
+
+    @property
+    def openai_api_key_str(self) -> Optional[str]:
+        """Get OpenAI API key as string."""
+        return self.openai_api_key.get_secret_value() if self.openai_api_key else None
+
+    @property
+    def resolved_voice_model(self) -> str:
+        """Get the voice transcription model, with provider-specific defaults."""
+        if self.voice_transcription_model:
+            return self.voice_transcription_model
+        if self.voice_provider == "openai":
+            return "whisper-1"
+        return "voxtral-mini-latest"

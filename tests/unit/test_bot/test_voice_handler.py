@@ -1,7 +1,6 @@
 """Tests for voice handler feature."""
 
 from datetime import timedelta
-from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,18 +9,45 @@ from src.bot.features.voice_handler import ProcessedVoice, VoiceHandler
 
 
 @pytest.fixture
-def config():
+def mistral_config():
     """Create a mock config with Mistral settings."""
     cfg = MagicMock()
+    cfg.voice_provider = "mistral"
     cfg.mistral_api_key_str = "test-api-key"
-    cfg.voice_transcription_model = "voxtral-mini-latest"
+    cfg.resolved_voice_model = "voxtral-mini-latest"
     return cfg
 
 
 @pytest.fixture
-def voice_handler(config):
-    """Create a VoiceHandler instance."""
-    return VoiceHandler(config=config)
+def openai_config():
+    """Create a mock config with OpenAI settings."""
+    cfg = MagicMock()
+    cfg.voice_provider = "openai"
+    cfg.openai_api_key_str = "test-openai-key"
+    cfg.resolved_voice_model = "whisper-1"
+    return cfg
+
+
+@pytest.fixture
+def voice_handler(mistral_config):
+    """Create a VoiceHandler instance with Mistral config."""
+    return VoiceHandler(config=mistral_config)
+
+
+@pytest.fixture
+def openai_voice_handler(openai_config):
+    """Create a VoiceHandler instance with OpenAI config."""
+    return VoiceHandler(config=openai_config)
+
+
+def _mock_voice(duration=7):
+    """Create a mock Telegram Voice object."""
+    voice = MagicMock()
+    voice.duration = duration
+    mock_file = AsyncMock()
+    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-ogg"))
+    voice.get_file = AsyncMock(return_value=mock_file)
+    return voice
 
 
 def test_processed_voice_dataclass():
@@ -32,16 +58,13 @@ def test_processed_voice_dataclass():
     assert pv.duration == 5
 
 
-async def test_process_voice_message(voice_handler):
-    """process_voice_message downloads, transcribes, and builds prompt."""
-    # Mock Telegram Voice object
-    voice = MagicMock()
-    voice.duration = 7
-    mock_file = AsyncMock()
-    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-ogg"))
-    voice.get_file = AsyncMock(return_value=mock_file)
+# --- Mistral provider tests ---
 
-    # Mock Mistral client
+
+async def test_process_voice_message_mistral(voice_handler):
+    """process_voice_message transcribes via Mistral by default."""
+    voice = _mock_voice(duration=7)
+
     mock_response = MagicMock()
     mock_response.text = "  Hello, this is a test.  "
 
@@ -71,11 +94,7 @@ async def test_process_voice_message(voice_handler):
 
 async def test_process_voice_message_with_caption(voice_handler):
     """process_voice_message uses caption as prompt label when provided."""
-    voice = MagicMock()
-    voice.duration = 3
-    mock_file = AsyncMock()
-    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg-data"))
-    voice.get_file = AsyncMock(return_value=mock_file)
+    voice = _mock_voice(duration=3)
 
     mock_response = MagicMock()
     mock_response.text = "Transcribed text"
@@ -99,11 +118,7 @@ async def test_process_voice_message_with_caption(voice_handler):
 
 async def test_process_voice_message_timedelta_duration(voice_handler):
     """process_voice_message handles timedelta duration from Telegram."""
-    voice = MagicMock()
-    voice.duration = timedelta(seconds=15)
-    mock_file = AsyncMock()
-    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"ogg"))
-    voice.get_file = AsyncMock(return_value=mock_file)
+    voice = _mock_voice(duration=timedelta(seconds=15))
 
     mock_response = MagicMock()
     mock_response.text = "Test"
@@ -121,3 +136,61 @@ async def test_process_voice_message_timedelta_duration(voice_handler):
         result = await voice_handler.process_voice_message(voice)
 
     assert result.duration == 15
+
+
+# --- OpenAI provider tests ---
+
+
+async def test_process_voice_message_openai(openai_voice_handler):
+    """process_voice_message transcribes via OpenAI Whisper."""
+    voice = _mock_voice(duration=10)
+
+    mock_response = MagicMock()
+    mock_response.text = "  Hello from Whisper.  "
+
+    mock_transcriptions = MagicMock()
+    mock_transcriptions.create = AsyncMock(return_value=mock_response)
+
+    mock_audio = MagicMock()
+    mock_audio.transcriptions = mock_transcriptions
+
+    mock_client = MagicMock()
+    mock_client.audio = mock_audio
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        result = await openai_voice_handler.process_voice_message(voice, caption=None)
+
+    assert isinstance(result, ProcessedVoice)
+    assert result.transcription == "Hello from Whisper."
+    assert result.duration == 10
+    assert "Voice message transcription:" in result.prompt
+
+    # Verify OpenAI was called correctly
+    mock_transcriptions.create.assert_called_once()
+    call_kwargs = mock_transcriptions.create.call_args
+    assert call_kwargs.kwargs["model"] == "whisper-1"
+    assert call_kwargs.kwargs["file"] == ("voice.ogg", b"fake-ogg")
+
+
+async def test_process_voice_message_openai_with_caption(openai_voice_handler):
+    """OpenAI provider uses caption as prompt label when provided."""
+    voice = _mock_voice(duration=5)
+
+    mock_response = MagicMock()
+    mock_response.text = "Whisper transcription"
+
+    mock_transcriptions = MagicMock()
+    mock_transcriptions.create = AsyncMock(return_value=mock_response)
+
+    mock_audio = MagicMock()
+    mock_audio.transcriptions = mock_transcriptions
+
+    mock_client = MagicMock()
+    mock_client.audio = mock_audio
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        result = await openai_voice_handler.process_voice_message(
+            voice, caption="Translate this:"
+        )
+
+    assert result.prompt == "Translate this:\n\nWhisper transcription"
