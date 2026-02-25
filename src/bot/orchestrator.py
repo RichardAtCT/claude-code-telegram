@@ -670,11 +670,13 @@ class MessageOrchestrator:
             # Capture assistant text (reasoning / commentary)
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
-                if text and verbose_level >= 1:
-                    # Collapse to first meaningful line, cap length
-                    first_line = text.split("\n", 1)[0].strip()
-                    if first_line:
-                        tool_log.append({"kind": "text", "detail": first_line[:120]})
+                # Filter out raw ThinkingBlock repr that may leak through
+                if text and not text.startswith("[ThinkingBlock("):
+                    if verbose_level >= 1:
+                        # Collapse to first meaningful line, cap length
+                        first_line = text.split("\n", 1)[0].strip()
+                        if first_line:
+                            tool_log.append({"kind": "text", "detail": first_line[:120]})
 
             # Throttle progress message edits to avoid Telegram rate limits
             now = time.time()
