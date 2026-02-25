@@ -120,6 +120,25 @@ class Settings(BaseSettings):
         default=[],
         description="List of explicitly disallowed Claude tools/commands",
     )
+    claude_effort: Optional[str] = Field(
+        None,
+        description="Claude thinking effort level (low/medium/high/max)",
+    )
+    claude_permission_mode: Optional[str] = Field(
+        None,
+        description="Claude permission mode (default/acceptEdits/plan/bypassPermissions)",
+    )
+
+    # Persona / i18n
+    persona_prompt_path: Optional[Path] = Field(
+        None, description="Path to persona markdown file for system prompt"
+    )
+    knowledge_hint_paths: Optional[List[str]] = Field(
+        None, description="Comma-separated list of knowledge file paths"
+    )
+    bot_language: str = Field(
+        "en", description="Bot UI language (ja/en)"
+    )
 
     # Sandbox settings
     sandbox_enabled: bool = Field(
@@ -259,6 +278,67 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
+
+    @field_validator("knowledge_hint_paths", mode="before")
+    @classmethod
+    def parse_knowledge_hint_paths(cls, v: Any) -> Optional[List[str]]:
+        """Parse comma-separated knowledge file paths."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            paths = [p.strip() for p in v.split(",") if p.strip()]
+            return paths if paths else None
+        if isinstance(v, list):
+            return [str(p) for p in v]
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("persona_prompt_path", mode="before")
+    @classmethod
+    def validate_persona_prompt_path(cls, v: Any) -> Optional[Path]:
+        """Validate persona prompt file exists."""
+        if not v:
+            return None
+        if isinstance(v, str):
+            v = Path(v)
+        if not v.exists():
+            raise ValueError(f"Persona prompt file does not exist: {v}")
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("claude_effort", mode="before")
+    @classmethod
+    def validate_claude_effort(cls, v: Any) -> Optional[str]:
+        """Validate Claude effort level."""
+        if v is None:
+            return None
+        effort = str(v).strip().lower()
+        if effort not in {"low", "medium", "high", "max"}:
+            raise ValueError(
+                "claude_effort must be one of: low, medium, high, max"
+            )
+        return effort
+
+    @field_validator("claude_permission_mode", mode="before")
+    @classmethod
+    def validate_claude_permission_mode(cls, v: Any) -> Optional[str]:
+        """Validate Claude permission mode."""
+        if v is None:
+            return None
+        mode = str(v).strip()
+        if mode not in {"default", "acceptEdits", "plan", "bypassPermissions"}:
+            raise ValueError(
+                "claude_permission_mode must be one of: "
+                "default, acceptEdits, plan, bypassPermissions"
+            )
+        return mode
+
+    @field_validator("bot_language", mode="before")
+    @classmethod
+    def validate_bot_language(cls, v: Any) -> str:
+        """Validate bot language."""
+        lang = str(v).strip().lower()
+        if lang not in {"ja", "en"}:
+            raise ValueError("bot_language must be 'ja' or 'en'")
+        return lang
 
     @field_validator("claude_allowed_tools", mode="before")
     @classmethod

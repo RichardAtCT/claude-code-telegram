@@ -136,6 +136,7 @@ class ClaudeSDKManager:
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self._persona_prompt = self._load_persona_prompt()
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -144,6 +145,29 @@ class ClaudeSDKManager:
             logger.info("Using provided API key for Claude SDK authentication")
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
+
+    def _load_persona_prompt(self) -> Optional[str]:
+        """Load persona prompt from file, injecting knowledge paths."""
+        if not self.config.persona_prompt_path:
+            return None
+        path = self.config.persona_prompt_path
+        if not path.exists():
+            logger.warning("Persona prompt file not found", path=str(path))
+            return None
+        content = path.read_text(encoding="utf-8")
+        # Build knowledge paths section
+        knowledge_section = ""
+        if self.config.knowledge_hint_paths:
+            knowledge_section = "\n".join(
+                f"- {p}" for p in self.config.knowledge_hint_paths
+            )
+        content = content.replace("{knowledge_paths_section}", knowledge_section)
+        logger.info(
+            "Persona prompt loaded",
+            path=str(path),
+            length=len(content),
+        )
+        return content
 
     async def execute_command(
         self,
@@ -171,6 +195,16 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
+            # Build system prompt: persona (if loaded) + directory constraint
+            dir_constraint = (
+                f"All file operations must stay within {working_directory}. "
+                "Use relative paths."
+            )
+            if self._persona_prompt:
+                system_prompt = f"{self._persona_prompt}\n\n---\n\n{dir_constraint}"
+            else:
+                system_prompt = dir_constraint
+
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
@@ -184,10 +218,10 @@ class ClaudeSDKManager:
                     "autoAllowBashIfSandboxed": True,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
-                system_prompt=(
-                    f"All file operations must stay within {working_directory}. "
-                    "Use relative paths."
-                ),
+                system_prompt=system_prompt,
+                model=self.config.claude_model or None,
+                effort=self.config.claude_effort,
+                permission_mode=self.config.claude_permission_mode,
                 stderr=_stderr_callback,
             )
 
