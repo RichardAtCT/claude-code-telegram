@@ -498,6 +498,7 @@ class ClaudeSDKManager:
                             )
                         elif hasattr(block, "text"):
                             text_parts.append(block.text)
+                        # Skip ThinkingBlock silently (internal reasoning)
 
                 if text_parts or tool_calls:
                     update = StreamUpdate(
@@ -507,12 +508,17 @@ class ClaudeSDKManager:
                     )
                     await stream_callback(update)
                 elif content:
-                    # Fallback for non-list content
-                    update = StreamUpdate(
-                        type="assistant",
-                        content=str(content),
+                    # Fallback for non-list content (skip if all ThinkingBlocks)
+                    has_displayable = any(
+                        hasattr(b, "text") or isinstance(b, ToolUseBlock)
+                        for b in (content if isinstance(content, list) else [])
                     )
-                    await stream_callback(update)
+                    if not isinstance(content, list) or has_displayable:
+                        update = StreamUpdate(
+                            type="assistant",
+                            content=str(content),
+                        )
+                        await stream_callback(update)
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
