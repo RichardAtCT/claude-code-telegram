@@ -711,7 +711,7 @@ class MessageOrchestrator:
         await chat.send_action("typing")
 
         verbose_level = self._get_verbose_level(context)
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text("Working...", do_quote=self.settings.reply_quote)
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
@@ -808,6 +808,7 @@ class MessageOrchestrator:
                     parse_mode=message.parse_mode,
                     reply_markup=None,  # No keyboards in agentic mode
                     reply_to_message_id=(update.message.message_id if i == 0 and self.settings.reply_quote else None),
+                    do_quote=self.settings.reply_quote,
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -876,7 +877,7 @@ class MessageOrchestrator:
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text("Working...", do_quote=self.settings.reply_quote)
 
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
@@ -972,6 +973,7 @@ class MessageOrchestrator:
                     parse_mode=message.parse_mode,
                     reply_markup=None,
                     reply_to_message_id=(update.message.message_id if i == 0 and self.settings.reply_quote else None),
+                    do_quote=self.settings.reply_quote,
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)
@@ -999,7 +1001,7 @@ class MessageOrchestrator:
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text("Working...", do_quote=self.settings.reply_quote)
 
         try:
             photo = update.message.photo[-1]
@@ -1062,6 +1064,7 @@ class MessageOrchestrator:
                     parse_mode=message.parse_mode,
                     reply_markup=None,
                     reply_to_message_id=(update.message.message_id if i == 0 and self.settings.reply_quote else None),
+                    do_quote=self.settings.reply_quote,
                 )
                 if i < len(formatted_messages) - 1:
                     await asyncio.sleep(0.5)

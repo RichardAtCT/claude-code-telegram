@@ -322,7 +322,8 @@ async def handle_text_message(
         # Create progress message
         progress_msg = await update.message.reply_text(
             "🤔 Processing your request...",
-            reply_to_message_id=update.message.message_id if settings.reply_quote else None,
+            reply_to_message_id=(update.message.message_id if settings.reply_quote else None),
+            do_quote=settings.reply_quote,
         )
 
         # Get Claude integration and storage from context
@@ -422,6 +423,7 @@ async def handle_text_message(
                     parse_mode=message.parse_mode,
                     reply_markup=message.reply_markup,
                     reply_to_message_id=(update.message.message_id if i == 0 and settings.reply_quote else None),
+                    do_quote=settings.reply_quote,
                 )
 
                 # Small delay between messages to avoid rate limits
@@ -441,6 +443,7 @@ async def handle_text_message(
                         reply_to_message_id=(
                             update.message.message_id if i == 0 and settings.reply_quote else None
                         ),
+                        do_quote=settings.reply_quote,
                     )
                 except Exception as plain_err:
                     logger.error(
@@ -455,6 +458,7 @@ async def handle_text_message(
                         reply_to_message_id=(
                             update.message.message_id if i == 0 and settings.reply_quote else None
                         ),
+                        do_quote=settings.reply_quote,
                     )
 
         # Update session info
@@ -730,7 +734,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     message.text,
                     parse_mode=message.parse_mode,
                     reply_markup=message.reply_markup,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                    reply_to_message_id=(update.message.message_id if i == 0 and settings.reply_quote else None),
+                    do_quote=settings.reply_quote,
                 )
 
                 if i < len(formatted_messages) - 1:
@@ -855,6 +860,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                         reply_to_message_id=(
                             update.message.message_id if i == 0 and settings.reply_quote else None
                         ),
+                        do_quote=settings.reply_quote,
                     )
 
                     if i < len(formatted_messages) - 1:
