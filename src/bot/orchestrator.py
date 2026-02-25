@@ -1127,14 +1127,8 @@ class MessageOrchestrator:
 
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
-            mcp_images_voice: List[ImageAttachment] = []
             on_stream = self._make_stream_callback(
-                verbose_level,
-                progress_msg,
-                tool_log,
-                time.time(),
-                mcp_images=mcp_images_voice,
-                approved_directory=self.settings.approved_directory,
+                verbose_level, progress_msg, tool_log, time.time()
             )
 
             heartbeat = self._start_typing_heartbeat(chat)
@@ -1170,45 +1164,17 @@ class MessageOrchestrator:
 
             await progress_msg.delete()
 
-            images: List[ImageAttachment] = mcp_images_voice
-
-            caption_sent = False
-            if images and len(formatted_messages) == 1:
-                msg = formatted_messages[0]
-                if msg.text and len(msg.text) <= 1024:
-                    try:
-                        caption_sent = await self._send_images(
-                            update,
-                            images,
-                            reply_to_message_id=update.message.message_id,
-                            caption=msg.text,
-                            caption_parse_mode=msg.parse_mode,
-                        )
-                    except Exception as img_err:
-                        logger.warning("Image+caption send failed", error=str(img_err))
-
-            if not caption_sent:
-                for i, message in enumerate(formatted_messages):
-                    await update.message.reply_text(
-                        message.text,
-                        parse_mode=message.parse_mode,
-                        reply_markup=None,
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
-                    if i < len(formatted_messages) - 1:
-                        await asyncio.sleep(0.5)
-
-                if images:
-                    try:
-                        await self._send_images(
-                            update,
-                            images,
-                            reply_to_message_id=update.message.message_id,
-                        )
-                    except Exception as img_err:
-                        logger.warning("Image send failed", error=str(img_err))
+            for i, message in enumerate(formatted_messages):
+                if not message.text or not message.text.strip():
+                    continue
+                await update.message.reply_text(
+                    message.text,
+                    parse_mode=message.parse_mode,
+                    reply_markup=None,
+                    reply_to_message_id=(update.message.message_id if i == 0 else None),
+                )
+                if i < len(formatted_messages) - 1:
+                    await asyncio.sleep(0.5)
 
         except Exception as e:
             from .handlers.message import _format_error_message

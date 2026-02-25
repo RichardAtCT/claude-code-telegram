@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Voice Message Transcription**:
+  - Send voice messages to the bot for automatic transcription and Claude processing
+  - Dual provider support: Mistral Voxtral (default) and OpenAI Whisper
+  - Configurable via `VOICE_PROVIDER`, `MISTRAL_API_KEY`/`OPENAI_API_KEY`, `VOICE_TRANSCRIPTION_MODEL`
+  - Works in both agentic and classic modes
 - **Version Management & Distribution**:
   - Single source of truth: version read from `pyproject.toml` via `importlib.metadata`
   - GitHub Release workflow triggered by `v*` tags -- runs tests, creates Release

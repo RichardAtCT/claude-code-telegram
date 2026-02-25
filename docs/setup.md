@@ -175,6 +175,30 @@ NOTIFICATION_CHAT_IDS=123456789  # Where to deliver results
 
 Jobs are managed programmatically and persist in the SQLite database.
 
+### Voice Message Transcription
+
+Enable voice message support with automatic transcription:
+
+```bash
+ENABLE_VOICE_MESSAGES=true
+```
+
+Choose your transcription provider:
+
+**Mistral Voxtral (default):**
+```bash
+VOICE_PROVIDER=mistral
+MISTRAL_API_KEY=your-mistral-api-key
+```
+
+**OpenAI Whisper:**
+```bash
+VOICE_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
+```
+
+Optionally override the transcription model with `VOICE_TRANSCRIPTION_MODEL` (defaults to `voxtral-mini-latest` for Mistral, `whisper-1` for OpenAI).
+
 ### Notification Recipients
 
 Configure which Telegram chats receive proactive notifications from webhooks and scheduled jobs:
