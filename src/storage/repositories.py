@@ -18,6 +18,7 @@ from .models import (
     CostTrackingModel,
     MessageModel,
     ProjectThreadModel,
+    SessionMemoryModel,
     SessionModel,
     ToolUsageModel,
     UserModel,
@@ -380,6 +381,84 @@ class ProjectThreadRepository:
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
             return [ProjectThreadModel.from_row(row) for row in rows]
+
+
+class SessionMemoryRepository:
+    """Session memory data access for cross-session context."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        """Initialize repository."""
+        self.db = db_manager
+
+    async def save_memory(
+        self,
+        user_id: int,
+        project_path: str,
+        session_id: str,
+        summary: str,
+    ) -> int:
+        """Save a session memory summary."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO session_memories
+                (user_id, project_path, session_id, summary)
+                VALUES (?, ?, ?, ?)
+            """,
+                (user_id, project_path, session_id, summary),
+            )
+            await conn.commit()
+            logger.info(
+                "Saved session memory",
+                user_id=user_id,
+                session_id=session_id,
+            )
+            return cursor.lastrowid
+
+    async def get_active_memories(
+        self,
+        user_id: int,
+        project_path: str,
+        limit: int = 5,
+    ) -> List[SessionMemoryModel]:
+        """Get active memories for user+project, newest first."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM session_memories
+                WHERE user_id = ? AND project_path = ? AND is_active = TRUE
+                ORDER BY created_at DESC
+                LIMIT ?
+            """,
+                (user_id, project_path, limit),
+            )
+            rows = await cursor.fetchall()
+            return [SessionMemoryModel.from_row(row) for row in rows]
+
+    async def deactivate_old_memories(
+        self,
+        user_id: int,
+        project_path: str,
+        keep_count: int = 5,
+    ) -> int:
+        """Deactivate oldest memories beyond keep_count."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE session_memories
+                SET is_active = FALSE
+                WHERE id NOT IN (
+                    SELECT id FROM session_memories
+                    WHERE user_id = ? AND project_path = ? AND is_active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                )
+                AND user_id = ? AND project_path = ? AND is_active = TRUE
+            """,
+                (user_id, project_path, keep_count, user_id, project_path),
+            )
+            await conn.commit()
+            return cursor.rowcount
 
 
 class MessageRepository:

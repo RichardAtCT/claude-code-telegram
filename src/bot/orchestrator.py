@@ -469,9 +469,7 @@ class MessageOrchestrator:
         dir_display = f"<code>{current_dir}/</code>"
 
         safe_name = escape_html(user.first_name)
-        welcome_text = t(
-            "welcome", self._lang(), name=safe_name, dir=dir_display
-        )
+        welcome_text = t("welcome", self._lang(), name=safe_name, dir=dir_display)
         await update.message.reply_text(
             f"{welcome_text}{sync_line}",
             parse_mode="HTML",
@@ -481,11 +479,50 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Reset session, one-line confirmation."""
+        old_session_id = context.user_data.get("claude_session_id")
+
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
 
         await update.message.reply_text(t("session_reset", self._lang()))
+
+        # Trigger background summarization of the old session
+        if old_session_id and self.settings.enable_session_memory:
+            memory_service = context.bot_data.get("session_memory_service")
+            if memory_service:
+                current_dir = context.user_data.get(
+                    "current_directory", str(self.settings.approved_directory)
+                )
+                asyncio.create_task(
+                    self._summarize_session_safe(
+                        memory_service,
+                        old_session_id,
+                        update.effective_user.id,
+                        str(current_dir),
+                    )
+                )
+
+    async def _summarize_session_safe(
+        self,
+        memory_service: Any,
+        session_id: str,
+        user_id: int,
+        project_path: str,
+    ) -> None:
+        """Summarize session in background, logging errors instead of raising."""
+        try:
+            await memory_service.summarize_session(
+                session_id=session_id,
+                user_id=user_id,
+                project_path=project_path,
+            )
+        except Exception as e:
+            logger.warning(
+                "Background session summarization failed",
+                session_id=session_id,
+                error=str(e),
+            )
 
     async def agentic_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -512,7 +549,13 @@ class MessageOrchestrator:
                 pass
 
         await update.message.reply_text(
-            t("status", self._lang(), dir=dir_display, session=session_status, cost=cost_str)
+            t(
+                "status",
+                self._lang(),
+                dir=dir_display,
+                session=session_status,
+                cost=cost_str,
+            )
         )
 
     def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -531,7 +574,12 @@ class MessageOrchestrator:
         if not args:
             current = self._get_verbose_level(context)
             await update.message.reply_text(
-                t("verbose_current", lang, level=current, label=verbose_label(current, lang)),
+                t(
+                    "verbose_current",
+                    lang,
+                    level=current,
+                    label=verbose_label(current, lang),
+                ),
                 parse_mode="HTML",
             )
             return
@@ -676,7 +724,9 @@ class MessageOrchestrator:
                         # Collapse to first meaningful line, cap length
                         first_line = text.split("\n", 1)[0].strip()
                         if first_line:
-                            tool_log.append({"kind": "text", "detail": first_line[:120]})
+                            tool_log.append(
+                                {"kind": "text", "detail": first_line[:120]}
+                            )
 
             # Throttle progress message edits to avoid Telegram rate limits
             now = time.time()
@@ -878,7 +928,11 @@ class MessageOrchestrator:
         max_size = 10 * 1024 * 1024
         if document.file_size > max_size:
             await update.message.reply_text(
-                t("file_too_large", lang, size=f"{document.file_size / 1024 / 1024:.1f}")
+                t(
+                    "file_too_large",
+                    lang,
+                    size=f"{document.file_size / 1024 / 1024:.1f}",
+                )
             )
             return
 
@@ -1125,7 +1179,12 @@ class MessageOrchestrator:
             session_badge = " · session resumed" if session_id else ""
 
             await update.message.reply_text(
-                t("repo_switched", lang, name=escape_html(target_name), badges=f"{git_badge}{session_badge}"),
+                t(
+                    "repo_switched",
+                    lang,
+                    name=escape_html(target_name),
+                    badges=f"{git_badge}{session_badge}",
+                ),
                 parse_mode="HTML",
             )
             return
@@ -1141,7 +1200,9 @@ class MessageOrchestrator:
                 key=lambda d: d.name,
             )
         except OSError as e:
-            await update.message.reply_text(t("repo_workspace_error", lang, error=str(e)))
+            await update.message.reply_text(
+                t("repo_workspace_error", lang, error=str(e))
+            )
             return
 
         if not entries:

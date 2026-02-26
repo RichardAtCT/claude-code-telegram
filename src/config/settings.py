@@ -136,9 +136,7 @@ class Settings(BaseSettings):
     knowledge_hint_paths: Optional[List[str]] = Field(
         None, description="Comma-separated list of knowledge file paths"
     )
-    bot_language: str = Field(
-        "en", description="Bot UI language (ja/en)"
-    )
+    bot_language: str = Field("en", description="Bot UI language (ja/en)")
 
     # Sandbox settings
     sandbox_enabled: bool = Field(
@@ -198,6 +196,17 @@ class Settings(BaseSettings):
             "Quote the original user message when replying. "
             "Set to false for cleaner thread-based conversations."
         ),
+    )
+
+    # Session memory
+    enable_session_memory: bool = Field(
+        False, description="Enable cross-session memory (summarize ended sessions)"
+    )
+    session_memory_max_count: int = Field(
+        5, description="Maximum number of session memories to retain per user+project"
+    )
+    session_memory_min_messages: int = Field(
+        3, description="Minimum messages in a session before summarizing"
     )
 
     # Output verbosity (0=quiet, 1=normal, 2=detailed)
@@ -312,9 +321,7 @@ class Settings(BaseSettings):
             return None
         effort = str(v).strip().lower()
         if effort not in {"low", "medium", "high", "max"}:
-            raise ValueError(
-                "claude_effort must be one of: low, medium, high, max"
-            )
+            raise ValueError("claude_effort must be one of: low, medium, high, max")
         return effort
 
     @field_validator("claude_permission_mode", mode="before")

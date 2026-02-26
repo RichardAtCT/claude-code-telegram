@@ -310,6 +310,26 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- Session memory for cross-session context
+                CREATE TABLE IF NOT EXISTS session_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    project_path TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id),
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_session_memories_user_project
+                    ON session_memories(user_id, project_path, is_active);
+                """,
+            ),
         ]
 
     async def _init_pool(self):

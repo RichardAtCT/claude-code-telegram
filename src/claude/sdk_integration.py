@@ -176,6 +176,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        memory_context: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -195,15 +196,18 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
-            # Build system prompt: persona (if loaded) + directory constraint
+            # Build system prompt: persona + memory context + directory constraint
             dir_constraint = (
                 f"All file operations must stay within {working_directory}. "
                 "Use relative paths."
             )
+            parts = []
             if self._persona_prompt:
-                system_prompt = f"{self._persona_prompt}\n\n---\n\n{dir_constraint}"
-            else:
-                system_prompt = dir_constraint
+                parts.append(self._persona_prompt)
+            if memory_context:
+                parts.append(memory_context)
+            parts.append(dir_constraint)
+            system_prompt = "\n\n---\n\n".join(parts)
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
