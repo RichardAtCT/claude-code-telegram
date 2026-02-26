@@ -199,6 +199,7 @@ class ClaudeSDKManager:
 
             def _ensure_dead(target_pid: int) -> None:
                 import time
+
                 time.sleep(2)
                 # Re-collect survivors (some children may have spawned late)
                 all_pids = [target_pid] + self._get_descendants(target_pid)
