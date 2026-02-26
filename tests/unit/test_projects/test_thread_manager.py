@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from telegram.error import RetryAfter, TelegramError
+from telegram.error import BadRequest, RetryAfter, TelegramError
 
 import src.projects.thread_manager as thread_manager_module
 from src.projects import (
@@ -503,3 +503,80 @@ async def test_sync_topics_does_not_retry_retry_after(
     assert result.failed == 1
     assert bot.create_forum_topic.await_count == 1
     sleep_mock.assert_not_awaited()
+
+
+async def test_ensure_topic_usable_already_open_returns_ok(
+    tmp_path: Path, db_manager
+) -> None:
+    """Topic_not_modified means topic is already open -- treat as success."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+    (approved / "app1").mkdir()
+
+    config_file = tmp_path / "projects.yaml"
+    config_file.write_text(
+        "projects:\n" "  - slug: app1\n" "    name: App One\n" "    path: app1\n",
+        encoding="utf-8",
+    )
+    registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    await repo.upsert_mapping(
+        project_slug="app1",
+        chat_id=42,
+        message_thread_id=1001,
+        topic_name="App One",
+        is_active=True,
+    )
+
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
+    bot = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock(
+        side_effect=BadRequest("Topic_not_modified")
+    )
+    bot.edit_forum_topic = AsyncMock()
+
+    result = await manager.sync_topics(bot, chat_id=42)
+
+    assert result.reused == 1
+    assert result.failed == 0
+
+
+async def test_sync_active_mapping_already_open_topic_counts_as_reused(
+    tmp_path: Path, db_manager
+) -> None:
+    """Sync with already-open topic should count as reused, not failed."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+
+    config_file = _write_registry(tmp_path, approved, "app1,app2")
+    registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
+
+    # First sync: create both topics
+    bot = AsyncMock()
+    bot.create_forum_topic = AsyncMock(
+        side_effect=[
+            SimpleNamespace(message_thread_id=101),
+            SimpleNamespace(message_thread_id=102),
+        ]
+    )
+    bot.send_message = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock()
+    bot.edit_forum_topic = AsyncMock()
+    bot.close_forum_topic = AsyncMock()
+
+    await manager.sync_topics(bot, chat_id=42)
+
+    # Second sync: reopen raises Topic_not_modified (already open)
+    bot.reopen_forum_topic = AsyncMock(
+        side_effect=BadRequest("Topic_not_modified")
+    )
+
+    result = await manager.sync_topics(bot, chat_id=42)
+
+    assert result.reused == 2
+    assert result.failed == 0
+    assert result.created == 0

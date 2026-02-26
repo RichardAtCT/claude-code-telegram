@@ -263,6 +263,8 @@ class ProjectThreadManager:
             )
             return "ok"
         except TelegramError as e:
+            if self._is_topic_already_open(e):
+                return "ok"
             if self._is_topic_unusable_error(e):
                 return "unusable"
             logger.warning(
@@ -286,6 +288,8 @@ class ProjectThreadManager:
             )
             return "reopened"
         except TelegramError as e:
+            if self._is_topic_already_open(e):
+                return "reopened"
             if self._is_topic_unusable_error(e):
                 return "unusable"
             logger.warning(
@@ -407,6 +411,16 @@ class ProjectThreadManager:
                 project_name=project_name,
                 error=str(e),
             )
+
+    @staticmethod
+    def _is_topic_already_open(error: TelegramError) -> bool:
+        """Return True when topic is already open (reopen is a no-op)."""
+        text = str(error).lower()
+        markers = [
+            "topic_not_modified",
+            "topic not modified",
+        ]
+        return any(marker in text for marker in markers)
 
     @staticmethod
     def _is_topic_unusable_error(error: TelegramError) -> bool:
