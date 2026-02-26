@@ -386,14 +386,28 @@ async def handle_text_message(
 
         # Run Claude command
         try:
-            claude_response = await claude_integration.run_command(
-                prompt=message_text,
-                working_directory=current_dir,
-                user_id=user_id,
-                session_id=session_id,
-                on_stream=stream_handler,
-                force_new=force_new,
+            task = asyncio.create_task(
+                claude_integration.run_command(
+                    prompt=message_text,
+                    working_directory=current_dir,
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_stream=stream_handler,
+                    force_new=force_new,
+                )
             )
+            context.user_data["_claude_task"] = task
+            try:
+                claude_response = await task
+            except asyncio.CancelledError:
+                logger.info("Claude call cancelled by user", user_id=user_id)
+                try:
+                    await progress_msg.delete()
+                except Exception:
+                    pass
+                return
+            finally:
+                context.user_data.pop("_claude_task", None)
 
             # New session created successfully — clear the one-shot flag
             if force_new:

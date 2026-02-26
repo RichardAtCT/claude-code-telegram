@@ -1221,6 +1221,27 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stop command - cancel a running Claude call immediately."""
+    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    user_id = update.effective_user.id
+
+    task = context.user_data.get("_claude_task")
+    if task and not task.done():
+        task.cancel()
+        await update.message.reply_text(
+            "⏹ <b>Stopping Claude…</b>",
+            parse_mode="HTML",
+        )
+        logger.info("Claude call cancelled via /stop", user_id=user_id)
+        if audit_logger:
+            await audit_logger.log_command(user_id, "stop", [], True)
+    else:
+        await update.message.reply_text("Nothing running.")
+        if audit_logger:
+            await audit_logger.log_command(user_id, "stop", [], False)
+
+
 def _format_file_size(size: int) -> str:
     """Format file size in human-readable format."""
     for unit in ["B", "KB", "MB", "GB"]:
