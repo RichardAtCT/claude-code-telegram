@@ -136,6 +136,7 @@ class ClaudeSDKManager:
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self._active_client: Optional["ClaudeSDKClient"] = None
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -144,6 +145,21 @@ class ClaudeSDKManager:
             logger.info("Using provided API key for Claude SDK authentication")
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
+
+    async def abort(self) -> None:
+        """Abort the currently running Claude command by disconnecting the client.
+
+        This terminates the underlying CLI subprocess, ensuring the call
+        actually stops rather than continuing in the background.
+        """
+        client = self._active_client
+        if client is not None:
+            self._active_client = None
+            try:
+                await client.disconnect()
+                logger.info("Active Claude client disconnected via abort")
+            except Exception as e:
+                logger.warning("Error during abort disconnect", error=str(e))
 
     async def execute_command(
         self,
@@ -235,6 +251,7 @@ class ClaudeSDKManager:
                 # a plain string. connect(None) uses an empty async
                 # iterable internally, satisfying the requirement.
                 client = ClaudeSDKClient(options)
+                self._active_client = client
                 try:
                     await client.connect()
                     await client.query(prompt)
@@ -274,6 +291,7 @@ class ClaudeSDKManager:
                                     error_type=type(callback_error).__name__,
                                 )
                 finally:
+                    self._active_client = None
                     await client.disconnect()
 
             # Execute with timeout

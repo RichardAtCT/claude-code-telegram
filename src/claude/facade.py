@@ -29,6 +29,10 @@ class ClaudeIntegration:
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
 
+    async def abort(self) -> None:
+        """Abort the currently running Claude command."""
+        await self.sdk_manager.abort()
+
     async def run_command(
         self,
         prompt: str,

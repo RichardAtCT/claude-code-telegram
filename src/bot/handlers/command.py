@@ -1228,9 +1228,15 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     task = context.user_data.get("_claude_task")
     if task and not task.done():
+        # First, abort the SDK client to terminate the CLI subprocess.
+        # task.cancel() alone only cancels the asyncio wrapper and may
+        # leave the subprocess running in the background.
+        claude_integration = context.bot_data.get("claude_integration")
+        if claude_integration:
+            await claude_integration.abort()
         task.cancel()
         await update.message.reply_text(
-            "⏹ <b>Stopping Claude…</b>",
+            "⏹ <b>Stopped.</b>",
             parse_mode="HTML",
         )
         logger.info("Claude call cancelled via /stop", user_id=user_id)
