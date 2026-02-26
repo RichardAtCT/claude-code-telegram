@@ -16,6 +16,7 @@ from telegram.ext import (
     AIORateLimiter,
     Application,
     ContextTypes,
+    Defaults,
     MessageHandler,
     filters,
 )
@@ -50,6 +51,7 @@ class ClaudeCodeBot:
         # Create application
         builder = Application.builder()
         builder.token(self.settings.telegram_token_str)
+        builder.defaults(Defaults(do_quote=self.settings.reply_quote))
         builder.rate_limiter(AIORateLimiter(max_retries=1))
 
         # Configure connection settings
