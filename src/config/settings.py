@@ -172,6 +172,15 @@ class Settings(BaseSettings):
         description="Conversational agentic mode (default) vs classic command mode",
     )
 
+    # Reply quoting
+    reply_quote: bool = Field(
+        True,
+        description=(
+            "Quote the original user message when replying. "
+            "Set to false for cleaner thread-based conversations."
+        ),
+    )
+
     # Output verbosity (0=quiet, 1=normal, 2=detailed)
     verbose_level: int = Field(
         1,
