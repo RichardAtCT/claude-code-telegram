@@ -36,6 +36,18 @@ class VoiceHandler:
         2. Call the configured transcription API (Mistral or OpenAI)
         3. Build a prompt combining caption + transcription
         """
+        file_size = getattr(voice, "file_size", None)
+        if (
+            isinstance(file_size, int)
+            and file_size > self.config.voice_max_file_size_bytes
+        ):
+            raise ValueError(
+                "Voice message too large "
+                f"({file_size / 1024 / 1024:.1f}MB). "
+                f"Max allowed: {self.config.voice_max_file_size_mb}MB. "
+                "Adjust VOICE_MAX_FILE_SIZE_MB if needed."
+            )
+
         # Download voice data
         file = await voice.get_file()
         voice_bytes = bytes(await file.download_as_bytearray())
@@ -44,7 +56,7 @@ class VoiceHandler:
             "Transcribing voice message",
             provider=self.config.voice_provider,
             duration=voice.duration,
-            file_size=len(voice_bytes),
+            file_size=file_size or len(voice_bytes),
         )
 
         if self.config.voice_provider == "openai":
@@ -73,25 +85,53 @@ class VoiceHandler:
 
     async def _transcribe_mistral(self, voice_bytes: bytes) -> str:
         """Transcribe audio using the Mistral API (Voxtral)."""
-        from mistralai import Mistral
+        try:
+            from mistralai import Mistral
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Optional dependency 'mistralai' is missing for voice transcription. "
+                "Install voice extras: "
+                'pip install "claude-code-telegram[voice]"'
+            ) from exc
 
         client = Mistral(api_key=self.config.mistral_api_key_str)
-        response = await client.audio.transcriptions.complete_async(
-            model=self.config.resolved_voice_model,
-            file={
-                "content": voice_bytes,
-                "file_name": "voice.ogg",
-            },
-        )
-        return response.text.strip()
+        try:
+            response = await client.audio.transcriptions.complete_async(
+                model=self.config.resolved_voice_model,
+                file={
+                    "content": voice_bytes,
+                    "file_name": "voice.ogg",
+                },
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Mistral transcription request failed: {exc}") from exc
+
+        text = (getattr(response, "text", "") or "").strip()
+        if not text:
+            raise ValueError("Mistral transcription returned an empty response.")
+        return text
 
     async def _transcribe_openai(self, voice_bytes: bytes) -> str:
         """Transcribe audio using the OpenAI Whisper API."""
-        from openai import AsyncOpenAI
+        try:
+            from openai import AsyncOpenAI
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Optional dependency 'openai' is missing for voice transcription. "
+                "Install voice extras: "
+                'pip install "claude-code-telegram[voice]"'
+            ) from exc
 
         client = AsyncOpenAI(api_key=self.config.openai_api_key_str)
-        response = await client.audio.transcriptions.create(
-            model=self.config.resolved_voice_model,
-            file=("voice.ogg", voice_bytes),
-        )
-        return response.text.strip()
+        try:
+            response = await client.audio.transcriptions.create(
+                model=self.config.resolved_voice_model,
+                file=("voice.ogg", voice_bytes),
+            )
+        except Exception as exc:
+            raise RuntimeError(f"OpenAI transcription request failed: {exc}") from exc
+
+        text = (getattr(response, "text", "") or "").strip()
+        if not text:
+            raise ValueError("OpenAI transcription returned an empty response.")
+        return text

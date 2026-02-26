@@ -454,6 +454,57 @@ def test_project_threads_validation_invalid_mode(tmp_path):
     assert "project_threads_mode must be one of" in str(exc_info.value)
 
 
+def test_voice_provider_validation_and_normalization(tmp_path):
+    """VOICE_PROVIDER accepts only mistral/openai and normalizes casing."""
+    project_dir = tmp_path / "projects"
+    project_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(project_dir),
+        voice_provider="OPENAI",
+    )
+
+    assert settings.voice_provider == "openai"
+    assert settings.voice_provider_api_key_env == "OPENAI_API_KEY"
+    assert settings.voice_provider_display_name == "OpenAI Whisper"
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(project_dir),
+            voice_provider="google",
+        )
+
+    assert "voice_provider must be one of" in str(exc_info.value)
+
+
+def test_voice_max_file_size_configuration(tmp_path):
+    """Voice max file size should be configurable and validated."""
+    project_dir = tmp_path / "projects"
+    project_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(project_dir),
+        voice_max_file_size_mb=32,
+    )
+
+    assert settings.voice_max_file_size_mb == 32
+    assert settings.voice_max_file_size_bytes == 32 * 1024 * 1024
+
+    with pytest.raises(ValidationError):
+        Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(project_dir),
+            voice_max_file_size_mb=0,
+        )
+
+
 def test_computed_properties(tmp_path):
     """Test computed properties."""
     test_dir = tmp_path / "projects"

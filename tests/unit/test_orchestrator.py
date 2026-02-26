@@ -335,6 +335,83 @@ async def test_agentic_document_rejects_large_files(agentic_settings, deps):
     assert "too large" in call_args.args[0].lower()
 
 
+async def test_agentic_voice_calls_claude(agentic_settings, deps):
+    """Agentic voice handler transcribes and routes prompt to Claude."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "voice-session-123"
+    mock_response.content = "Voice response from Claude"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    processed_voice = MagicMock()
+    processed_voice.prompt = "Voice prompt text"
+
+    voice_handler = MagicMock()
+    voice_handler.process_voice_message = AsyncMock(return_value=processed_voice)
+
+    features = MagicMock()
+    features.get_voice_handler.return_value = voice_handler
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.voice = MagicMock()
+    update.message.caption = "please summarize"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.edit_text = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": agentic_settings,
+        "features": features,
+        "claude_integration": claude_integration,
+    }
+
+    await orchestrator.agentic_voice(update, context)
+
+    voice_handler.process_voice_message.assert_awaited_once_with(
+        update.message.voice, "please summarize"
+    )
+    claude_integration.run_command.assert_awaited_once()
+    assert context.user_data["claude_session_id"] == "voice-session-123"
+
+
+async def test_agentic_voice_missing_handler_is_provider_aware(tmp_path, deps):
+    """Missing voice handler guidance references the configured provider key."""
+    settings = create_test_config(
+        approved_directory=str(tmp_path),
+        agentic_mode=True,
+        voice_provider="openai",
+    )
+    orchestrator = MessageOrchestrator(settings, deps)
+
+    features = MagicMock()
+    features.get_voice_handler.return_value = None
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"features": features}
+    context.user_data = {}
+
+    await orchestrator.agentic_voice(update, context)
+
+    call_args = update.message.reply_text.call_args
+    assert "OPENAI_API_KEY" in call_args.args[0]
+
+
 async def test_agentic_start_escapes_html_in_name(agentic_settings, deps):
     """Names with HTML-special characters are escaped safely."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)

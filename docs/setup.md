@@ -197,6 +197,11 @@ VOICE_PROVIDER=openai
 OPENAI_API_KEY=your-openai-api-key
 ```
 
+If you installed via pip/uv, make sure voice extras are installed:
+```bash
+pip install "claude-code-telegram[voice]"
+```
+
 Optionally override the transcription model with `VOICE_TRANSCRIPTION_MODEL` (defaults to `voxtral-mini-latest` for Mistral, `whisper-1` for OpenAI).
 
 ### Notification Recipients

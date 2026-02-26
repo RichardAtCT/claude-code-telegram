@@ -136,6 +136,7 @@ VOICE_PROVIDER=mistral              # 'mistral' (default) or 'openai'
 MISTRAL_API_KEY=                     # Required when VOICE_PROVIDER=mistral
 OPENAI_API_KEY=                      # Required when VOICE_PROVIDER=openai
 VOICE_TRANSCRIPTION_MODEL=           # Default: voxtral-mini-latest (Mistral) or whisper-1 (OpenAI)
+VOICE_MAX_FILE_SIZE_MB=20            # Max Telegram voice file size to download (1-200MB)
 ```
 
 #### Agentic Platform

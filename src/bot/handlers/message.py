@@ -903,7 +903,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(
             "🎙️ <b>Voice Messages</b>\n\n"
             "Voice transcription is not available.\n"
-            "Set <code>MISTRAL_API_KEY</code> to enable.",
+            f"Provider: <code>{settings.voice_provider_display_name}</code>\n"
+            f"Set <code>{settings.voice_provider_api_key_env}</code> to enable.\n"
+            "Install optional voice deps with "
+            '<code>pip install "claude-code-telegram[voice]"</code>.',
             parse_mode="HTML",
         )
         return
