@@ -427,7 +427,7 @@ class SessionMemoryRepository:
                 """
                 SELECT * FROM session_memories
                 WHERE user_id = ? AND project_path = ? AND is_active = TRUE
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT ?
             """,
                 (user_id, project_path, limit),
