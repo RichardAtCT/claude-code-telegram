@@ -35,6 +35,7 @@ def mock_settings():
     settings.enable_api_server = False
     settings.enable_scheduler = False
     settings.approved_directory = "/tmp/test"
+    settings.bot_language = "en"
     return settings
 
 

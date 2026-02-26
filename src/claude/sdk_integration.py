@@ -172,12 +172,22 @@ class ClaudeSDKManager:
                 logger.debug("Claude CLI stderr", line=line)
 
             # Build Claude Agent options
+            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
+            # tools so the SDK does not restrict tool usage. This lets MCP tools
+            # (e.g. mcp__home-assistant__*) through at the SDK level.
+            if self.config.disable_tool_validation:
+                sdk_allowed_tools = None
+                sdk_disallowed_tools = None
+            else:
+                sdk_allowed_tools = self.config.claude_allowed_tools
+                sdk_disallowed_tools = self.config.claude_disallowed_tools
+
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
-                allowed_tools=self.config.claude_allowed_tools,
-                disallowed_tools=self.config.claude_disallowed_tools,
+                allowed_tools=sdk_allowed_tools,
+                disallowed_tools=sdk_disallowed_tools,
                 cli_path=self.config.claude_cli_path,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
