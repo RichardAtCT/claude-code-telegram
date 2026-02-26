@@ -171,6 +171,19 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
+            # Build system prompt, loading CLAUDE.md from working directory if present
+            base_prompt = (
+                f"All file operations must stay within {working_directory}. "
+                "Use relative paths."
+            )
+            claude_md_path = Path(working_directory) / "CLAUDE.md"
+            if claude_md_path.exists():
+                base_prompt += "\n\n" + claude_md_path.read_text(encoding="utf-8")
+                logger.info(
+                    "Loaded CLAUDE.md into system prompt",
+                    path=str(claude_md_path),
+                )
+
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
@@ -184,10 +197,8 @@ class ClaudeSDKManager:
                     "autoAllowBashIfSandboxed": True,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
-                system_prompt=(
-                    f"All file operations must stay within {working_directory}. "
-                    "Use relative paths."
-                ),
+                system_prompt=base_prompt,
+                setting_sources=["project"],
                 stderr=_stderr_callback,
             )
 

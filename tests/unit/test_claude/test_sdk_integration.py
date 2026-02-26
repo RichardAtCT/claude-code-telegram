@@ -875,3 +875,77 @@ class TestSessionIdFallback:
 
         # Should fall back to the input session_id
         assert response.session_id == "input-session-id"
+
+
+class TestClaudeMdLoading:
+    """Tests for CLAUDE.md loading from working directory."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="test_bot",
+            approved_directory=str(tmp_path),
+        )
+
+    @pytest.fixture
+    def sdk_manager(self, config):
+        return ClaudeSDKManager(config)
+
+    async def test_claude_md_appended_to_system_prompt(self, sdk_manager, tmp_path):
+        """CLAUDE.md content is appended to system prompt when present."""
+        claude_md = tmp_path / "CLAUDE.md"
+        claude_md.write_text("# Project Rules\nAlways use type hints.")
+
+        captured: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(),
+            capture_options=captured,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(prompt="test", working_directory=tmp_path)
+
+        opts = captured[0]
+        assert "# Project Rules" in opts.system_prompt
+        assert "Always use type hints." in opts.system_prompt
+
+    async def test_system_prompt_unchanged_without_claude_md(
+        self, sdk_manager, tmp_path
+    ):
+        """System prompt is just the base when no CLAUDE.md exists."""
+        captured: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(),
+            capture_options=captured,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(prompt="test", working_directory=tmp_path)
+
+        opts = captured[0]
+        assert "Use relative paths." in opts.system_prompt
+        assert "# Project Rules" not in opts.system_prompt
+
+    async def test_setting_sources_includes_project(self, sdk_manager, tmp_path):
+        """setting_sources=['project'] is passed to ClaudeAgentOptions."""
+        captured: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(),
+            capture_options=captured,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await sdk_manager.execute_command(prompt="test", working_directory=tmp_path)
+
+        opts = captured[0]
+        assert opts.setting_sources == ["project"]
