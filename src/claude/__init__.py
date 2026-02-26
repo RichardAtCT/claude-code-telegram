@@ -11,7 +11,6 @@ from .facade import ClaudeIntegration
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import (
     ClaudeSession,
-    InMemorySessionStorage,
     SessionManager,
     SessionStorage,
 )
@@ -31,6 +30,5 @@ __all__ = [
     "StreamUpdate",
     "SessionManager",
     "SessionStorage",
-    "InMemorySessionStorage",
     "ClaudeSession",
 ]

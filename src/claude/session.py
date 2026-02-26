@@ -1,11 +1,4 @@
-"""Claude Code session management.
-
-Features:
-- Session state tracking
-- Multi-project support
-- Session persistence
-- Cleanup policies
-"""
+"""Claude Code session management."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -105,13 +98,7 @@ class SessionStorage:
     async def load_session(
         self, session_id: str, user_id: int
     ) -> Optional[ClaudeSession]:
-        """Load session from storage.
-
-        Args:
-            session_id: The session ID to load.
-            user_id: The requesting user's ID. Only sessions owned by this
-                     user will be returned (defense-in-depth).
-        """
+        """Load session owned by user_id from storage."""
         raise NotImplementedError
 
     async def delete_session(self, session_id: str) -> None:
@@ -125,52 +112,6 @@ class SessionStorage:
     async def get_all_sessions(self) -> List[ClaudeSession]:
         """Get all sessions."""
         raise NotImplementedError
-
-
-class InMemorySessionStorage(SessionStorage):
-    """In-memory session storage for development/testing."""
-
-    def __init__(self):
-        """Initialize in-memory storage."""
-        self.sessions: Dict[str, ClaudeSession] = {}
-
-    async def save_session(self, session: ClaudeSession) -> None:
-        """Save session to memory."""
-        self.sessions[session.session_id] = session
-        logger.debug("Session saved to memory", session_id=session.session_id)
-
-    async def load_session(
-        self, session_id: str, user_id: int
-    ) -> Optional[ClaudeSession]:
-        """Load session from memory, verifying ownership."""
-        session = self.sessions.get(session_id)
-        if session:
-            if session.user_id != user_id:
-                logger.warning(
-                    "Session ownership mismatch",
-                    session_id=session_id,
-                    session_owner=session.user_id,
-                    requesting_user=user_id,
-                )
-                return None
-            logger.debug("Session loaded from memory", session_id=session_id)
-        return session
-
-    async def delete_session(self, session_id: str) -> None:
-        """Delete session from memory."""
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            logger.debug("Session deleted from memory", session_id=session_id)
-
-    async def get_user_sessions(self, user_id: int) -> List[ClaudeSession]:
-        """Get all sessions for a user."""
-        return [
-            session for session in self.sessions.values() if session.user_id == user_id
-        ]
-
-    async def get_all_sessions(self) -> List[ClaudeSession]:
-        """Get all sessions."""
-        return list(self.sessions.values())
 
 
 class SessionManager:
@@ -254,12 +195,7 @@ class SessionManager:
     async def update_session(
         self, session: ClaudeSession, response: ClaudeResponse
     ) -> None:
-        """Update session with response data.
-
-        For new sessions: assigns the real session_id from Claude's response,
-        then persists to storage and adds to active_sessions.
-        For existing sessions: updates usage and re-persists.
-        """
+        """Update session with response data and persist."""
         if session.is_new_session:
             # Assign the real session ID from Claude
             if response.session_id:
@@ -320,13 +256,7 @@ class SessionManager:
         return await self.storage.get_user_sessions(user_id)
 
     async def get_session_info(self, session_id: str, user_id: int) -> Optional[Dict]:
-        """Get session information.
-
-        Args:
-            session_id: The session ID to look up.
-            user_id: The requesting user's ID. Only returns info for sessions
-                     owned by this user.
-        """
+        """Get session info dict for a session owned by user_id."""
         session = self.active_sessions.get(session_id)
 
         if session and session.user_id != user_id:
