@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ..config.settings import Settings
+from .memory import SessionMemoryService
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
@@ -23,11 +24,13 @@ class ClaudeIntegration:
         config: Settings,
         sdk_manager: Optional[ClaudeSDKManager] = None,
         session_manager: Optional[SessionManager] = None,
+        memory_service: Optional[SessionMemoryService] = None,
     ):
         """Initialize Claude integration facade."""
         self.config = config
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
+        self.memory_service = memory_service
 
     async def run_command(
         self,
@@ -78,6 +81,14 @@ class ClaudeIntegration:
             # For new sessions, don't pass session_id to Claude Code
             claude_session_id = session.session_id if should_continue else None
 
+            # Inject memory context for new sessions
+            memory_context = None
+            if is_new and self.memory_service and self.config.enable_session_memory:
+                memory_context = await self.memory_service.get_memory_context(
+                    user_id=user_id,
+                    project_path=str(working_directory),
+                )
+
             try:
                 response = await self._execute(
                     prompt=prompt,
@@ -85,6 +96,7 @@ class ClaudeIntegration:
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=on_stream,
+                    memory_context=memory_context,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -109,6 +121,7 @@ class ClaudeIntegration:
                         session_id=None,
                         continue_session=False,
                         stream_callback=on_stream,
+                        memory_context=memory_context,
                     )
                 else:
                     raise
@@ -152,6 +165,7 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
+        memory_context: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -160,6 +174,7 @@ class ClaudeIntegration:
             session_id=session_id,
             continue_session=continue_session,
             stream_callback=stream_callback,
+            memory_context=memory_context,
         )
 
     async def _find_resumable_session(

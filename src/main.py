@@ -144,10 +144,23 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     logger.info("Using Claude Python SDK integration")
     sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
 
+    # Session memory service (optional)
+    session_memory_service = None
+    if config.enable_session_memory:
+        from src.claude.memory import SessionMemoryService
+
+        session_memory_service = SessionMemoryService(
+            storage=storage,
+            sdk_manager=sdk_manager,
+            config=config,
+        )
+        logger.info("Session memory service enabled")
+
     claude_integration = ClaudeIntegration(
         config=config,
         sdk_manager=sdk_manager,
         session_manager=session_manager,
+        memory_service=session_memory_service,
     )
 
     # --- Event bus and agentic platform components ---
@@ -181,6 +194,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        "session_memory_service": session_memory_service,
     }
 
     bot = ClaudeCodeBot(config, dependencies)

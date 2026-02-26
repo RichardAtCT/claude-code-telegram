@@ -136,6 +136,7 @@ class ClaudeSDKManager:
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self._persona_prompt = self._load_persona_prompt()
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -145,6 +146,29 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
+    def _load_persona_prompt(self) -> Optional[str]:
+        """Load persona prompt from file, injecting knowledge paths."""
+        if not self.config.persona_prompt_path:
+            return None
+        path = self.config.persona_prompt_path
+        if not path.exists():
+            logger.warning("Persona prompt file not found", path=str(path))
+            return None
+        content = path.read_text(encoding="utf-8")
+        # Build knowledge paths section
+        knowledge_section = ""
+        if self.config.knowledge_hint_paths:
+            knowledge_section = "\n".join(
+                f"- {p}" for p in self.config.knowledge_hint_paths
+            )
+        content = content.replace("{knowledge_paths_section}", knowledge_section)
+        logger.info(
+            "Persona prompt loaded",
+            path=str(path),
+            length=len(content),
+        )
+        return content
+
     async def execute_command(
         self,
         prompt: str,
@@ -152,6 +176,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        memory_context: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -171,6 +196,19 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
+            # Build system prompt: persona + memory context + directory constraint
+            dir_constraint = (
+                f"All file operations must stay within {working_directory}. "
+                "Use relative paths."
+            )
+            parts = []
+            if self._persona_prompt:
+                parts.append(self._persona_prompt)
+            if memory_context:
+                parts.append(memory_context)
+            parts.append(dir_constraint)
+            system_prompt = "\n\n---\n\n".join(parts)
+
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
@@ -184,10 +222,10 @@ class ClaudeSDKManager:
                     "autoAllowBashIfSandboxed": True,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
-                system_prompt=(
-                    f"All file operations must stay within {working_directory}. "
-                    "Use relative paths."
-                ),
+                system_prompt=system_prompt,
+                model=self.config.claude_model or None,
+                effort=self.config.claude_effort,
+                permission_mode=self.config.claude_permission_mode,
                 stderr=_stderr_callback,
             )
 
@@ -455,6 +493,7 @@ class ClaudeSDKManager:
                             )
                         elif hasattr(block, "text"):
                             text_parts.append(block.text)
+                        # Skip ThinkingBlock silently (internal reasoning)
 
                 if text_parts or tool_calls:
                     update = StreamUpdate(
@@ -464,12 +503,17 @@ class ClaudeSDKManager:
                     )
                     await stream_callback(update)
                 elif content:
-                    # Fallback for non-list content
-                    update = StreamUpdate(
-                        type="assistant",
-                        content=str(content),
+                    # Fallback for non-list content (skip if all ThinkingBlocks)
+                    has_displayable = any(
+                        hasattr(b, "text") or isinstance(b, ToolUseBlock)
+                        for b in (content if isinstance(content, list) else [])
                     )
-                    await stream_callback(update)
+                    if not isinstance(content, list) or has_displayable:
+                        update = StreamUpdate(
+                            type="assistant",
+                            content=str(content),
+                        )
+                        await stream_callback(update)
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")

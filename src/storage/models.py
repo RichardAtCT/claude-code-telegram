@@ -139,6 +139,34 @@ class ProjectThreadModel:
 
 
 @dataclass
+class SessionMemoryModel:
+    """Session memory data model for cross-session context."""
+
+    user_id: int
+    project_path: str
+    session_id: str
+    summary: str
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        data = asdict(self)
+        if data["created_at"]:
+            data["created_at"] = data["created_at"].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "SessionMemoryModel":
+        """Create from database row."""
+        data = dict(row)
+        data["created_at"] = _parse_datetime(data.get("created_at"))
+        data["is_active"] = bool(data.get("is_active", True))
+        return cls(**data)
+
+
+@dataclass
 class MessageModel:
     """Message data model."""
 
