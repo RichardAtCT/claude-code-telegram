@@ -1226,14 +1226,21 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     audit_logger: AuditLogger = context.bot_data.get("audit_logger")
     user_id = update.effective_user.id
 
-    task = context.user_data.get("_claude_task")
+    # Look up the active call for this thread (or _default for non-threaded chats)
+    tc = context.user_data.get("_thread_context")
+    thread_key = tc["state_key"] if tc else "_default"
+    active = context.user_data.get("_active_calls", {})
+    call_info = active.get(thread_key, {})
+    task = call_info.get("task")
+    call_id = call_info.get("call_id")
+
     if task and not task.done():
         # First, abort the SDK client to terminate the CLI subprocess.
         # task.cancel() alone only cancels the asyncio wrapper and may
         # leave the subprocess running in the background.
         claude_integration = context.bot_data.get("claude_integration")
-        if claude_integration:
-            await claude_integration.abort()
+        if claude_integration and call_id is not None:
+            claude_integration.abort_call(call_id)
         task.cancel()
         await update.message.reply_text(
             "⏹ <b>Stopped.</b>",

@@ -54,6 +54,10 @@ class ClaudeCodeBot:
         builder.defaults(Defaults(do_quote=self.settings.reply_quote))
         builder.rate_limiter(AIORateLimiter(max_retries=1))
 
+        # Allow concurrent update processing so that commands like /stop
+        # can run while a long-running Claude call is in progress.
+        builder.concurrent_updates(True)
+
         # Configure connection settings
         builder.connect_timeout(30)
         builder.read_timeout(30)

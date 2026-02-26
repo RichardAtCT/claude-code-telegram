@@ -386,6 +386,7 @@ async def handle_text_message(
 
         # Run Claude command
         try:
+            call_id = id(object())  # unique per call
             task = asyncio.create_task(
                 claude_integration.run_command(
                     prompt=message_text,
@@ -394,9 +395,13 @@ async def handle_text_message(
                     session_id=session_id,
                     on_stream=stream_handler,
                     force_new=force_new,
+                    call_id=call_id,
                 )
             )
-            context.user_data["_claude_task"] = task
+            tc = context.user_data.get("_thread_context")
+            thread_key = tc["state_key"] if tc else "_default"
+            active = context.user_data.setdefault("_active_calls", {})
+            active[thread_key] = {"task": task, "call_id": call_id}
             try:
                 claude_response = await task
             except asyncio.CancelledError:
@@ -407,7 +412,7 @@ async def handle_text_message(
                     pass
                 return
             finally:
-                context.user_data.pop("_claude_task", None)
+                active.pop(thread_key, None)
 
             # New session created successfully — clear the one-shot flag
             if force_new:

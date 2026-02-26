@@ -245,6 +245,12 @@ class MessageOrchestrator:
         }
 
     @staticmethod
+    def _thread_key(context: ContextTypes.DEFAULT_TYPE) -> str:
+        """Return a key identifying the current thread (or '_default')."""
+        tc = context.user_data.get("_thread_context")
+        return tc["state_key"] if tc else "_default"
+
+    @staticmethod
     def _is_within(path: Path, root: Path) -> bool:
         """Return True if path is within root."""
         try:
@@ -884,6 +890,7 @@ class MessageOrchestrator:
 
         success = True
         try:
+            call_id = id(object())  # unique per call
             task = asyncio.create_task(
                 claude_integration.run_command(
                     prompt=message_text,
@@ -892,9 +899,12 @@ class MessageOrchestrator:
                     session_id=session_id,
                     on_stream=on_stream,
                     force_new=force_new,
+                    call_id=call_id,
                 )
             )
-            context.user_data["_claude_task"] = task
+            thread_key = self._thread_key(context)
+            active = context.user_data.setdefault("_active_calls", {})
+            active[thread_key] = {"task": task, "call_id": call_id}
             try:
                 claude_response = await task
             except asyncio.CancelledError:
@@ -905,7 +915,7 @@ class MessageOrchestrator:
                     pass
                 return
             finally:
-                context.user_data.pop("_claude_task", None)
+                active.pop(thread_key, None)
 
             # New session created successfully — clear the one-shot flag
             if force_new:
