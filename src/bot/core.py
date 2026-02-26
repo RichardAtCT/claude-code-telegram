@@ -72,7 +72,11 @@ class ClaudeCodeBot:
         # Add feature registry to dependencies
         self.deps["features"] = self.feature_registry
 
-        # Set bot commands for menu
+        # Initialize the underlying Telegram Application so the bot's
+        # HTTP client is ready before we make API calls.
+        await self.app.initialize()
+
+        # Set bot commands for menu (requires initialized HTTP client)
         await self._set_bot_commands()
 
         # Register handlers
