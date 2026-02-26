@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -26,6 +32,11 @@ from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
 from .utils.html_format import escape_html
+from .utils.image_extractor import (
+    ImageAttachment,
+    should_send_as_photo,
+    validate_image_path,
+)
 
 logger = structlog.get_logger()
 
@@ -649,20 +660,47 @@ class MessageOrchestrator:
         progress_msg: Any,
         tool_log: List[Dict[str, Any]],
         start_time: float,
+        mcp_images: Optional[List[ImageAttachment]] = None,
+        approved_directory: Optional[Path] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
-        Returns None when verbose_level is 0 (nothing to display).
+        When *mcp_images* is provided, the callback also intercepts
+        ``send_image_to_user`` tool calls and collects validated
+        :class:`ImageAttachment` objects for later Telegram delivery.
+
+        Returns None when verbose_level is 0 **and** no MCP image
+        collection is requested.
         Typing indicators are handled by a separate heartbeat task.
         """
-        if verbose_level == 0:
+        need_mcp_intercept = mcp_images is not None and approved_directory is not None
+
+        if verbose_level == 0 and not need_mcp_intercept:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
-            # Capture tool calls
-            if update_obj.tool_calls:
+            # Intercept send_image_to_user MCP tool calls.
+            # The SDK namespaces MCP tools as "mcp__<server>__<tool>",
+            # so match both the bare name and the namespaced variant.
+            if update_obj.tool_calls and need_mcp_intercept:
+                for tc in update_obj.tool_calls:
+                    tc_name = tc.get("name", "")
+                    if tc_name == "send_image_to_user" or tc_name.endswith(
+                        "__send_image_to_user"
+                    ):
+                        tc_input = tc.get("input", {})
+                        file_path = tc_input.get("file_path", "")
+                        caption = tc_input.get("caption", "")
+                        img = validate_image_path(
+                            file_path, approved_directory, caption
+                        )
+                        if img:
+                            mcp_images.append(img)
+
+            # Capture tool calls for verbose log
+            if update_obj.tool_calls and verbose_level >= 1:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
@@ -678,18 +716,108 @@ class MessageOrchestrator:
                         tool_log.append({"kind": "text", "detail": first_line[:120]})
 
             # Throttle progress message edits to avoid Telegram rate limits
-            now = time.time()
-            if (now - last_edit_time[0]) >= 2.0 and tool_log:
-                last_edit_time[0] = now
-                new_text = self._format_verbose_progress(
-                    tool_log, verbose_level, start_time
-                )
-                try:
-                    await progress_msg.edit_text(new_text)
-                except Exception:
-                    pass
+            if verbose_level >= 1:
+                now = time.time()
+                if (now - last_edit_time[0]) >= 2.0 and tool_log:
+                    last_edit_time[0] = now
+                    new_text = self._format_verbose_progress(
+                        tool_log, verbose_level, start_time
+                    )
+                    try:
+                        await progress_msg.edit_text(new_text)
+                    except Exception:
+                        pass
 
         return _on_stream
+
+    async def _send_images(
+        self,
+        update: Update,
+        images: List[ImageAttachment],
+        reply_to_message_id: Optional[int] = None,
+        caption: Optional[str] = None,
+        caption_parse_mode: Optional[str] = None,
+    ) -> bool:
+        """Send extracted images as a media group (album) or documents.
+
+        If *caption* is provided and fits (≤1024 chars), it is attached to the
+        photo / first album item so text + images appear as one message.
+
+        Returns True if the caption was successfully embedded in the photo message.
+        """
+        photos: List[ImageAttachment] = []
+        documents: List[ImageAttachment] = []
+        for img in images:
+            if should_send_as_photo(img.path):
+                photos.append(img)
+            else:
+                documents.append(img)
+
+        # Telegram caption limit
+        use_caption = bool(
+            caption and len(caption) <= 1024 and photos and not documents
+        )
+        caption_sent = False
+
+        # Send raster photos as a single album (Telegram groups 2-10 items)
+        if photos:
+            try:
+                if len(photos) == 1:
+                    with open(photos[0].path, "rb") as f:
+                        await update.message.reply_photo(
+                            photo=f,
+                            reply_to_message_id=reply_to_message_id,
+                            caption=caption if use_caption else None,
+                            parse_mode=caption_parse_mode if use_caption else None,
+                        )
+                    caption_sent = use_caption
+                else:
+                    media = []
+                    file_handles = []
+                    for idx, img in enumerate(photos[:10]):
+                        fh = open(img.path, "rb")  # noqa: SIM115
+                        file_handles.append(fh)
+                        media.append(
+                            InputMediaPhoto(
+                                media=fh,
+                                caption=caption if use_caption and idx == 0 else None,
+                                parse_mode=(
+                                    caption_parse_mode
+                                    if use_caption and idx == 0
+                                    else None
+                                ),
+                            )
+                        )
+                    try:
+                        await update.message.chat.send_media_group(
+                            media=media,
+                            reply_to_message_id=reply_to_message_id,
+                        )
+                        caption_sent = use_caption
+                    finally:
+                        for fh in file_handles:
+                            fh.close()
+            except Exception as e:
+                logger.warning("Failed to send photo album", error=str(e))
+
+        # Send SVGs / large files as documents (one by one — can't mix in album)
+        for img in documents:
+            try:
+                with open(img.path, "rb") as f:
+                    await update.message.reply_document(
+                        document=f,
+                        filename=img.path.name,
+                        reply_to_message_id=reply_to_message_id,
+                    )
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(
+                    "Failed to send document image",
+                    path=str(img.path),
+                    error=str(e),
+                )
+
+        return caption_sent
 
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -737,8 +865,14 @@ class MessageOrchestrator:
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
+        mcp_images: List[ImageAttachment] = []
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, start_time
+            verbose_level,
+            progress_msg,
+            tool_log,
+            start_time,
+            mcp_images=mcp_images,
+            approved_directory=self.settings.approved_directory,
         )
 
         # Independent typing heartbeat — stays alive even with no stream events
@@ -807,41 +941,75 @@ class MessageOrchestrator:
         except Exception:
             logger.debug("Failed to delete progress message, ignoring")
 
-        for i, message in enumerate(formatted_messages):
-            if not message.text or not message.text.strip():
-                continue
-            try:
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=None,  # No keyboards in agentic mode
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
-                )
-                if i < len(formatted_messages) - 1:
-                    await asyncio.sleep(0.5)
-            except Exception as send_err:
-                logger.warning(
-                    "Failed to send HTML response, retrying as plain text",
-                    error=str(send_err),
-                    message_index=i,
-                )
+        # Use MCP-collected images (from send_image_to_user tool calls)
+        images: List[ImageAttachment] = mcp_images
+
+        # Try to combine text + images in one message when possible
+        caption_sent = False
+        if images and len(formatted_messages) == 1:
+            msg = formatted_messages[0]
+            if msg.text and len(msg.text) <= 1024:
+                try:
+                    caption_sent = await self._send_images(
+                        update,
+                        images,
+                        reply_to_message_id=update.message.message_id,
+                        caption=msg.text,
+                        caption_parse_mode=msg.parse_mode,
+                    )
+                except Exception as img_err:
+                    logger.warning("Image+caption send failed", error=str(img_err))
+
+        # Send text messages (skip if caption was already embedded in photos)
+        if not caption_sent:
+            for i, message in enumerate(formatted_messages):
+                if not message.text or not message.text.strip():
+                    continue
                 try:
                     await update.message.reply_text(
                         message.text,
-                        reply_markup=None,
+                        parse_mode=message.parse_mode,
+                        reply_markup=None,  # No keyboards in agentic mode
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
                     )
-                except Exception as plain_err:
-                    await update.message.reply_text(
-                        f"Failed to deliver response "
-                        f"(Telegram error: {str(plain_err)[:150]}). "
-                        f"Please try again.",
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+                except Exception as send_err:
+                    logger.warning(
+                        "Failed to send HTML response, retrying as plain text",
+                        error=str(send_err),
+                        message_index=i,
                     )
+                    try:
+                        await update.message.reply_text(
+                            message.text,
+                            reply_markup=None,
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                        )
+                    except Exception as plain_err:
+                        await update.message.reply_text(
+                            f"Failed to deliver response "
+                            f"(Telegram error: {str(plain_err)[:150]}). "
+                            f"Please try again.",
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                        )
+
+            # Send images separately if caption wasn't used
+            if images:
+                try:
+                    await self._send_images(
+                        update,
+                        images,
+                        reply_to_message_id=update.message.message_id,
+                    )
+                except Exception as img_err:
+                    logger.warning("Image send failed", error=str(img_err))
 
         # Audit log
         audit_logger = context.bot_data.get("audit_logger")
@@ -939,8 +1107,14 @@ class MessageOrchestrator:
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
+        mcp_images_doc: List[ImageAttachment] = []
         on_stream = self._make_stream_callback(
-            verbose_level, progress_msg, tool_log, time.time()
+            verbose_level,
+            progress_msg,
+            tool_log,
+            time.time(),
+            mcp_images=mcp_images_doc,
+            approved_directory=self.settings.approved_directory,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
@@ -977,15 +1151,46 @@ class MessageOrchestrator:
             except Exception:
                 logger.debug("Failed to delete progress message, ignoring")
 
-            for i, message in enumerate(formatted_messages):
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
-                )
-                if i < len(formatted_messages) - 1:
-                    await asyncio.sleep(0.5)
+            # Use MCP-collected images (from send_image_to_user tool calls)
+            images: List[ImageAttachment] = mcp_images_doc
+
+            caption_sent = False
+            if images and len(formatted_messages) == 1:
+                msg = formatted_messages[0]
+                if msg.text and len(msg.text) <= 1024:
+                    try:
+                        caption_sent = await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                            caption=msg.text,
+                            caption_parse_mode=msg.parse_mode,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image+caption send failed", error=str(img_err))
+
+            if not caption_sent:
+                for i, message in enumerate(formatted_messages):
+                    await update.message.reply_text(
+                        message.text,
+                        parse_mode=message.parse_mode,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+
+                if images:
+                    try:
+                        await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image send failed", error=str(img_err))
 
         except Exception as e:
             from .handlers.message import _format_error_message
@@ -1036,8 +1241,14 @@ class MessageOrchestrator:
 
             verbose_level = self._get_verbose_level(context)
             tool_log: List[Dict[str, Any]] = []
+            mcp_images_photo: List[ImageAttachment] = []
             on_stream = self._make_stream_callback(
-                verbose_level, progress_msg, tool_log, time.time()
+                verbose_level,
+                progress_msg,
+                tool_log,
+                time.time(),
+                mcp_images=mcp_images_photo,
+                approved_directory=self.settings.approved_directory,
             )
 
             heartbeat = self._start_typing_heartbeat(chat)
@@ -1070,15 +1281,46 @@ class MessageOrchestrator:
             except Exception:
                 logger.debug("Failed to delete progress message, ignoring")
 
-            for i, message in enumerate(formatted_messages):
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=None,
-                    reply_to_message_id=(update.message.message_id if i == 0 else None),
-                )
-                if i < len(formatted_messages) - 1:
-                    await asyncio.sleep(0.5)
+            # Use MCP-collected images (from send_image_to_user tool calls)
+            images: List[ImageAttachment] = mcp_images_photo
+
+            caption_sent = False
+            if images and len(formatted_messages) == 1:
+                msg = formatted_messages[0]
+                if msg.text and len(msg.text) <= 1024:
+                    try:
+                        caption_sent = await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                            caption=msg.text,
+                            caption_parse_mode=msg.parse_mode,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image+caption send failed", error=str(img_err))
+
+            if not caption_sent:
+                for i, message in enumerate(formatted_messages):
+                    await update.message.reply_text(
+                        message.text,
+                        parse_mode=message.parse_mode,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+
+                if images:
+                    try:
+                        await self._send_images(
+                            update,
+                            images,
+                            reply_to_message_id=update.message.message_id,
+                        )
+                    except Exception as img_err:
+                        logger.warning("Image send failed", error=str(img_err))
 
         except Exception as e:
             from .handlers.message import _format_error_message
