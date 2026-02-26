@@ -255,6 +255,11 @@ class MessageOrchestrator:
         topic_id = getattr(dm_topic, "topic_id", None) if dm_topic else None
         if isinstance(topic_id, int) and topic_id > 0:
             return topic_id
+        # Telegram omits message_thread_id for the General topic in forum
+        # supergroups; its canonical thread ID is 1.
+        chat = update.effective_chat
+        if chat and getattr(chat, "is_forum", False):
+            return 1
         return None
 
     async def _reject_for_thread_mode(self, update: Update, message: str) -> None:
