@@ -684,6 +684,7 @@ async def test_private_mode_start_bypasses_thread_gate(private_thread_settings, 
     update = MagicMock()
     update.effective_chat.type = "private"
     update.effective_chat.id = 12345
+    update.effective_chat.is_forum = False
     update.effective_message.reply_text = AsyncMock()
     update.callback_query = None
 
@@ -761,6 +762,7 @@ async def test_private_mode_rejects_help_outside_topics(private_thread_settings,
     update = MagicMock()
     update.effective_chat.type = "private"
     update.effective_chat.id = 12345
+    update.effective_chat.is_forum = False
     update.effective_message.message_thread_id = None
     update.effective_message.direct_messages_topic = None
     update.effective_message.reply_text = AsyncMock()
