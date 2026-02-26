@@ -1,5 +1,7 @@
 """Command handlers for bot operations."""
 
+import os
+import signal
 from pathlib import Path
 from typing import Optional
 
@@ -1219,6 +1221,30 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception as e:
         await update.message.reply_text(f"❌ <b>Git Error</b>\n\n{str(e)}")
         logger.error("Error in git_command", error=str(e), user_id=user_id)
+
+
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /restart command - gracefully restart the bot process.
+
+    Sends a confirmation message then triggers SIGTERM so systemd
+    (or any process manager with restart-on-exit) brings the bot back up.
+    """
+    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    user_id = update.effective_user.id
+
+    await update.message.reply_text(
+        "🔄 <b>Restarting bot…</b>\n\nBack in a few seconds.",
+        parse_mode="HTML",
+    )
+
+    if audit_logger:
+        await audit_logger.log_command(user_id, "restart", [], True)
+
+    logger.info("Restart requested via /restart command", user_id=user_id)
+
+    # SIGTERM triggers the existing graceful-shutdown handler in main.py;
+    # systemd Restart=always will bring the process back up.
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 def _format_file_size(size: int) -> str:
