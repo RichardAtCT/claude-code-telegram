@@ -16,6 +16,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.utils.constants import (
+    DEFAULT_CLAUDE_MAX_COST_PER_REQUEST,
     DEFAULT_CLAUDE_MAX_COST_PER_USER,
     DEFAULT_CLAUDE_MAX_TURNS,
     DEFAULT_CLAUDE_TIMEOUT_SECONDS,
@@ -84,6 +85,10 @@ class Settings(BaseSettings):
     )
     claude_max_cost_per_user: float = Field(
         DEFAULT_CLAUDE_MAX_COST_PER_USER, description="Max cost per user"
+    )
+    claude_max_cost_per_request: float = Field(
+        DEFAULT_CLAUDE_MAX_COST_PER_REQUEST,
+        description="Max cost per individual request (SDK budget cap)",
     )
     # NOTE: When changing this list, also update docs/tools.md,
     # docs/configuration.md, .env.example,
@@ -194,6 +199,15 @@ class Settings(BaseSettings):
     agentic_mode: bool = Field(
         True,
         description="Conversational agentic mode (default) vs classic command mode",
+    )
+
+    # Reply quoting
+    reply_quote: bool = Field(
+        True,
+        description=(
+            "Quote the original user message when replying. "
+            "Set to false for cleaner thread-based conversations."
+        ),
     )
 
     # Output verbosity (0=quiet, 1=normal, 2=detailed)

@@ -4,7 +4,7 @@ import asyncio
 from typing import Optional
 
 import structlog
-from telegram import Update
+from telegram import InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
 from ...claude.exceptions import (
@@ -20,6 +20,11 @@ from ...security.audit import AuditLogger
 from ...security.rate_limiter import RateLimiter
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
+from ..utils.image_extractor import (
+    ImageAttachment,
+    should_send_as_photo,
+    validate_image_path,
+)
 
 logger = structlog.get_logger()
 
@@ -350,8 +355,28 @@ async def handle_text_message(
         # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(context.user_data.get("force_new_session"))
 
+        # MCP image collection via stream intercept
+        mcp_images: list[ImageAttachment] = []
+
         # Enhanced stream updates handler with progress tracking
         async def stream_handler(update_obj):
+            # Intercept send_image_to_user MCP tool calls.
+            # The SDK namespaces MCP tools as "mcp__<server>__<tool>".
+            if update_obj.tool_calls:
+                for tc in update_obj.tool_calls:
+                    tc_name = tc.get("name", "")
+                    if tc_name == "send_image_to_user" or tc_name.endswith(
+                        "__send_image_to_user"
+                    ):
+                        tc_input = tc.get("input", {})
+                        file_path = tc_input.get("file_path", "")
+                        caption = tc_input.get("caption", "")
+                        img = validate_image_path(
+                            file_path, settings.approved_directory, caption
+                        )
+                        if img:
+                            mcp_images.append(img)
+
             try:
                 progress_text = await _format_progress_update(update_obj)
                 if progress_text:
@@ -414,48 +439,144 @@ async def handle_text_message(
         # Delete progress message
         await progress_msg.delete()
 
-        # Send formatted responses (may be multiple messages)
-        for i, message in enumerate(formatted_messages):
-            try:
-                await update.message.reply_text(
-                    message.text,
-                    parse_mode=message.parse_mode,
-                    reply_markup=message.reply_markup,
-                    reply_to_message_id=update.message.message_id if i == 0 else None,
-                )
+        # Use MCP-collected images (from send_image_to_user tool calls)
+        images: list[ImageAttachment] = mcp_images
 
-                # Small delay between messages to avoid rate limits
-                if i < len(formatted_messages) - 1:
-                    await asyncio.sleep(0.5)
+        # Try to combine text + images when response fits in a caption
+        caption_sent = False
+        if images and len(formatted_messages) == 1:
+            msg = formatted_messages[0]
+            if msg.text and len(msg.text) <= 1024:
+                photos = [i for i in images if should_send_as_photo(i.path)]
+                documents = [i for i in images if not should_send_as_photo(i.path)]
+                if photos and not documents:
+                    try:
+                        if len(photos) == 1:
+                            with open(photos[0].path, "rb") as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    caption=msg.text,
+                                    parse_mode=msg.parse_mode,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                            caption_sent = True
+                        else:
+                            media = []
+                            file_handles = []
+                            for idx, img in enumerate(photos[:10]):
+                                fh = open(img.path, "rb")  # noqa: SIM115
+                                file_handles.append(fh)
+                                media.append(
+                                    InputMediaPhoto(
+                                        media=fh,
+                                        caption=msg.text if idx == 0 else None,
+                                        parse_mode=(
+                                            msg.parse_mode if idx == 0 else None
+                                        ),
+                                    )
+                                )
+                            try:
+                                await update.message.chat.send_media_group(
+                                    media=media,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                                caption_sent = True
+                            finally:
+                                for fh in file_handles:
+                                    fh.close()
+                    except Exception as album_err:
+                        logger.warning(
+                            "Failed to send photo+caption", error=str(album_err)
+                        )
 
-            except Exception as send_err:
-                logger.warning(
-                    "Failed to send HTML response, retrying as plain text",
-                    error=str(send_err),
-                    message_index=i,
-                )
+        if not caption_sent:
+            # Send formatted responses (may be multiple messages)
+            for i, message in enumerate(formatted_messages):
                 try:
                     await update.message.reply_text(
                         message.text,
+                        parse_mode=message.parse_mode,
                         reply_markup=message.reply_markup,
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
                     )
-                except Exception as plain_err:
-                    logger.error(
-                        "Failed to send plain text fallback response",
-                        error=str(plain_err),
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+                except Exception as send_err:
+                    logger.warning(
+                        "Failed to send HTML response, retrying as plain text",
+                        error=str(send_err),
+                        message_index=i,
                     )
-                    # Include what actually went wrong instead of a generic message
-                    await update.message.reply_text(
-                        f"Failed to deliver response "
-                        f"(Telegram error: {str(plain_err)[:150]}). "
-                        f"Please try again.",
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
+                    try:
+                        await update.message.reply_text(
+                            message.text,
+                            reply_markup=message.reply_markup,
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                        )
+                    except Exception as plain_err:
+                        logger.error(
+                            "Failed to send plain text fallback response",
+                            error=str(plain_err),
+                        )
+                        await update.message.reply_text(
+                            f"Failed to deliver response "
+                            f"(Telegram error: {str(plain_err)[:150]}). "
+                            f"Please try again.",
+                            reply_to_message_id=(
+                                update.message.message_id if i == 0 else None
+                            ),
+                        )
+
+            # Send images separately
+            if images:
+                photos = [i for i in images if should_send_as_photo(i.path)]
+                documents = [i for i in images if not should_send_as_photo(i.path)]
+                if photos:
+                    try:
+                        if len(photos) == 1:
+                            with open(photos[0].path, "rb") as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                        else:
+                            media = []
+                            file_handles = []
+                            for img in photos[:10]:
+                                fh = open(img.path, "rb")  # noqa: SIM115
+                                file_handles.append(fh)
+                                media.append(InputMediaPhoto(media=fh))
+                            try:
+                                await update.message.chat.send_media_group(
+                                    media=media,
+                                    reply_to_message_id=update.message.message_id,
+                                )
+                            finally:
+                                for fh in file_handles:
+                                    fh.close()
+                    except Exception as album_err:
+                        logger.warning(
+                            "Failed to send photo album", error=str(album_err)
+                        )
+                for img in documents:
+                    try:
+                        with open(img.path, "rb") as f:
+                            await update.message.reply_document(
+                                document=f,
+                                filename=img.path.name,
+                                reply_to_message_id=update.message.message_id,
+                            )
+                        await asyncio.sleep(0.5)
+                    except Exception as doc_err:
+                        logger.warning(
+                            "Failed to send document image",
+                            path=str(img.path),
+                            error=str(doc_err),
+                        )
 
         # Update session info
         context.user_data["last_message"] = update.message.text

@@ -70,8 +70,11 @@ CLAUDE_MAX_TURNS=10
 # Timeout for Claude operations in seconds
 CLAUDE_TIMEOUT_SECONDS=300
 
-# Maximum cost per user in USD
+# Maximum cost per user in USD (lifetime budget for rate limiter)
 CLAUDE_MAX_COST_PER_USER=10.0
+
+# Maximum cost per individual request in USD (SDK-level hard cap)
+CLAUDE_MAX_COST_PER_REQUEST=5.0
 
 # Allowed Claude tools (comma-separated list; see docs/tools.md for descriptions)
 CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,TaskOutput,MultiEdit,NotebookRead,NotebookEdit,WebFetch,TodoRead,TodoWrite,WebSearch
@@ -266,6 +269,7 @@ Activated when `ENVIRONMENT=production`:
 - `log_level = "INFO"`
 - `enable_telemetry = true`
 - `claude_max_cost_per_user = 5.0` (stricter cost limit)
+- `claude_max_cost_per_request = 2.0` (per-request SDK cap)
 - `rate_limit_requests = 5` (stricter rate limiting)
 - `session_timeout_hours = 12` (shorter session timeout)
 

@@ -20,6 +20,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Makefile targets: `bump-patch`, `bump-minor`, `bump-major`, `release`, `version`
   - Pre-release support (`-rc`, `-beta`, `-alpha` tags)
 
+## [1.4.0] - 2026-02-27
+
+### Added
+- **Outbound image support**: Claude can now auto-detect and send images to Telegram, plus MCP `send_image_to_user` tool (#99)
+- **CLAUDE.md loading**: Project-level CLAUDE.md files are loaded from the working directory and appended to the system prompt
+- **Configurable reply quoting**: `REPLY_QUOTE` setting controls message quoting behavior, centralized via PTB Defaults (#111)
+- **`max_budget_usd` cost cap**: Per-request cost limit passed to SDK via `ClaudeAgentOptions` (#95)
+- **`Skill` and `AskUserQuestion`** added to default allowed tools (#85, #87)
+- **Documentation site**: Docs index and README linking (#92)
+
+### Changed
+- **ToolMonitor replaced with SDK `can_use_tool` callback**: Security validation now uses the native SDK hook instead of a custom wrapper. `SecurityValidator` wired directly into `ClaudeAgentOptions.can_use_tool` (#62)
+- **`DISABLE_TOOL_VALIDATION=true`** now passes `allowed_tools=None` to the SDK, fully bypassing tool name validation
+- **Phase 5 cleanup**: `src/claude/` reduced from 2,774 to 1,316 lines (#96)
+- **PTB `AIORateLimiter`** replaces manual sync-local `RetryAfter` retry (#86)
+- **Project thread sync throttling**: Configurable `PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS` to avoid Telegram API rate limits (#84)
+- **GitHub Actions upgraded** to latest versions for Node 24 compatibility (#67, #68)
+
+### Fixed
+- **Empty `CLAUDE_CLI_PATH` causing Permission denied**: Empty string coerced to `None` so SDK auto-discovers the CLI
+- **Session resume failing** with generic exit code 1 (#94)
+- **Progress message deletion crash**: Bot no longer stops mid-response when progress message deletion fails (#107)
+- **General topic routing**: Messages in the General topic of forum supergroups now route correctly (#110)
+- **Session ownership enforcement**: `load_session` and `get_or_create_session` now validate ownership (#83)
+- **Bash boundary enforcement**: `cd` and chained commands checked against directory boundary (#69)
+- **Handler robustness**: Potential `UnboundLocalError` resolved in message handlers (#66)
+- **Claude Code internal paths**: `~/.claude/plans/` and `todos/` allowed in tool validation (#89)
+- **`Topic_not_modified` treated as success** in topic sync instead of raising an error
+- **Test fixes**: `is_forum=False` set on MagicMock chats to prevent test failures (#110)
+
 ### Previously Added
 - **Agentic Mode** (default interaction model):
   - `MessageOrchestrator` routes messages to agentic (3 commands) or classic (13 commands) handlers based on `AGENTIC_MODE` setting

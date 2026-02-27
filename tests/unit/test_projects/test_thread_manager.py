@@ -398,6 +398,46 @@ async def test_sync_reopen_inactive_mapping(tmp_path: Path, db_manager) -> None:
     assert mapping.is_active is True
 
 
+async def test_sync_reopen_already_open_topic_not_modified(
+    tmp_path: Path, db_manager
+) -> None:
+    """Already-open topic returns Topic_not_modified, treated as success."""
+    approved = tmp_path / "projects"
+    approved.mkdir()
+    (approved / "app1").mkdir()
+
+    config_file = tmp_path / "projects.yaml"
+    config_file.write_text(
+        "projects:\n" "  - slug: app1\n" "    name: App One\n" "    path: app1\n",
+        encoding="utf-8",
+    )
+    registry = load_project_registry(config_file, approved)
+
+    repo = ProjectThreadRepository(db_manager)
+    await repo.upsert_mapping(
+        project_slug="app1",
+        chat_id=42,
+        message_thread_id=1001,
+        topic_name="App One",
+        is_active=False,
+    )
+
+    manager = ProjectThreadManager(registry, repo, sync_action_interval_seconds=0.0)
+    bot = AsyncMock()
+    bot.reopen_forum_topic = AsyncMock(
+        side_effect=TelegramError("Bad Request: Topic_not_modified")
+    )
+    bot.edit_forum_topic = AsyncMock()
+
+    result = await manager.sync_topics(bot, chat_id=42)
+    mapping = await repo.get_by_chat_project(42, "app1")
+
+    assert result.reopened == 1
+    assert result.failed == 0
+    assert mapping is not None
+    assert mapping.is_active is True
+
+
 async def test_sync_reopen_unusable_inactive_mapping_recreates(
     tmp_path: Path, db_manager
 ) -> None:

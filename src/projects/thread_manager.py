@@ -265,6 +265,9 @@ class ProjectThreadManager:
         except TelegramError as e:
             if self._is_topic_unusable_error(e):
                 return "unusable"
+            # Topic already open — Telegram returns "Topic_not_modified"
+            if "not_modified" in str(e).lower():
+                return "ok"
             logger.warning(
                 "Could not verify topic usability",
                 chat_id=mapping.chat_id,
@@ -288,6 +291,9 @@ class ProjectThreadManager:
         except TelegramError as e:
             if self._is_topic_unusable_error(e):
                 return "unusable"
+            # Topic already open — Telegram returns "Topic_not_modified"
+            if "not_modified" in str(e).lower():
+                return "reopened"
             logger.warning(
                 "Could not reopen topic",
                 chat_id=mapping.chat_id,
