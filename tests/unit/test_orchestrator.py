@@ -412,6 +412,51 @@ async def test_agentic_voice_missing_handler_is_provider_aware(tmp_path, deps):
     assert "OPENAI_API_KEY" in call_args.args[0]
 
 
+async def test_agentic_voice_transcription_failure_surfaces_user_error(
+    agentic_settings, deps
+):
+    """Transcription failures are shown to users and do not call Claude."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    voice_handler = MagicMock()
+    voice_handler.process_voice_message = AsyncMock(
+        side_effect=RuntimeError("Mistral transcription request failed: boom")
+    )
+
+    features = MagicMock()
+    features.get_voice_handler.return_value = voice_handler
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.voice = MagicMock()
+    update.message.caption = None
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.edit_text = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": agentic_settings,
+        "features": features,
+        "claude_integration": claude_integration,
+    }
+
+    await orchestrator.agentic_voice(update, context)
+
+    progress_msg.edit_text.assert_awaited_once()
+    error_text = progress_msg.edit_text.call_args.args[0]
+    assert "Mistral transcription request failed" in error_text
+    assert progress_msg.edit_text.call_args.kwargs["parse_mode"] == "HTML"
+    claude_integration.run_command.assert_not_awaited()
+
+
 async def test_agentic_start_escapes_html_in_name(agentic_settings, deps):
     """Names with HTML-special characters are escaped safely."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)

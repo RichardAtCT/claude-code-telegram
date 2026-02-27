@@ -3,10 +3,12 @@
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
+import src.config.loader as config_loader
 from src.config import Settings, create_test_config, load_config
 from src.config.features import FeatureFlags
 from src.exceptions import ConfigurationError
@@ -603,6 +605,39 @@ def test_environment_loading():
                 "APPROVED_DIRECTORY",
             ]:
                 os.environ.pop(key, None)
+
+
+def test_load_config_does_not_log_api_keys(tmp_path):
+    """Startup/error logs should not include raw provider API keys."""
+    secrets = {
+        "ANTHROPIC_API_KEY": "sk-ant-api03-sensitive-anthropic-token-value",
+        "MISTRAL_API_KEY": "mistral-sensitive-token-value-123",
+        "OPENAI_API_KEY": "sk-sensitive-openai-token-value-456",
+    }
+
+    os.environ["TELEGRAM_BOT_TOKEN"] = "test_token"
+    os.environ["TELEGRAM_BOT_USERNAME"] = "test_bot"
+    os.environ["APPROVED_DIRECTORY"] = str(tmp_path)
+    for key, value in secrets.items():
+        os.environ[key] = value
+
+    try:
+        with patch.object(config_loader, "logger") as mock_logger:
+            load_config(env="development", config_file=tmp_path / "missing.env")
+            logged_text = " ".join(str(call) for call in mock_logger.mock_calls)
+
+        for value in secrets.values():
+            assert value not in logged_text
+    finally:
+        for key in [
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_BOT_USERNAME",
+            "APPROVED_DIRECTORY",
+            "ANTHROPIC_API_KEY",
+            "MISTRAL_API_KEY",
+            "OPENAI_API_KEY",
+        ]:
+            os.environ.pop(key, None)
 
 
 def test_create_test_config():

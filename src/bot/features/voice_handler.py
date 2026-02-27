@@ -27,16 +27,8 @@ class VoiceHandler:
     def __init__(self, config: Settings):
         self.config = config
 
-    async def process_voice_message(
-        self, voice: Voice, caption: Optional[str] = None
-    ) -> ProcessedVoice:
-        """Download and transcribe a voice message.
-
-        1. Download .ogg bytes from Telegram
-        2. Call the configured transcription API (Mistral or OpenAI)
-        3. Build a prompt combining caption + transcription
-        """
-        file_size = getattr(voice, "file_size", None)
+    def _ensure_allowed_file_size(self, file_size: Optional[int]) -> None:
+        """Reject files that exceed the configured max size."""
         if (
             isinstance(file_size, int)
             and file_size > self.config.voice_max_file_size_bytes
@@ -48,15 +40,41 @@ class VoiceHandler:
                 "Adjust VOICE_MAX_FILE_SIZE_MB if needed."
             )
 
-        # Download voice data
+    async def process_voice_message(
+        self, voice: Voice, caption: Optional[str] = None
+    ) -> ProcessedVoice:
+        """Download and transcribe a voice message.
+
+        1. Download .ogg bytes from Telegram
+        2. Call the configured transcription API (Mistral or OpenAI)
+        3. Build a prompt combining caption + transcription
+        """
+        initial_file_size = getattr(voice, "file_size", None)
+        self._ensure_allowed_file_size(initial_file_size)
+
+        # Resolve Telegram file metadata before downloading bytes.
         file = await voice.get_file()
+        resolved_file_size = getattr(file, "file_size", None)
+        self._ensure_allowed_file_size(resolved_file_size)
+
+        # Refuse unknown-size payloads to avoid unbounded downloads.
+        if not isinstance(initial_file_size, int) and not isinstance(
+            resolved_file_size, int
+        ):
+            raise ValueError(
+                "Unable to determine voice message size before download. "
+                "Please retry with a smaller voice message."
+            )
+
+        # Download voice data
         voice_bytes = bytes(await file.download_as_bytearray())
+        self._ensure_allowed_file_size(len(voice_bytes))
 
         logger.info(
             "Transcribing voice message",
             provider=self.config.voice_provider,
             duration=voice.duration,
-            file_size=file_size or len(voice_bytes),
+            file_size=initial_file_size or resolved_file_size or len(voice_bytes),
         )
 
         if self.config.voice_provider == "openai":

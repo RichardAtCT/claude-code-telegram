@@ -133,6 +133,63 @@ async def test_process_voice_message_rejects_large_file(voice_handler):
     voice.get_file.assert_not_awaited()
 
 
+async def test_process_voice_message_rejects_large_file_from_file_metadata(
+    voice_handler,
+):
+    """When voice.file_size is missing, Telegram file metadata is still enforced."""
+    voice = MagicMock()
+    voice.duration = 7
+    voice.file_size = None
+
+    telegram_file = AsyncMock()
+    telegram_file.file_size = 25 * 1024 * 1024
+    telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-ogg"))
+    voice.get_file = AsyncMock(return_value=telegram_file)
+
+    with pytest.raises(ValueError, match="too large"):
+        await voice_handler.process_voice_message(voice)
+
+    telegram_file.download_as_bytearray.assert_not_awaited()
+
+
+async def test_process_voice_message_rejects_unknown_size_before_download(
+    voice_handler,
+):
+    """Voice messages without any size metadata are rejected before downloading."""
+    voice = MagicMock()
+    voice.duration = 7
+    voice.file_size = None
+
+    telegram_file = AsyncMock()
+    telegram_file.file_size = None
+    telegram_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-ogg"))
+    voice.get_file = AsyncMock(return_value=telegram_file)
+
+    with pytest.raises(ValueError, match="Unable to determine voice message size"):
+        await voice_handler.process_voice_message(voice)
+
+    telegram_file.download_as_bytearray.assert_not_awaited()
+
+
+async def test_process_voice_message_rejects_payload_over_limit_before_api_call(
+    voice_handler,
+):
+    """Byte payloads above limit are rejected before forwarding to provider APIs."""
+    voice_handler.config.voice_max_file_size_mb = 1
+    voice_handler.config.voice_max_file_size_bytes = 1 * 1024 * 1024
+    voice_handler._transcribe_mistral = AsyncMock(return_value="should not be called")
+
+    voice = _mock_voice(file_size=512 * 1024)
+    voice.get_file.return_value.download_as_bytearray = AsyncMock(
+        return_value=bytearray(b"x" * (2 * 1024 * 1024))
+    )
+
+    with pytest.raises(ValueError, match="too large"):
+        await voice_handler.process_voice_message(voice)
+
+    voice_handler._transcribe_mistral.assert_not_awaited()
+
+
 async def test_transcribe_mistral_missing_optional_dependency(voice_handler):
     """Missing mistralai package returns a clear install hint."""
     with pytest.MonkeyPatch.context() as mp:
