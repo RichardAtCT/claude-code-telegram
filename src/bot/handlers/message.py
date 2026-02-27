@@ -1,6 +1,7 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
+import itertools
 from typing import Optional
 
 import structlog
@@ -27,6 +28,8 @@ from ..utils.image_extractor import (
 )
 
 logger = structlog.get_logger()
+
+_call_counter = itertools.count(1)
 
 
 async def _format_progress_update(update_obj) -> Optional[str]:
@@ -386,7 +389,7 @@ async def handle_text_message(
 
         # Run Claude command
         try:
-            call_id = id(object())  # unique per call
+            call_id = next(_call_counter)
             task = asyncio.create_task(
                 claude_integration.run_command(
                     prompt=message_text,

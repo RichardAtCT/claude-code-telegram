@@ -1226,7 +1226,9 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     audit_logger: AuditLogger = context.bot_data.get("audit_logger")
     user_id = update.effective_user.id
 
-    # Look up the active call for this thread (or _default for non-threaded chats)
+    # Snapshot thread_key and call_info synchronously before the first
+    # ``await`` so that concurrent handlers cannot mutate ``user_data``
+    # between our read and the cancel (concurrent_updates is enabled).
     tc = context.user_data.get("_thread_context")
     thread_key = tc["state_key"] if tc else "_default"
     active = context.user_data.get("_active_calls", {})

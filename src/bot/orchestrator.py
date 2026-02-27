@@ -6,6 +6,7 @@ classic mode, delegates to existing full-featured handlers.
 """
 
 import asyncio
+import itertools
 import re
 import time
 from pathlib import Path
@@ -110,6 +111,8 @@ def _tool_icon(name: str) -> str:
 
 class MessageOrchestrator:
     """Routes messages based on mode. Single entry point for all Telegram updates."""
+
+    _call_counter = itertools.count(1)
 
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
@@ -890,7 +893,7 @@ class MessageOrchestrator:
 
         success = True
         try:
-            call_id = id(object())  # unique per call
+            call_id = next(self._call_counter)
             task = asyncio.create_task(
                 claude_integration.run_command(
                     prompt=message_text,

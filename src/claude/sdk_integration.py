@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import platform
 import signal
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -149,7 +150,14 @@ class ClaudeSDKManager:
 
     @staticmethod
     def _get_descendants(pid: int) -> List[int]:
-        """Return all descendant PIDs of a process (breadth-first)."""
+        """Return all descendant PIDs of a process (breadth-first).
+
+        Uses ``/proc/<pid>/task/<pid>/children`` which is Linux-only.
+        On non-Linux platforms this gracefully returns an empty list,
+        so ``_kill_pid`` falls back to killing only the root process.
+        """
+        if platform.system() != "Linux":
+            return []
         descendants: List[int] = []
         queue = [pid]
         while queue:
