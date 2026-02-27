@@ -216,6 +216,31 @@ async def test_transcribe_mistral_network_error(voice_handler):
             await voice_handler._transcribe_mistral(b"fake-ogg")
 
 
+async def test_transcribe_mistral_error_message_does_not_echo_exception_details(
+    voice_handler,
+):
+    """Provider exception details are not surfaced in user-facing error text."""
+    leaked_secret = "sk-super-secret-token"
+
+    mock_transcriptions = MagicMock()
+    mock_transcriptions.complete_async = AsyncMock(
+        side_effect=Exception(f"Authorization: Bearer {leaked_secret}")
+    )
+    mock_audio = MagicMock()
+    mock_audio.transcriptions = mock_transcriptions
+    mock_client = MagicMock()
+    mock_client.audio = mock_audio
+    mistral_ctor = MagicMock(return_value=mock_client)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(sys.modules, "mistralai", SimpleNamespace(Mistral=mistral_ctor))
+        with pytest.raises(RuntimeError) as exc_info:
+            await voice_handler._transcribe_mistral(b"fake-ogg")
+
+    assert str(exc_info.value) == "Mistral transcription request failed."
+    assert leaked_secret not in str(exc_info.value)
+
+
 # --- OpenAI provider tests ---
 
 

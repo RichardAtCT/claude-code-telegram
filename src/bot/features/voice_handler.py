@@ -122,7 +122,11 @@ class VoiceHandler:
                 },
             )
         except Exception as exc:
-            raise RuntimeError(f"Mistral transcription request failed: {exc}") from exc
+            logger.warning(
+                "Mistral transcription request failed",
+                error_type=type(exc).__name__,
+            )
+            raise RuntimeError("Mistral transcription request failed.") from exc
 
         text = (getattr(response, "text", "") or "").strip()
         if not text:
@@ -147,7 +151,11 @@ class VoiceHandler:
                 file=("voice.ogg", voice_bytes),
             )
         except Exception as exc:
-            raise RuntimeError(f"OpenAI transcription request failed: {exc}") from exc
+            logger.warning(
+                "OpenAI transcription request failed",
+                error_type=type(exc).__name__,
+            )
+            raise RuntimeError("OpenAI transcription request failed.") from exc
 
         text = (getattr(response, "text", "") or "").strip()
         if not text:
