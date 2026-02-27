@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from claude_agent_sdk import (
     AssistantMessage,
+    CLIConnectionError,
+    CLINotFoundError,
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage,
@@ -16,10 +18,12 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent
 
+from src.claude.exceptions import ClaudeMCPError, ClaudeProcessError, ClaudeTimeoutError
 from src.claude.sdk_integration import (
     ClaudeResponse,
     ClaudeSDKManager,
     StreamUpdate,
+    _is_retryable_error,
     _make_can_use_tool_callback,
 )
 from src.config.settings import Settings
@@ -950,3 +954,263 @@ class TestClaudeMdLoading:
 
         opts = captured[0]
         assert opts.setting_sources == ["project"]
+
+
+class TestRetryLogic:
+    """Test retry logic for transient errors in execute_command."""
+
+    @pytest.fixture
+    def config(self, tmp_path):
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_retry_max_attempts=3,
+            claude_retry_base_delay=1.0,
+            claude_retry_backoff_factor=3.0,
+        )
+
+    @pytest.fixture
+    def sdk_manager(self, config):
+        return ClaudeSDKManager(config)
+
+    def test_is_retryable_timeout(self):
+        """asyncio.TimeoutError is retryable."""
+        assert _is_retryable_error(asyncio.TimeoutError()) is True
+
+    def test_is_retryable_connection_error(self):
+        """CLIConnectionError (non-MCP) is retryable."""
+        assert _is_retryable_error(CLIConnectionError("Connection reset")) is True
+
+    def test_not_retryable_mcp_connection_error(self):
+        """CLIConnectionError with MCP keyword is NOT retryable."""
+        assert _is_retryable_error(CLIConnectionError("MCP server failed")) is False
+
+    def test_not_retryable_server_connection_error(self):
+        """CLIConnectionError with 'server' keyword is NOT retryable."""
+        assert (
+            _is_retryable_error(CLIConnectionError("server connection refused"))
+            is False
+        )
+
+    def test_not_retryable_cli_not_found(self):
+        """CLINotFoundError is NOT retryable."""
+        assert _is_retryable_error(CLINotFoundError("not found")) is False
+
+    def test_not_retryable_generic_exception(self):
+        """Generic exceptions are NOT retryable."""
+        assert _is_retryable_error(RuntimeError("something")) is False
+
+    async def test_retry_on_connection_error_then_success(self, sdk_manager):
+        """1st call raises CLIConnectionError, 2nd succeeds."""
+        success_client = _mock_client(
+            _make_assistant_message("ok"),
+            _make_result_message(result="Retried OK"),
+        )
+
+        fail_client = AsyncMock()
+        fail_client.connect = AsyncMock()
+        fail_client.disconnect = AsyncMock()
+        fail_client.query = AsyncMock(
+            side_effect=CLIConnectionError("Connection reset by peer")
+        )
+
+        call_count = 0
+
+        def factory(options):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return fail_client
+            return success_client
+
+        with (
+            patch("src.claude.sdk_integration.ClaudeSDKClient", side_effect=factory),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test", working_directory=Path("/test")
+            )
+
+        assert response.content == "Retried OK"
+        assert call_count == 2
+        mock_sleep.assert_called_once_with(1.0)
+
+    async def test_retry_on_timeout_then_success(self, sdk_manager):
+        """1st call times out, 2nd succeeds."""
+        success_client = _mock_client(
+            _make_assistant_message("ok"),
+            _make_result_message(result="Timeout recovered"),
+        )
+
+        timeout_client = AsyncMock()
+        timeout_client.connect = AsyncMock()
+        timeout_client.disconnect = AsyncMock()
+        # Raise TimeoutError directly (simulates asyncio.wait_for timeout)
+        timeout_client.query = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        call_count = 0
+
+        def factory(options):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return timeout_client
+            return success_client
+
+        with (
+            patch("src.claude.sdk_integration.ClaudeSDKClient", side_effect=factory),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            response = await sdk_manager.execute_command(
+                prompt="Test", working_directory=Path("/test")
+            )
+
+        assert response.content == "Timeout recovered"
+        assert call_count == 2
+        mock_sleep.assert_called_once_with(1.0)
+
+    async def test_no_retry_on_cli_not_found(self, sdk_manager):
+        """CLINotFoundError is NOT retried — raises immediately."""
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.query = AsyncMock(side_effect=CLINotFoundError("not found"))
+
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client):
+            with pytest.raises(ClaudeProcessError, match="Claude Code not found"):
+                await sdk_manager.execute_command(
+                    prompt="Test", working_directory=Path("/test")
+                )
+
+    async def test_no_retry_on_mcp_connection_error(self, sdk_manager):
+        """MCP-related CLIConnectionError is NOT retried."""
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.query = AsyncMock(
+            side_effect=CLIConnectionError("MCP server failed to start")
+        )
+
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client):
+            with pytest.raises(ClaudeMCPError):
+                await sdk_manager.execute_command(
+                    prompt="Test", working_directory=Path("/test")
+                )
+
+    async def test_retry_exhausted_raises(self, tmp_path):
+        """All retries fail → final error propagates."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_retry_max_attempts=2,
+        )
+        manager = ClaudeSDKManager(config)
+
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.query = AsyncMock(
+            side_effect=CLIConnectionError("Connection reset by peer")
+        )
+
+        with (
+            patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            with pytest.raises(ClaudeProcessError, match="Failed to connect"):
+                await manager.execute_command(
+                    prompt="Test", working_directory=Path("/test")
+                )
+
+        # 1 original + 2 retries = 3 calls total
+        assert client.query.call_count == 3
+
+    async def test_retry_disabled_when_zero(self, tmp_path):
+        """max_attempts=0 means exactly 1 attempt (no retries)."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_retry_max_attempts=0,
+        )
+        manager = ClaudeSDKManager(config)
+
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.query = AsyncMock(
+            side_effect=CLIConnectionError("Connection reset by peer")
+        )
+
+        with (
+            patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            with pytest.raises(ClaudeProcessError):
+                await manager.execute_command(
+                    prompt="Test", working_directory=Path("/test")
+                )
+
+        assert client.query.call_count == 1
+        mock_sleep.assert_not_called()
+
+    async def test_backoff_delay_pattern(self, tmp_path):
+        """Sleep delays follow exponential backoff: 1s, 3s."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_retry_max_attempts=3,
+            claude_retry_base_delay=1.0,
+            claude_retry_backoff_factor=3.0,
+        )
+        manager = ClaudeSDKManager(config)
+
+        success_client = _mock_client(
+            _make_assistant_message("ok"),
+            _make_result_message(result="Finally"),
+        )
+
+        fail_client_1 = AsyncMock()
+        fail_client_1.connect = AsyncMock()
+        fail_client_1.disconnect = AsyncMock()
+        fail_client_1.query = AsyncMock(
+            side_effect=CLIConnectionError("Connection reset")
+        )
+
+        fail_client_2 = AsyncMock()
+        fail_client_2.connect = AsyncMock()
+        fail_client_2.disconnect = AsyncMock()
+        fail_client_2.query = AsyncMock(
+            side_effect=CLIConnectionError("Connection reset")
+        )
+
+        call_count = 0
+
+        def factory(options):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return [fail_client_1, fail_client_2][call_count - 1]
+            return success_client
+
+        with (
+            patch("src.claude.sdk_integration.ClaudeSDKClient", side_effect=factory),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            response = await manager.execute_command(
+                prompt="Test", working_directory=Path("/test")
+            )
+
+        assert response.content == "Finally"
+        assert mock_sleep.call_count == 2
+        # 1st retry: base_delay * factor^0 = 1.0
+        # 2nd retry: base_delay * factor^1 = 3.0
+        assert mock_sleep.call_args_list[0].args[0] == 1.0
+        assert mock_sleep.call_args_list[1].args[0] == 3.0

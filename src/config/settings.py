@@ -19,6 +19,9 @@ from src.utils.constants import (
     DEFAULT_CLAUDE_MAX_COST_PER_REQUEST,
     DEFAULT_CLAUDE_MAX_COST_PER_USER,
     DEFAULT_CLAUDE_MAX_TURNS,
+    DEFAULT_CLAUDE_RETRY_BACKOFF_FACTOR,
+    DEFAULT_CLAUDE_RETRY_BASE_DELAY,
+    DEFAULT_CLAUDE_RETRY_MAX_ATTEMPTS,
     DEFAULT_CLAUDE_TIMEOUT_SECONDS,
     DEFAULT_DATABASE_URL,
     DEFAULT_MAX_SESSIONS_PER_USER,
@@ -83,6 +86,21 @@ class Settings(BaseSettings):
     claude_timeout_seconds: int = Field(
         DEFAULT_CLAUDE_TIMEOUT_SECONDS, description="Claude timeout"
     )
+    claude_retry_max_attempts: int = Field(
+        DEFAULT_CLAUDE_RETRY_MAX_ATTEMPTS,
+        description="Max retry attempts for transient errors (0=disabled)",
+        ge=0,
+    )
+    claude_retry_base_delay: float = Field(
+        DEFAULT_CLAUDE_RETRY_BASE_DELAY,
+        description="Base delay in seconds for retry backoff",
+        gt=0,
+    )
+    claude_retry_backoff_factor: float = Field(
+        DEFAULT_CLAUDE_RETRY_BACKOFF_FACTOR,
+        description="Multiplier for exponential backoff",
+        ge=1.0,
+    )
     claude_max_cost_per_user: float = Field(
         DEFAULT_CLAUDE_MAX_COST_PER_USER, description="Max cost per user"
     )
@@ -136,9 +154,7 @@ class Settings(BaseSettings):
     knowledge_hint_paths: Optional[List[str]] = Field(
         None, description="Comma-separated list of knowledge file paths"
     )
-    bot_language: str = Field(
-        "en", description="Bot UI language (ja/en)"
-    )
+    bot_language: str = Field("en", description="Bot UI language (ja/en)")
 
     # Sandbox settings
     sandbox_enabled: bool = Field(
@@ -312,9 +328,7 @@ class Settings(BaseSettings):
             return None
         effort = str(v).strip().lower()
         if effort not in {"low", "medium", "high", "max"}:
-            raise ValueError(
-                "claude_effort must be one of: low, medium, high, max"
-            )
+            raise ValueError("claude_effort must be one of: low, medium, high, max")
         return effort
 
     @field_validator("claude_permission_mode", mode="before")
