@@ -178,6 +178,32 @@ async def test_classic_bot_commands(classic_settings, deps):
     assert "restart" in cmd_names
 
 
+async def test_restart_command_sends_sigterm(deps):
+    """restart_command sends SIGTERM to the current process."""
+    from unittest.mock import patch
+
+    from src.bot.handlers.command import restart_command
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"audit_logger": None}
+
+    with patch("src.bot.handlers.command.os.kill") as mock_kill:
+        await restart_command(update, context)
+
+    import os
+    import signal
+
+    mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+    # Verify confirmation message was sent
+    update.message.reply_text.assert_called_once()
+    msg = update.message.reply_text.call_args[0][0]
+    assert "Restarting" in msg
+
+
 async def test_agentic_start_no_keyboard(agentic_settings, deps):
     """Agentic /start sends brief message without inline keyboard."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)

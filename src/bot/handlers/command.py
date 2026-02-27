@@ -1228,12 +1228,16 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     Sends a confirmation message then triggers SIGTERM so systemd
     (or any process manager with restart-on-exit) brings the bot back up.
+
+    Auth: protected by the auth middleware (group -2) which raises
+    ``ApplicationHandlerStop`` for unauthenticated users before any
+    handler in group 10 runs.  No per-handler check is needed.
     """
     audit_logger: AuditLogger = context.bot_data.get("audit_logger")
     user_id = update.effective_user.id
 
     await update.message.reply_text(
-        "🔄 <b>Restarting bot…</b>\n\nBack in a few seconds.",
+        "🔄 <b>Restarting bot…</b>\n\nBack shortly.",
         parse_mode="HTML",
     )
 
