@@ -82,8 +82,8 @@ def deps():
     }
 
 
-def test_agentic_registers_5_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo commands."""
+def test_agentic_registers_6_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, status, verbose, repo, stop commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,16 +100,17 @@ def test_agentic_registers_5_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 5
+    assert len(cmd_handlers) == 6
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
     assert frozenset({"repo"}) in commands
+    assert frozenset({"stop"}) in commands
 
 
-def test_classic_registers_13_commands(classic_settings, deps):
-    """Classic mode registers all 13 commands."""
+def test_classic_registers_14_commands(classic_settings, deps):
+    """Classic mode registers all 14 commands."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -124,7 +125,7 @@ def test_classic_registers_13_commands(classic_settings, deps):
         if isinstance(call[0][0], CommandHandler)
     ]
 
-    assert len(cmd_handlers) == 13
+    assert len(cmd_handlers) == 14
 
 
 def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
@@ -155,25 +156,73 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 5 bot commands."""
+    """Agentic mode returns 6 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 5
+    assert len(commands) == 6
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo"]
+    assert cmd_names == ["start", "new", "status", "verbose", "repo", "stop"]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
-    """Classic mode returns 13 bot commands."""
+    """Classic mode returns 14 bot commands."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 13
+    assert len(commands) == 14
     cmd_names = [c.command for c in commands]
     assert "start" in cmd_names
     assert "help" in cmd_names
     assert "git" in cmd_names
+    assert "stop" in cmd_names
+
+
+async def test_stop_command_nothing_running():
+    """/stop with no active call replies 'Nothing running.' without error."""
+    from src.bot.handlers.command import stop_command
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {"audit_logger": None}
+
+    await stop_command(update, context)
+
+    update.message.reply_text.assert_called_once_with("Nothing running.")
+
+
+async def test_stop_command_thread_isolation():
+    """/stop in thread A does not cancel the task registered for thread B."""
+    from src.bot.handlers.command import stop_command
+
+    task_a = MagicMock()
+    task_a.done.return_value = False
+    task_b = MagicMock()
+    task_b.done.return_value = False
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    # Simulate being in thread A
+    context.user_data = {
+        "_thread_context": {"state_key": "thread_a"},
+        "_active_calls": {
+            "thread_a": {"task": task_a, "call_id": 1},
+            "thread_b": {"task": task_b, "call_id": 2},
+        },
+    }
+    context.bot_data = {"audit_logger": None, "claude_integration": None}
+
+    await stop_command(update, context)
+
+    task_a.cancel.assert_called_once()
+    task_b.cancel.assert_not_called()
 
 
 async def test_agentic_start_no_keyboard(agentic_settings, deps):

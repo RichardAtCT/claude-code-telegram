@@ -29,6 +29,14 @@ class ClaudeIntegration:
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
 
+    def abort(self) -> None:
+        """Abort all running Claude commands (used during shutdown)."""
+        self.sdk_manager.abort()
+
+    def abort_call(self, call_id: int) -> None:
+        """Abort a specific Claude call by its call_id."""
+        self.sdk_manager.abort_call(call_id)
+
     async def run_command(
         self,
         prompt: str,
@@ -37,6 +45,7 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
         force_new: bool = False,
+        call_id: Optional[int] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -85,6 +94,7 @@ class ClaudeIntegration:
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=on_stream,
+                    call_id=call_id,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -109,6 +119,7 @@ class ClaudeIntegration:
                         session_id=None,
                         continue_session=False,
                         stream_callback=on_stream,
+                        call_id=call_id,
                     )
                 else:
                     raise
@@ -152,6 +163,7 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
+        call_id: Optional[int] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -160,6 +172,7 @@ class ClaudeIntegration:
             session_id=session_id,
             continue_session=continue_session,
             stream_callback=stream_callback,
+            call_id=call_id,
         )
 
     async def _find_resumable_session(

@@ -6,6 +6,7 @@ classic mode, delegates to existing full-featured handlers.
 """
 
 import asyncio
+import itertools
 import re
 import time
 from pathlib import Path
@@ -110,6 +111,8 @@ def _tool_icon(name: str) -> str:
 
 class MessageOrchestrator:
     """Routes messages based on mode. Single entry point for all Telegram updates."""
+
+    _call_counter = itertools.count(1)
 
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
@@ -245,6 +248,12 @@ class MessageOrchestrator:
         }
 
     @staticmethod
+    def _thread_key(context: ContextTypes.DEFAULT_TYPE) -> str:
+        """Return a key identifying the current thread (or '_default')."""
+        tc = context.user_data.get("_thread_context")
+        return tc["state_key"] if tc else "_default"
+
+    @staticmethod
     def _is_within(path: Path, root: Path) -> bool:
         """Return True if path is within root."""
         try:
@@ -306,6 +315,7 @@ class MessageOrchestrator:
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("stop", command.stop_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -364,6 +374,7 @@ class MessageOrchestrator:
             ("export", command.export_session),
             ("actions", command.quick_actions),
             ("git", command.git_command),
+            ("stop", command.stop_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -403,6 +414,7 @@ class MessageOrchestrator:
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("stop", "Stop running Claude call"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -422,6 +434,7 @@ class MessageOrchestrator:
                 BotCommand("export", "Export current session"),
                 BotCommand("actions", "Show quick actions"),
                 BotCommand("git", "Git repository commands"),
+                BotCommand("stop", "Stop running Claude call"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -880,14 +893,32 @@ class MessageOrchestrator:
 
         success = True
         try:
-            claude_response = await claude_integration.run_command(
-                prompt=message_text,
-                working_directory=current_dir,
-                user_id=user_id,
-                session_id=session_id,
-                on_stream=on_stream,
-                force_new=force_new,
+            call_id = next(self._call_counter)
+            task = asyncio.create_task(
+                claude_integration.run_command(
+                    prompt=message_text,
+                    working_directory=current_dir,
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_stream=on_stream,
+                    force_new=force_new,
+                    call_id=call_id,
+                )
             )
+            thread_key = self._thread_key(context)
+            active = context.user_data.setdefault("_active_calls", {})
+            active[thread_key] = {"task": task, "call_id": call_id}
+            try:
+                claude_response = await task
+            except asyncio.CancelledError:
+                logger.info("Claude call cancelled by user", user_id=user_id)
+                try:
+                    await progress_msg.delete()
+                except Exception:
+                    pass
+                return
+            finally:
+                active.pop(thread_key, None)
 
             # New session created successfully — clear the one-shot flag
             if force_new:

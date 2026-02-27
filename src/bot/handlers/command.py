@@ -1221,6 +1221,42 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stop command - cancel a running Claude call immediately."""
+    audit_logger: AuditLogger = context.bot_data.get("audit_logger")
+    user_id = update.effective_user.id
+
+    # Snapshot thread_key and call_info synchronously before the first
+    # ``await`` so that concurrent handlers cannot mutate ``user_data``
+    # between our read and the cancel (concurrent_updates is enabled).
+    tc = context.user_data.get("_thread_context")
+    thread_key = tc["state_key"] if tc else "_default"
+    active = context.user_data.get("_active_calls", {})
+    call_info = active.get(thread_key, {})
+    task = call_info.get("task")
+    call_id = call_info.get("call_id")
+
+    if task and not task.done():
+        # First, abort the SDK client to terminate the CLI subprocess.
+        # task.cancel() alone only cancels the asyncio wrapper and may
+        # leave the subprocess running in the background.
+        claude_integration = context.bot_data.get("claude_integration")
+        if claude_integration and call_id is not None:
+            claude_integration.abort_call(call_id)
+        task.cancel()
+        await update.message.reply_text(
+            "⏹ <b>Stopped.</b>",
+            parse_mode="HTML",
+        )
+        logger.info("Claude call cancelled via /stop", user_id=user_id)
+        if audit_logger:
+            await audit_logger.log_command(user_id, "stop", [], True)
+    else:
+        await update.message.reply_text("Nothing running.")
+        if audit_logger:
+            await audit_logger.log_command(user_id, "stop", [], False)
+
+
 def _format_file_size(size: int) -> str:
     """Format file size in human-readable format."""
     for unit in ["B", "KB", "MB", "GB"]:

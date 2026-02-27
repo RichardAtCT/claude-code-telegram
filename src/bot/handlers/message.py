@@ -1,6 +1,7 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
+import itertools
 from typing import Optional
 
 import structlog
@@ -27,6 +28,8 @@ from ..utils.image_extractor import (
 )
 
 logger = structlog.get_logger()
+
+_call_counter = itertools.count(1)
 
 
 async def _format_progress_update(update_obj) -> Optional[str]:
@@ -386,14 +389,33 @@ async def handle_text_message(
 
         # Run Claude command
         try:
-            claude_response = await claude_integration.run_command(
-                prompt=message_text,
-                working_directory=current_dir,
-                user_id=user_id,
-                session_id=session_id,
-                on_stream=stream_handler,
-                force_new=force_new,
+            call_id = next(_call_counter)
+            task = asyncio.create_task(
+                claude_integration.run_command(
+                    prompt=message_text,
+                    working_directory=current_dir,
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_stream=stream_handler,
+                    force_new=force_new,
+                    call_id=call_id,
+                )
             )
+            tc = context.user_data.get("_thread_context")
+            thread_key = tc["state_key"] if tc else "_default"
+            active = context.user_data.setdefault("_active_calls", {})
+            active[thread_key] = {"task": task, "call_id": call_id}
+            try:
+                claude_response = await task
+            except asyncio.CancelledError:
+                logger.info("Claude call cancelled by user", user_id=user_id)
+                try:
+                    await progress_msg.delete()
+                except Exception:
+                    pass
+                return
+            finally:
+                active.pop(thread_key, None)
 
             # New session created successfully — clear the one-shot flag
             if force_new:

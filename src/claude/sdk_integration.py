@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+import platform
+import signal
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -136,6 +138,7 @@ class ClaudeSDKManager:
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self._active_pids: Dict[int, int] = {}  # call_id -> subprocess PID
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -145,6 +148,97 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
+    @staticmethod
+    def _get_descendants(pid: int) -> List[int]:
+        """Return all descendant PIDs of a process (breadth-first).
+
+        Uses ``/proc/<pid>/task/<pid>/children`` which is Linux-only.
+        On non-Linux platforms this gracefully returns an empty list,
+        so ``_kill_pid`` falls back to killing only the root process.
+        """
+        if platform.system() != "Linux":
+            return []
+        descendants: List[int] = []
+        queue = [pid]
+        while queue:
+            parent = queue.pop(0)
+            try:
+                with open(f"/proc/{parent}/task/{parent}/children") as f:
+                    children = [int(p) for p in f.read().split() if p]
+            except (FileNotFoundError, ProcessLookupError, ValueError):
+                children = []
+            descendants.extend(children)
+            queue.extend(children)
+        return descendants
+
+    def _kill_pid(self, pid: int) -> None:
+        """Kill a process tree: the target PID and all its descendants.
+
+        Uses killpg when the process is its own group leader. Otherwise
+        kills each process in the tree individually to avoid killing the
+        bot's own process group.
+        """
+        try:
+            try:
+                pgid = os.getpgid(pid)
+                if pgid == pid:
+                    # Own group leader — killpg is safe and covers all children
+                    os.killpg(pgid, signal.SIGTERM)
+                    logger.info("Sent SIGTERM to Claude CLI process group", pid=pid)
+                else:
+                    # Shares bot's group — kill the tree individually
+                    descendants = self._get_descendants(pid)
+                    os.kill(pid, signal.SIGTERM)
+                    for child in descendants:
+                        try:
+                            os.kill(child, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                    logger.info(
+                        "Sent SIGTERM to Claude CLI process tree",
+                        pid=pid,
+                        descendants=len(descendants),
+                    )
+            except (ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGTERM)
+                logger.info("Sent SIGTERM to Claude CLI process", pid=pid)
+
+            import threading
+
+            def _ensure_dead(target_pid: int) -> None:
+                import time
+
+                time.sleep(2)
+                # Re-collect survivors (some children may have spawned late)
+                all_pids = [target_pid] + self._get_descendants(target_pid)
+                for p in all_pids:
+                    try:
+                        os.kill(p, 0)
+                        os.kill(p, signal.SIGKILL)
+                        logger.warning("Sent SIGKILL to surviving process", pid=p)
+                    except ProcessLookupError:
+                        pass
+
+            threading.Thread(target=_ensure_dead, args=(pid,), daemon=True).start()
+
+        except ProcessLookupError:
+            logger.debug("Claude CLI process already exited", pid=pid)
+        except Exception as e:
+            logger.warning("Failed to kill Claude CLI process", pid=pid, error=str(e))
+
+    def abort(self) -> None:
+        """Abort all running Claude commands (used during shutdown)."""
+        pids = list(self._active_pids.values())
+        self._active_pids.clear()
+        for pid in pids:
+            self._kill_pid(pid)
+
+    def abort_call(self, call_id: int) -> None:
+        """Abort a specific Claude call by its call_id."""
+        pid = self._active_pids.pop(call_id, None)
+        if pid is not None:
+            self._kill_pid(pid)
+
     async def execute_command(
         self,
         prompt: str,
@@ -152,6 +246,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        call_id: Optional[int] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -246,6 +341,12 @@ class ClaudeSDKManager:
                 client = ClaudeSDKClient(options)
                 try:
                     await client.connect()
+                    # Store the subprocess PID so abort() can kill it
+                    # from any async context via os.kill().
+                    transport = getattr(client, "_transport", None)
+                    proc = getattr(transport, "_process", None)
+                    if proc is not None and call_id is not None:
+                        self._active_pids[call_id] = proc.pid
                     await client.query(prompt)
 
                     # Iterate over raw messages and parse them ourselves
@@ -283,6 +384,8 @@ class ClaudeSDKManager:
                                     error_type=type(callback_error).__name__,
                                 )
                 finally:
+                    if call_id is not None:
+                        self._active_pids.pop(call_id, None)
                     await client.disconnect()
 
             # Execute with timeout
