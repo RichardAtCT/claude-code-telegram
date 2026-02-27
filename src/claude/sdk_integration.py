@@ -200,7 +200,7 @@ class ClaudeSDKManager:
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,
                 disallowed_tools=sdk_disallowed_tools,
-                cli_path=self.config.claude_cli_path,
+                cli_path=self.config.claude_cli_path or None,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
                     "autoAllowBashIfSandboxed": True,

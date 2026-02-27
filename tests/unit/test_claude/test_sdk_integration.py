@@ -581,6 +581,35 @@ class TestClaudeSandboxSettings:
         assert captured_options[0].allowed_tools == ["Read", "Write"]
         assert captured_options[0].disallowed_tools == ["WebFetch"]
 
+    async def test_empty_cli_path_coerced_to_none(self, tmp_path):
+        """Empty CLAUDE_CLI_PATH ('') is coerced to None so SDK auto-discovers the CLI."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_cli_path="",
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].cli_path is None
+
     async def test_sandbox_disabled_when_config_false(self, tmp_path):
         """Test sandbox is disabled when sandbox_enabled=False."""
         config = Settings(
