@@ -1061,6 +1061,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         session_id = context.user_data.get("claude_session_id")
 
         try:
+            # Keep classic mode aligned with handle_photo: single progress message,
+            # no streaming callback or typing heartbeat.
             claude_response = await claude_integration.run_command(
                 prompt=processed_voice.prompt,
                 working_directory=current_dir,

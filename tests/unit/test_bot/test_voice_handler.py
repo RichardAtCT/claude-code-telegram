@@ -216,6 +216,27 @@ async def test_transcribe_mistral_network_error(voice_handler):
             await voice_handler._transcribe_mistral(b"fake-ogg")
 
 
+async def test_transcribe_mistral_reuses_cached_client(voice_handler):
+    """Mistral SDK client is created once and reused across calls."""
+    mock_response = MagicMock()
+    mock_response.text = "ok"
+    mock_transcriptions = MagicMock()
+    mock_transcriptions.complete_async = AsyncMock(return_value=mock_response)
+    mock_audio = MagicMock()
+    mock_audio.transcriptions = mock_transcriptions
+    mock_client = MagicMock()
+    mock_client.audio = mock_audio
+    mistral_ctor = MagicMock(return_value=mock_client)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(sys.modules, "mistralai", SimpleNamespace(Mistral=mistral_ctor))
+        await voice_handler._transcribe_mistral(b"a")
+        await voice_handler._transcribe_mistral(b"b")
+
+    mistral_ctor.assert_called_once_with(api_key="test-api-key")
+    assert mock_transcriptions.complete_async.await_count == 2
+
+
 async def test_transcribe_mistral_error_message_does_not_echo_exception_details(
     voice_handler,
 ):
@@ -310,3 +331,24 @@ async def test_transcribe_openai_empty_response(openai_voice_handler):
         mp.setitem(sys.modules, "openai", SimpleNamespace(AsyncOpenAI=openai_ctor))
         with pytest.raises(ValueError, match="empty response"):
             await openai_voice_handler._transcribe_openai(b"fake-ogg")
+
+
+async def test_transcribe_openai_reuses_cached_client(openai_voice_handler):
+    """OpenAI SDK client is created once and reused across calls."""
+    mock_response = MagicMock()
+    mock_response.text = "ok"
+    mock_transcriptions = MagicMock()
+    mock_transcriptions.create = AsyncMock(return_value=mock_response)
+    mock_audio = MagicMock()
+    mock_audio.transcriptions = mock_transcriptions
+    mock_client = MagicMock()
+    mock_client.audio = mock_audio
+    openai_ctor = MagicMock(return_value=mock_client)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setitem(sys.modules, "openai", SimpleNamespace(AsyncOpenAI=openai_ctor))
+        await openai_voice_handler._transcribe_openai(b"a")
+        await openai_voice_handler._transcribe_openai(b"b")
+
+    openai_ctor.assert_called_once_with(api_key="test-openai-key")
+    assert mock_transcriptions.create.await_count == 2

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from telegram import Voice
@@ -26,6 +26,8 @@ class VoiceHandler:
 
     def __init__(self, config: Settings):
         self.config = config
+        self._mistral_client: Optional[Any] = None
+        self._openai_client: Optional[Any] = None
 
     def _ensure_allowed_file_size(self, file_size: Optional[int]) -> None:
         """Reject files that exceed the configured max size."""
@@ -103,16 +105,7 @@ class VoiceHandler:
 
     async def _transcribe_mistral(self, voice_bytes: bytes) -> str:
         """Transcribe audio using the Mistral API (Voxtral)."""
-        try:
-            from mistralai import Mistral
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "Optional dependency 'mistralai' is missing for voice transcription. "
-                "Install voice extras: "
-                'pip install "claude-code-telegram[voice]"'
-            ) from exc
-
-        client = Mistral(api_key=self.config.mistral_api_key_str)
+        client = self._get_mistral_client()
         try:
             response = await client.audio.transcriptions.complete_async(
                 model=self.config.resolved_voice_model,
@@ -133,18 +126,30 @@ class VoiceHandler:
             raise ValueError("Mistral transcription returned an empty response.")
         return text
 
-    async def _transcribe_openai(self, voice_bytes: bytes) -> str:
-        """Transcribe audio using the OpenAI Whisper API."""
+    def _get_mistral_client(self) -> Any:
+        """Create and cache a Mistral client on first use."""
+        if self._mistral_client is not None:
+            return self._mistral_client
+
         try:
-            from openai import AsyncOpenAI
+            from mistralai import Mistral
         except ModuleNotFoundError as exc:
             raise RuntimeError(
-                "Optional dependency 'openai' is missing for voice transcription. "
+                "Optional dependency 'mistralai' is missing for voice transcription. "
                 "Install voice extras: "
                 'pip install "claude-code-telegram[voice]"'
             ) from exc
 
-        client = AsyncOpenAI(api_key=self.config.openai_api_key_str)
+        api_key = self.config.mistral_api_key_str
+        if not api_key:
+            raise RuntimeError("Mistral API key is not configured.")
+
+        self._mistral_client = Mistral(api_key=api_key)
+        return self._mistral_client
+
+    async def _transcribe_openai(self, voice_bytes: bytes) -> str:
+        """Transcribe audio using the OpenAI Whisper API."""
+        client = self._get_openai_client()
         try:
             response = await client.audio.transcriptions.create(
                 model=self.config.resolved_voice_model,
@@ -161,3 +166,24 @@ class VoiceHandler:
         if not text:
             raise ValueError("OpenAI transcription returned an empty response.")
         return text
+
+    def _get_openai_client(self) -> Any:
+        """Create and cache an OpenAI client on first use."""
+        if self._openai_client is not None:
+            return self._openai_client
+
+        try:
+            from openai import AsyncOpenAI
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Optional dependency 'openai' is missing for voice transcription. "
+                "Install voice extras: "
+                'pip install "claude-code-telegram[voice]"'
+            ) from exc
+
+        api_key = self.config.openai_api_key_str
+        if not api_key:
+            raise RuntimeError("OpenAI API key is not configured.")
+
+        self._openai_client = AsyncOpenAI(api_key=api_key)
+        return self._openai_client
