@@ -269,18 +269,21 @@ class ClaudeCodeBot:
             RateLimitExceeded,
             SecurityError,
         )
+        from .i18n import t
+
+        lang = self.settings.bot_language if self.settings else "en"
 
         error_messages = {
-            AuthenticationError: "🔒 Authentication required. Please contact the administrator.",
-            SecurityError: "🛡️ Security violation detected. This incident has been logged.",
-            RateLimitExceeded: "⏱️ Rate limit exceeded. Please wait before sending more messages.",
-            ConfigurationError: "⚙️ Configuration error. Please contact the administrator.",
-            asyncio.TimeoutError: "⏰ Operation timed out. Please try again with a simpler request.",
+            AuthenticationError: t("error_auth", lang),
+            SecurityError: t("error_security", lang),
+            RateLimitExceeded: t("error_rate_limit", lang),
+            ConfigurationError: t("error_config", lang),
+            asyncio.TimeoutError: t("error_timeout", lang),
         }
 
         error_type = type(error)
         user_message = error_messages.get(
-            error_type, "❌ An unexpected error occurred. Please try again."
+            error_type, t("error_unexpected", lang)
         )
 
         # Try to notify user

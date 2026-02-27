@@ -31,6 +31,7 @@ from telegram.ext import (
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
+from .i18n import t, verbose_label
 from .utils.html_format import escape_html
 from .utils.image_extractor import (
     ImageAttachment,
@@ -114,6 +115,10 @@ class MessageOrchestrator:
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
         self.deps = deps
+
+    def _lang(self) -> str:
+        """Return configured bot language."""
+        return self.settings.bot_language
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
         """Wrap handler to inject dependencies into context.bot_data."""
@@ -397,15 +402,16 @@ class MessageOrchestrator:
     async def get_bot_commands(self) -> list:  # type: ignore[type-arg]
         """Return bot commands appropriate for current mode."""
         if self.settings.agentic_mode:
+            lang = self._lang()
             commands = [
-                BotCommand("start", "Start the bot"),
-                BotCommand("new", "Start a fresh session"),
-                BotCommand("status", "Show session status"),
-                BotCommand("verbose", "Set output verbosity (0/1/2)"),
-                BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("start", t("cmd_start", lang)),
+                BotCommand("new", t("cmd_new", lang)),
+                BotCommand("status", t("cmd_status", lang)),
+                BotCommand("verbose", t("cmd_verbose", lang)),
+                BotCommand("repo", t("cmd_repo", lang)),
             ]
             if self.settings.enable_project_threads:
-                commands.append(BotCommand("sync_threads", "Sync project topics"))
+                commands.append(BotCommand("sync_threads", t("cmd_sync_threads", lang)))
             return commands
         else:
             commands = [
@@ -474,12 +480,11 @@ class MessageOrchestrator:
         dir_display = f"<code>{current_dir}/</code>"
 
         safe_name = escape_html(user.first_name)
+        welcome_text = t(
+            "welcome", self._lang(), name=safe_name, dir=dir_display
+        )
         await update.message.reply_text(
-            f"Hi {safe_name}! I'm your AI coding assistant.\n"
-            f"Just tell me what you need — I can read, write, and run code.\n\n"
-            f"Working in: {dir_display}\n"
-            f"Commands: /new (reset) · /status"
-            f"{sync_line}",
+            f"{welcome_text}{sync_line}",
             parse_mode="HTML",
         )
 
@@ -491,7 +496,7 @@ class MessageOrchestrator:
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
 
-        await update.message.reply_text("Session reset. What's next?")
+        await update.message.reply_text(t("session_reset", self._lang()))
 
     async def agentic_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -518,7 +523,7 @@ class MessageOrchestrator:
                 pass
 
         await update.message.reply_text(
-            f"📂 {dir_display} · Session: {session_status}{cost_str}"
+            t("status", self._lang(), dir=dir_display, session=session_status, cost=cost_str)
         )
 
     def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -533,15 +538,11 @@ class MessageOrchestrator:
     ) -> None:
         """Set output verbosity: /verbose [0|1|2]."""
         args = update.message.text.split()[1:] if update.message.text else []
+        lang = self._lang()
         if not args:
             current = self._get_verbose_level(context)
-            labels = {0: "quiet", 1: "normal", 2: "detailed"}
             await update.message.reply_text(
-                f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
-                "Usage: <code>/verbose 0|1|2</code>\n"
-                "  0 = quiet (final response only)\n"
-                "  1 = normal (tools + reasoning)\n"
-                "  2 = detailed (tools with inputs + reasoning)",
+                t("verbose_current", lang, level=current, label=verbose_label(current, lang)),
                 parse_mode="HTML",
             )
             return
@@ -551,15 +552,12 @@ class MessageOrchestrator:
             if level not in (0, 1, 2):
                 raise ValueError
         except ValueError:
-            await update.message.reply_text(
-                "Please use: /verbose 0, /verbose 1, or /verbose 2"
-            )
+            await update.message.reply_text(t("verbose_invalid", lang))
             return
 
         context.user_data["verbose_level"] = level
-        labels = {0: "quiet", 1: "normal", 2: "detailed"}
         await update.message.reply_text(
-            f"Verbosity set to <b>{level}</b> ({labels[level]})",
+            t("verbose_set", lang, level=level, label=verbose_label(level, lang)),
             parse_mode="HTML",
         )
 
@@ -570,11 +568,12 @@ class MessageOrchestrator:
         start_time: float,
     ) -> str:
         """Build the progress message text based on activity so far."""
+        working_text = t("working", self._lang())
         if not activity_log:
-            return "Working..."
+            return working_text
 
         elapsed = time.time() - start_time
-        lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
+        lines: List[str] = [f"{working_text} ({elapsed:.0f}s)\n"]
 
         for entry in activity_log[-15:]:  # Show last 15 entries max
             kind = entry.get("kind", "tool")
@@ -709,11 +708,13 @@ class MessageOrchestrator:
             # Capture assistant text (reasoning / commentary)
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
-                if text and verbose_level >= 1:
-                    # Collapse to first meaningful line, cap length
-                    first_line = text.split("\n", 1)[0].strip()
-                    if first_line:
-                        tool_log.append({"kind": "text", "detail": first_line[:120]})
+                # Filter out raw ThinkingBlock repr that may leak through
+                if text and not text.startswith("[ThinkingBlock("):
+                    if verbose_level >= 1:
+                        # Collapse to first meaningful line, cap length
+                        first_line = text.split("\n", 1)[0].strip()
+                        if first_line:
+                            tool_log.append({"kind": "text", "detail": first_line[:120]})
 
             # Throttle progress message edits to avoid Telegram rate limits
             if verbose_level >= 1:
@@ -843,14 +844,13 @@ class MessageOrchestrator:
         chat = update.message.chat
         await chat.send_action("typing")
 
+        lang = self._lang()
         verbose_level = self._get_verbose_level(context)
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text(t("working", lang))
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
-            )
+            await progress_msg.edit_text(t("claude_unavailable", lang))
             return
 
         current_dir = context.user_data.get(
@@ -1034,25 +1034,27 @@ class MessageOrchestrator:
             filename=document.file_name,
         )
 
+        lang = self._lang()
+
         # Security validation
         security_validator = context.bot_data.get("security_validator")
         if security_validator:
             valid, error = security_validator.validate_filename(document.file_name)
             if not valid:
-                await update.message.reply_text(f"File rejected: {error}")
+                await update.message.reply_text(t("file_rejected", lang, error=error))
                 return
 
         # Size check
         max_size = 10 * 1024 * 1024
         if document.file_size > max_size:
             await update.message.reply_text(
-                f"File too large ({document.file_size / 1024 / 1024:.1f}MB). Max: 10MB."
+                t("file_too_large", lang, size=f"{document.file_size / 1024 / 1024:.1f}")
             )
             return
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text(t("working", lang))
 
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
@@ -1083,17 +1085,13 @@ class MessageOrchestrator:
                     f"```\n{content}\n```"
                 )
             except UnicodeDecodeError:
-                await progress_msg.edit_text(
-                    "Unsupported file format. Must be text-based (UTF-8)."
-                )
+                await progress_msg.edit_text(t("unsupported_format", lang))
                 return
 
         # Process with Claude
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
-            )
+            await progress_msg.edit_text(t("claude_unavailable", lang))
             return
 
         current_dir = context.user_data.get(
@@ -1209,13 +1207,14 @@ class MessageOrchestrator:
         features = context.bot_data.get("features")
         image_handler = features.get_image_handler() if features else None
 
+        lang = self._lang()
         if not image_handler:
-            await update.message.reply_text("Photo processing is not available.")
+            await update.message.reply_text(t("photo_unavailable", lang))
             return
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text(t("working", lang))
 
         try:
             photo = update.message.photo[-1]
@@ -1225,9 +1224,7 @@ class MessageOrchestrator:
 
             claude_integration = context.bot_data.get("claude_integration")
             if not claude_integration:
-                await progress_msg.edit_text(
-                    "Claude integration not available. Check configuration."
-                )
+                await progress_msg.edit_text(t("claude_unavailable", lang))
                 return
 
             current_dir = context.user_data.get(
@@ -1341,6 +1338,7 @@ class MessageOrchestrator:
         args = update.message.text.split()[1:] if update.message.text else []
         base = self.settings.approved_directory
         current_dir = context.user_data.get("current_directory", base)
+        lang = self._lang()
 
         if args:
             # Switch to named repo
@@ -1348,7 +1346,7 @@ class MessageOrchestrator:
             target_path = base / target_name
             if not target_path.is_dir():
                 await update.message.reply_text(
-                    f"Directory not found: <code>{escape_html(target_name)}</code>",
+                    t("repo_not_found", lang, name=escape_html(target_name)),
                     parse_mode="HTML",
                 )
                 return
@@ -1371,8 +1369,7 @@ class MessageOrchestrator:
             session_badge = " · session resumed" if session_id else ""
 
             await update.message.reply_text(
-                f"Switched to <code>{escape_html(target_name)}/</code>"
-                f"{git_badge}{session_badge}",
+                t("repo_switched", lang, name=escape_html(target_name), badges=f"{git_badge}{session_badge}"),
                 parse_mode="HTML",
             )
             return
@@ -1388,13 +1385,12 @@ class MessageOrchestrator:
                 key=lambda d: d.name,
             )
         except OSError as e:
-            await update.message.reply_text(f"Error reading workspace: {e}")
+            await update.message.reply_text(t("repo_workspace_error", lang, error=str(e)))
             return
 
         if not entries:
             await update.message.reply_text(
-                f"No repos in <code>{escape_html(str(base))}</code>.\n"
-                'Clone one by telling me, e.g. <i>"clone org/repo"</i>.',
+                t("repo_empty", lang, path=escape_html(str(base))),
                 parse_mode="HTML",
             )
             return
@@ -1421,7 +1417,7 @@ class MessageOrchestrator:
         reply_markup = InlineKeyboardMarkup(keyboard_rows)
 
         await update.message.reply_text(
-            "<b>Repos</b>\n\n" + "\n".join(lines),
+            t("repo_list_header", lang) + "\n\n" + "\n".join(lines),
             parse_mode="HTML",
             reply_markup=reply_markup,
         )

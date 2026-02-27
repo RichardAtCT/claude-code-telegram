@@ -40,6 +40,24 @@ from .monitor import _is_claude_internal_path, check_bash_directory_boundary
 logger = structlog.get_logger()
 
 
+def _is_retryable_error(error: Exception) -> bool:
+    """Determine if an error is transient and worth retrying.
+
+    Retryable: asyncio.TimeoutError, CLIConnectionError (non-MCP).
+    Not retryable: CLINotFoundError, MCP-related CLIConnectionError, everything else.
+    """
+    if isinstance(error, asyncio.TimeoutError):
+        return True
+    if isinstance(error, CLINotFoundError):
+        return False
+    if isinstance(error, CLIConnectionError):
+        msg = str(error).lower()
+        if "mcp" in msg or "server" in msg:
+            return False
+        return True
+    return False
+
+
 @dataclass
 class ClaudeResponse:
     """Response from Claude Code SDK."""
@@ -136,6 +154,7 @@ class ClaudeSDKManager:
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self._persona_prompt = self._load_persona_prompt()
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -144,6 +163,29 @@ class ClaudeSDKManager:
             logger.info("Using provided API key for Claude SDK authentication")
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
+
+    def _load_persona_prompt(self) -> Optional[str]:
+        """Load persona prompt from file, injecting knowledge paths."""
+        if not self.config.persona_prompt_path:
+            return None
+        path = self.config.persona_prompt_path
+        if not path.exists():
+            logger.warning("Persona prompt file not found", path=str(path))
+            return None
+        content = path.read_text(encoding="utf-8")
+        # Build knowledge paths section
+        knowledge_section = ""
+        if self.config.knowledge_hint_paths:
+            knowledge_section = "\n".join(
+                f"- {p}" for p in self.config.knowledge_hint_paths
+            )
+        content = content.replace("{knowledge_paths_section}", knowledge_section)
+        logger.info(
+            "Persona prompt loaded",
+            path=str(path),
+            length=len(content),
+        )
+        return content
 
     async def execute_command(
         self,
@@ -171,14 +213,19 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
-            # Build system prompt, loading CLAUDE.md from working directory if present
-            base_prompt = (
+            # Build system prompt: persona (if loaded) + directory constraint + CLAUDE.md
+            dir_constraint = (
                 f"All file operations must stay within {working_directory}. "
                 "Use relative paths."
             )
+            if self._persona_prompt:
+                system_prompt = f"{self._persona_prompt}\n\n---\n\n{dir_constraint}"
+            else:
+                system_prompt = dir_constraint
+
             claude_md_path = Path(working_directory) / "CLAUDE.md"
             if claude_md_path.exists():
-                base_prompt += "\n\n" + claude_md_path.read_text(encoding="utf-8")
+                system_prompt += "\n\n" + claude_md_path.read_text(encoding="utf-8")
                 logger.info(
                     "Loaded CLAUDE.md into system prompt",
                     path=str(claude_md_path),
@@ -197,8 +244,11 @@ class ClaudeSDKManager:
                     "autoAllowBashIfSandboxed": True,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
-                system_prompt=base_prompt,
+                system_prompt=system_prompt,
                 setting_sources=["project"],
+                model=self.config.claude_model or None,
+                effort=self.config.claude_effort,
+                permission_mode=self.config.claude_permission_mode,
                 stderr=_stderr_callback,
             )
 
@@ -226,146 +276,169 @@ class ClaudeSDKManager:
                     session_id=session_id,
                 )
 
-            # Collect messages via ClaudeSDKClient
-            messages: List[Message] = []
+            # Retry loop for transient errors
+            max_attempts = self.config.claude_retry_max_attempts + 1
+            base_delay = self.config.claude_retry_base_delay
+            backoff_factor = self.config.claude_retry_backoff_factor
 
-            async def _run_client() -> None:
-                # Use connect(None) + query(prompt) pattern because
-                # can_use_tool requires the prompt as AsyncIterable, not
-                # a plain string. connect(None) uses an empty async
-                # iterable internally, satisfying the requirement.
-                client = ClaudeSDKClient(options)
+            for attempt in range(1, max_attempts + 1):
                 try:
-                    await client.connect()
-                    await client.query(prompt)
+                    # Reset per-attempt state
+                    stderr_lines.clear()
+                    messages: List[Message] = []
 
-                    # Iterate over raw messages and parse them ourselves
-                    # so that MessageParseError (e.g. from rate_limit_event)
-                    # doesn't kill the underlying async generator. When
-                    # parse_message raises inside the SDK's receive_messages()
-                    # generator, Python terminates that generator permanently,
-                    # causing us to lose all subsequent messages including
-                    # the ResultMessage.
-                    async for raw_data in client._query.receive_messages():
+                    async def _run_client() -> None:
+                        client = ClaudeSDKClient(options)
                         try:
-                            message = parse_message(raw_data)
-                        except MessageParseError as e:
-                            logger.debug(
-                                "Skipping unparseable message",
-                                error=str(e),
-                            )
-                            continue
+                            await client.connect()
+                            await client.query(prompt)
 
-                        messages.append(message)
+                            async for raw_data in client._query.receive_messages():
+                                try:
+                                    message = parse_message(raw_data)
+                                except MessageParseError as e:
+                                    logger.debug(
+                                        "Skipping unparseable message",
+                                        error=str(e),
+                                    )
+                                    continue
 
+                                messages.append(message)
+
+                                if isinstance(message, ResultMessage):
+                                    break
+
+                                if stream_callback:
+                                    try:
+                                        await self._handle_stream_message(
+                                            message, stream_callback
+                                        )
+                                    except Exception as callback_error:
+                                        logger.warning(
+                                            "Stream callback failed",
+                                            error=str(callback_error),
+                                            error_type=type(callback_error).__name__,
+                                        )
+                        finally:
+                            await client.disconnect()
+
+                    await asyncio.wait_for(
+                        _run_client(),
+                        timeout=self.config.claude_timeout_seconds,
+                    )
+
+                    # Extract cost, tools, and session_id from result message
+                    cost = 0.0
+                    tools_used: List[Dict[str, Any]] = []
+                    claude_session_id = None
+                    result_content = None
+                    for message in messages:
                         if isinstance(message, ResultMessage):
+                            cost = getattr(message, "total_cost_usd", 0.0) or 0.0
+                            claude_session_id = getattr(message, "session_id", None)
+                            result_content = getattr(message, "result", None)
+                            current_time = asyncio.get_event_loop().time()
+                            for msg in messages:
+                                if isinstance(msg, AssistantMessage):
+                                    msg_content = getattr(msg, "content", [])
+                                    if msg_content and isinstance(msg_content, list):
+                                        for block in msg_content:
+                                            if isinstance(block, ToolUseBlock):
+                                                tools_used.append(
+                                                    {
+                                                        "name": getattr(
+                                                            block,
+                                                            "name",
+                                                            "unknown",
+                                                        ),
+                                                        "timestamp": current_time,
+                                                        "input": getattr(
+                                                            block, "input", {}
+                                                        ),
+                                                    }
+                                                )
                             break
 
-                        # Handle streaming callback
-                        if stream_callback:
-                            try:
-                                await self._handle_stream_message(
-                                    message, stream_callback
+                    # Fallback: extract session_id from StreamEvent messages
+                    if not claude_session_id:
+                        for message in messages:
+                            msg_session_id = getattr(message, "session_id", None)
+                            if msg_session_id and not isinstance(
+                                message, ResultMessage
+                            ):
+                                claude_session_id = msg_session_id
+                                logger.info(
+                                    "Got session ID from stream event (fallback)",
+                                    session_id=claude_session_id,
                                 )
-                            except Exception as callback_error:
-                                logger.warning(
-                                    "Stream callback failed",
-                                    error=str(callback_error),
-                                    error_type=type(callback_error).__name__,
-                                )
-                finally:
-                    await client.disconnect()
+                                break
 
-            # Execute with timeout
-            await asyncio.wait_for(
-                _run_client(),
-                timeout=self.config.claude_timeout_seconds,
-            )
+                    # Calculate duration (includes all retry time)
+                    duration_ms = int(
+                        (asyncio.get_event_loop().time() - start_time) * 1000
+                    )
 
-            # Extract cost, tools, and session_id from result message
-            cost = 0.0
-            tools_used: List[Dict[str, Any]] = []
-            claude_session_id = None
-            result_content = None
-            for message in messages:
-                if isinstance(message, ResultMessage):
-                    cost = getattr(message, "total_cost_usd", 0.0) or 0.0
-                    claude_session_id = getattr(message, "session_id", None)
-                    result_content = getattr(message, "result", None)
-                    current_time = asyncio.get_event_loop().time()
-                    for msg in messages:
-                        if isinstance(msg, AssistantMessage):
-                            msg_content = getattr(msg, "content", [])
-                            if msg_content and isinstance(msg_content, list):
-                                for block in msg_content:
-                                    if isinstance(block, ToolUseBlock):
-                                        tools_used.append(
-                                            {
-                                                "name": getattr(
-                                                    block, "name", "unknown"
-                                                ),
-                                                "timestamp": current_time,
-                                                "input": getattr(block, "input", {}),
-                                            }
-                                        )
-                    break
+                    final_session_id = claude_session_id or session_id or ""
 
-            # Fallback: extract session_id from StreamEvent messages if
-            # ResultMessage didn't provide one (can happen with some CLI versions)
-            if not claude_session_id:
-                for message in messages:
-                    msg_session_id = getattr(message, "session_id", None)
-                    if msg_session_id and not isinstance(message, ResultMessage):
-                        claude_session_id = msg_session_id
+                    if claude_session_id and claude_session_id != session_id:
                         logger.info(
-                            "Got session ID from stream event (fallback)",
-                            session_id=claude_session_id,
+                            "Got session ID from Claude",
+                            claude_session_id=claude_session_id,
+                            previous_session_id=session_id,
                         )
-                        break
 
-            # Calculate duration
-            duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                    if result_content is not None:
+                        content = result_content
+                    else:
+                        content_parts = []
+                        for msg in messages:
+                            if isinstance(msg, AssistantMessage):
+                                msg_content = getattr(msg, "content", [])
+                                if msg_content and isinstance(msg_content, list):
+                                    for block in msg_content:
+                                        if hasattr(block, "text"):
+                                            content_parts.append(block.text)
+                                elif msg_content:
+                                    content_parts.append(str(msg_content))
+                        content = "\n".join(content_parts)
 
-            # Use Claude's session_id if available, otherwise fall back
-            final_session_id = claude_session_id or session_id or ""
+                    return ClaudeResponse(
+                        content=content,
+                        session_id=final_session_id,
+                        cost=cost,
+                        duration_ms=duration_ms,
+                        num_turns=len(
+                            [
+                                m
+                                for m in messages
+                                if isinstance(m, (UserMessage, AssistantMessage))
+                            ]
+                        ),
+                        tools_used=tools_used,
+                    )
 
-            if claude_session_id and claude_session_id != session_id:
-                logger.info(
-                    "Got session ID from Claude",
-                    claude_session_id=claude_session_id,
-                    previous_session_id=session_id,
-                )
+                except (asyncio.TimeoutError, CLIConnectionError) as e:
+                    if not _is_retryable_error(e):
+                        raise  # Non-retryable → fall through to outer except
+                    if attempt < max_attempts:
+                        delay = min(
+                            base_delay * (backoff_factor ** (attempt - 1)),
+                            30.0,
+                        )
+                        logger.warning(
+                            "Transient error, retrying",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            attempt=attempt,
+                            max_attempts=max_attempts,
+                            retry_delay=delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise  # Exhausted retries → outer except chain
 
-            # Use ResultMessage.result if available, fall back to message extraction
-            if result_content is not None:
-                content = result_content
-            else:
-                content_parts = []
-                for msg in messages:
-                    if isinstance(msg, AssistantMessage):
-                        msg_content = getattr(msg, "content", [])
-                        if msg_content and isinstance(msg_content, list):
-                            for block in msg_content:
-                                if hasattr(block, "text"):
-                                    content_parts.append(block.text)
-                        elif msg_content:
-                            content_parts.append(str(msg_content))
-                content = "\n".join(content_parts)
-
-            return ClaudeResponse(
-                content=content,
-                session_id=final_session_id,
-                cost=cost,
-                duration_ms=duration_ms,
-                num_turns=len(
-                    [
-                        m
-                        for m in messages
-                        if isinstance(m, (UserMessage, AssistantMessage))
-                    ]
-                ),
-                tools_used=tools_used,
-            )
+            # Unreachable: loop always returns or raises
+            raise ClaudeProcessError("Retry loop completed without result")
 
         except asyncio.TimeoutError:
             logger.error(
@@ -466,6 +539,7 @@ class ClaudeSDKManager:
                             )
                         elif hasattr(block, "text"):
                             text_parts.append(block.text)
+                        # Skip ThinkingBlock silently (internal reasoning)
 
                 if text_parts or tool_calls:
                     update = StreamUpdate(
@@ -475,12 +549,17 @@ class ClaudeSDKManager:
                     )
                     await stream_callback(update)
                 elif content:
-                    # Fallback for non-list content
-                    update = StreamUpdate(
-                        type="assistant",
-                        content=str(content),
+                    # Fallback for non-list content (skip if all ThinkingBlocks)
+                    has_displayable = any(
+                        hasattr(b, "text") or isinstance(b, ToolUseBlock)
+                        for b in (content if isinstance(content, list) else [])
                     )
-                    await stream_callback(update)
+                    if not isinstance(content, list) or has_displayable:
+                        update = StreamUpdate(
+                            type="assistant",
+                            content=str(content),
+                        )
+                        await stream_callback(update)
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
