@@ -132,6 +132,14 @@ ENABLE_FILE_UPLOADS=true
 
 # Enable quick action buttons (classic mode)
 ENABLE_QUICK_ACTIONS=true
+
+# Enable voice message transcription
+ENABLE_VOICE_MESSAGES=true
+VOICE_PROVIDER=mistral              # 'mistral' (default) or 'openai'
+MISTRAL_API_KEY=                     # Required when VOICE_PROVIDER=mistral
+OPENAI_API_KEY=                      # Required when VOICE_PROVIDER=openai
+VOICE_TRANSCRIPTION_MODEL=           # Default: voxtral-mini-latest (Mistral) or whisper-1 (OpenAI)
+VOICE_MAX_FILE_SIZE_MB=20            # Max Telegram voice file size to download (1-200MB)
 ```
 
 #### Agentic Platform
@@ -296,6 +304,7 @@ Available feature flags:
 - `telemetry_enabled`: Anonymous usage telemetry
 - `token_auth_enabled`: Token-based authentication
 - `webhook_enabled`: Telegram webhook mode (vs polling)
+- `voice_messages_enabled`: Voice message transcription (default: true)
 - `development_features_enabled`: Development-only features
 
 ## Validation
@@ -311,6 +320,8 @@ The configuration system performs extensive validation:
 
 - `AUTH_TOKEN_SECRET` is required when `ENABLE_TOKEN_AUTH=true`
 - `MCP_CONFIG_PATH` is required when `ENABLE_MCP=true`
+- `MISTRAL_API_KEY` is required when `VOICE_PROVIDER=mistral`
+- `OPENAI_API_KEY` is required when `VOICE_PROVIDER=openai`
 
 ### Value Validation
 
