@@ -322,6 +322,17 @@ class MessageOrchestrator:
             group=10,
         )
 
+        # Unknown commands -> forward to Claude as natural language
+        # This allows project-specific slash commands (e.g. /commit, /review)
+        # to be interpreted by Claude as task descriptions.
+        app.add_handler(
+            MessageHandler(
+                filters.COMMAND,
+                self._inject_deps(self._agentic_unknown_command),
+            ),
+            group=10,
+        )
+
         # File uploads -> Claude
         app.add_handler(
             MessageHandler(
@@ -819,12 +830,30 @@ class MessageOrchestrator:
 
         return caption_sent
 
-    async def agentic_text(
+    async def _agentic_unknown_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Forward unknown /commands to Claude as natural language.
+
+        Enables project-specific commands like /commit, /review, etc.
+        to be interpreted by Claude as task descriptions.
+        """
+        message_text = update.message.text
+        # Convert "/some_cmd args" -> "Run /some-cmd args" for Claude
+        cmd_text = message_text.replace("_", "-")
+        prompt = f"Run {cmd_text}"
+        # Note: Message objects are frozen in python-telegram-bot v20+,
+        # so we pass the transformed text via override_text parameter
+        # instead of mutating update.message.text directly.
+        await self.agentic_text(update, context, override_text=prompt)
+
+    async def agentic_text(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE,
+        override_text: str | None = None,
     ) -> None:
         """Direct Claude passthrough. Simple progress. No suggestions."""
         user_id = update.effective_user.id
-        message_text = update.message.text
+        message_text = override_text or update.message.text
 
         logger.info(
             "Agentic text message",
