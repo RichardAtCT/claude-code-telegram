@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import structlog
@@ -14,6 +15,7 @@ from ..features.command_palette import (
     PaletteItem,
     PluginInfo,
 )
+from ..utils.formatting import ResponseFormatter
 
 logger = structlog.get_logger()
 
@@ -428,28 +430,179 @@ async def menu_callback(
             return
 
         if item.action_type == ActionType.INJECT_SKILL:
-            # Store pending skill for Task 8-9 integration
+            # Store pending skill in user_data for reference
             if context.user_data is not None:
                 context.user_data["menu_pending_skill"] = item.action_value
+
+            # Edit menu message to show progress
             await query.edit_message_text(
-                f"Invoking <code>{item.action_value}</code>...",
+                f"Working on <code>{item.action_value}</code>...",
                 parse_mode="HTML",
             )
-            logger.info(
-                "Menu skill invoked",
-                item_id=item.id,
-                action=item.action_value,
+
+            # Get Claude integration
+            claude_integration = context.bot_data.get("claude_integration")
+            if not claude_integration:
+                await query.edit_message_text(
+                    "Claude integration not available. Check configuration."
+                )
+                return
+
+            settings = context.bot_data.get("settings")
+            current_dir = context.user_data.get(
+                "current_directory",
+                settings.approved_directory if settings else Path.home(),
             )
+            session_id = context.user_data.get("claude_session_id")
+            force_new = bool(context.user_data.get("force_new_session"))
+
+            # Start typing indicator
+            chat_id = query.message.chat_id
+            try:
+                await context.bot.send_chat_action(
+                    chat_id=chat_id, action="typing"
+                )
+            except Exception:
+                pass
+
+            try:
+                response = await claude_integration.run_command(
+                    prompt=item.action_value,
+                    working_directory=current_dir,
+                    user_id=query.from_user.id,
+                    session_id=session_id,
+                    force_new=force_new,
+                )
+
+                # Clear force_new flag on success
+                if force_new:
+                    context.user_data["force_new_session"] = False
+
+                # Update session ID
+                context.user_data["claude_session_id"] = response.session_id
+
+                # Format response
+                formatter = ResponseFormatter(settings)
+                formatted_messages = formatter.format_claude_response(
+                    response.content
+                )
+
+                # Delete the "Working..." message
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+
+                # Send formatted response
+                for msg in formatted_messages:
+                    if msg.text and msg.text.strip():
+                        try:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=msg.text,
+                                parse_mode=msg.parse_mode,
+                            )
+                        except Exception:
+                            # Retry without parse mode
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=msg.text,
+                            )
+
+                # Log interaction
+                storage = context.bot_data.get("storage")
+                if storage:
+                    try:
+                        await storage.save_claude_interaction(
+                            user_id=query.from_user.id,
+                            session_id=response.session_id,
+                            prompt=item.action_value,
+                            response=response,
+                            ip_address=None,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to log menu interaction",
+                            error=str(e),
+                        )
+
+                logger.info(
+                    "Menu skill completed",
+                    item_id=item.id,
+                    action=item.action_value,
+                    session_id=response.session_id,
+                    cost=response.cost,
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Menu skill execution failed",
+                    error=str(e),
+                    item=item.id,
+                )
+                try:
+                    await query.edit_message_text(
+                        f"Failed to run <code>{item.action_value}</code>:"
+                        f" {str(e)[:200]}",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
         elif item.action_type == ActionType.DIRECT_COMMAND:
-            # Store pending command for Task 8-9 integration
-            if context.user_data is not None:
-                context.user_data["menu_pending_command"] = item.action_value
-            await query.edit_message_text(
-                f"Running <code>{item.action_value}</code>...",
-                parse_mode="HTML",
-            )
+            cmd = item.action_value  # e.g. "/new", "/status"
+            settings = context.bot_data.get("settings")
+
+            if cmd == "/new":
+                context.user_data["claude_session_id"] = None
+                context.user_data["session_started"] = True
+                context.user_data["force_new_session"] = True
+                await query.edit_message_text("Session reset. What's next?")
+
+            elif cmd == "/status":
+                current_dir = context.user_data.get(
+                    "current_directory",
+                    settings.approved_directory
+                    if settings
+                    else "unknown",
+                )
+                session_id = context.user_data.get("claude_session_id")
+                session_status = "active" if session_id else "none"
+                await query.edit_message_text(
+                    f"\U0001f4c2 {current_dir} \u00b7 Session: {session_status}"
+                )
+
+            elif cmd == "/stop":
+                active_calls = context.user_data.get("_active_calls", {})
+                if active_calls:
+                    for key, entry in list(active_calls.items()):
+                        task = entry.get("task")
+                        if task and not task.done():
+                            task.cancel()
+                    await query.edit_message_text("Stopping active calls...")
+                else:
+                    await query.edit_message_text("No active calls to stop.")
+
+            elif cmd == "/verbose":
+                level = context.user_data.get("verbose_level", 1)
+                await query.edit_message_text(
+                    f"Verbose level: {level}\n"
+                    f"Use /verbose 0|1|2 to change."
+                )
+
+            elif cmd == "/repo":
+                await query.edit_message_text(
+                    "Use /repo to browse and switch workspaces."
+                )
+
+            else:
+                await query.edit_message_text(
+                    f"Use <code>{cmd}</code> directly.",
+                    parse_mode="HTML",
+                )
+
             logger.info(
-                "Menu command invoked",
+                "Menu command executed",
                 item_id=item.id,
                 action=item.action_value,
             )

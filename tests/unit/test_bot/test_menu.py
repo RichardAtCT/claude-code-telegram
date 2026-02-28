@@ -619,11 +619,125 @@ class TestMenuCallback:
         call_kwargs = update.callback_query.edit_message_text.call_args
         assert "Bot" in call_kwargs.args[0]
 
-    async def test_run_skill_sets_pending(
+    async def test_run_inject_skill_calls_claude(
         self, builder: MenuBuilder
     ) -> None:
+        """When a skill button is tapped, Claude is called with the skill text."""
         builder.build_top_level()
         # Find a run-able skill ID
+        skill_sid = None
+        for sid, full_id in builder.id_map.items():
+            if full_id == "custom:summarize":
+                skill_sid = sid
+                break
+        assert skill_sid is not None
+
+        update = self._make_callback_update(f"menu:run:{skill_sid}")
+        # Mock message.delete and message.chat_id
+        update.callback_query.message.chat_id = 12345
+        update.callback_query.message.delete = AsyncMock()
+        update.callback_query.from_user.id = 999
+
+        # Mock Claude response
+        mock_response = MagicMock()
+        mock_response.content = "Here is the summary."
+        mock_response.session_id = "session-abc"
+        mock_response.cost = 0.01
+
+        mock_claude = AsyncMock()
+        mock_claude.run_command = AsyncMock(return_value=mock_response)
+
+        mock_settings = MagicMock()
+        mock_settings.approved_directory = Path("/tmp/test")
+
+        # Mock formatter
+        mock_formatted = MagicMock()
+        mock_formatted.text = "Here is the summary."
+        mock_formatted.parse_mode = "HTML"
+
+        context = MagicMock()
+        context.user_data = {
+            "menu_builder": builder,
+            "menu_scanner": None,
+        }
+        context.bot_data = {
+            "claude_integration": mock_claude,
+            "settings": mock_settings,
+        }
+        context.bot.send_chat_action = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        with patch(
+            "src.bot.handlers.menu.ResponseFormatter"
+        ) as MockFormatter:
+            formatter_instance = MockFormatter.return_value
+            formatter_instance.format_claude_response.return_value = [
+                mock_formatted
+            ]
+            await menu_callback(update, context)
+
+        # Verify Claude was called with the skill text
+        mock_claude.run_command.assert_called_once()
+        call_kwargs = mock_claude.run_command.call_args.kwargs
+        assert call_kwargs["prompt"] == "/summarize"
+        assert call_kwargs["user_id"] == 999
+
+        # Verify session ID was updated
+        assert context.user_data["claude_session_id"] == "session-abc"
+
+        # Verify response was sent
+        context.bot.send_message.assert_called_once()
+        send_kwargs = context.bot.send_message.call_args.kwargs
+        assert send_kwargs["text"] == "Here is the summary."
+
+    async def test_run_inject_skill_handles_error(
+        self, builder: MenuBuilder
+    ) -> None:
+        """When Claude call fails, error is shown."""
+        builder.build_top_level()
+        skill_sid = None
+        for sid, full_id in builder.id_map.items():
+            if full_id == "custom:summarize":
+                skill_sid = sid
+                break
+        assert skill_sid is not None
+
+        update = self._make_callback_update(f"menu:run:{skill_sid}")
+        update.callback_query.message.chat_id = 12345
+        update.callback_query.message.delete = AsyncMock()
+        update.callback_query.from_user.id = 999
+
+        mock_claude = AsyncMock()
+        mock_claude.run_command = AsyncMock(
+            side_effect=RuntimeError("Claude is down")
+        )
+
+        mock_settings = MagicMock()
+        mock_settings.approved_directory = Path("/tmp/test")
+
+        context = MagicMock()
+        context.user_data = {
+            "menu_builder": builder,
+            "menu_scanner": None,
+        }
+        context.bot_data = {
+            "claude_integration": mock_claude,
+            "settings": mock_settings,
+        }
+        context.bot.send_chat_action = AsyncMock()
+
+        await menu_callback(update, context)
+
+        # Verify error message was shown
+        call_kwargs = update.callback_query.edit_message_text.call_args
+        assert "Failed to run" in call_kwargs.args[0]
+        assert "Claude is down" in call_kwargs.args[0]
+
+    async def test_run_inject_skill_no_claude_integration(
+        self, builder: MenuBuilder
+    ) -> None:
+        """When Claude integration is missing, shows error."""
+        builder.build_top_level()
         skill_sid = None
         for sid, full_id in builder.id_map.items():
             if full_id == "custom:summarize":
@@ -638,16 +752,17 @@ class TestMenuCallback:
             "menu_builder": builder,
             "menu_scanner": None,
         }
+        context.bot_data = {}  # No claude_integration
 
         await menu_callback(update, context)
 
-        assert context.user_data["menu_pending_skill"] == "/summarize"
         call_kwargs = update.callback_query.edit_message_text.call_args
-        assert "Invoking" in call_kwargs.args[0]
+        assert "not available" in call_kwargs.args[0]
 
-    async def test_run_direct_command_sets_pending(
+    async def test_run_direct_command_new(
         self, builder: MenuBuilder
     ) -> None:
+        """When /new button is tapped, session is reset."""
         # Build category for bot to register bot command IDs
         builder.build_top_level()
         _, _ = builder.build_category("bot")
@@ -665,13 +780,173 @@ class TestMenuCallback:
         context.user_data = {
             "menu_builder": builder,
             "menu_scanner": None,
+            "claude_session_id": "old-session",
         }
+        context.bot_data = {}
 
         await menu_callback(update, context)
 
-        assert context.user_data["menu_pending_command"] == "/new"
+        # Session should be cleared
+        assert context.user_data["claude_session_id"] is None
+        assert context.user_data["force_new_session"] is True
+        assert context.user_data["session_started"] is True
         call_kwargs = update.callback_query.edit_message_text.call_args
-        assert "Running" in call_kwargs.args[0]
+        assert "Session reset" in call_kwargs.args[0]
+
+    async def test_run_direct_command_status(
+        self, builder: MenuBuilder
+    ) -> None:
+        """When /status button is tapped, status is shown."""
+        builder.build_top_level()
+        _, _ = builder.build_category("bot")
+        cmd_sid = None
+        for sid, full_id in builder.id_map.items():
+            if full_id == "bot:status":
+                cmd_sid = sid
+                break
+        assert cmd_sid is not None
+
+        update = self._make_callback_update(f"menu:run:{cmd_sid}")
+
+        mock_settings = MagicMock()
+        mock_settings.approved_directory = Path("/tmp/projects")
+
+        context = MagicMock()
+        context.user_data = {
+            "menu_builder": builder,
+            "menu_scanner": None,
+            "current_directory": Path("/home/test"),
+            "claude_session_id": "sess-123",
+        }
+        context.bot_data = {"settings": mock_settings}
+
+        await menu_callback(update, context)
+
+        call_kwargs = update.callback_query.edit_message_text.call_args
+        text = call_kwargs.args[0]
+        assert "/home/test" in text
+        assert "active" in text
+
+    async def test_run_direct_command_status_no_session(
+        self, builder: MenuBuilder
+    ) -> None:
+        """When /status is tapped with no session, shows 'none'."""
+        builder.build_top_level()
+        _, _ = builder.build_category("bot")
+        cmd_sid = None
+        for sid, full_id in builder.id_map.items():
+            if full_id == "bot:status":
+                cmd_sid = sid
+                break
+        assert cmd_sid is not None
+
+        update = self._make_callback_update(f"menu:run:{cmd_sid}")
+
+        mock_settings = MagicMock()
+        mock_settings.approved_directory = Path("/tmp/projects")
+
+        context = MagicMock()
+        context.user_data = {
+            "menu_builder": builder,
+            "menu_scanner": None,
+        }
+        context.bot_data = {"settings": mock_settings}
+
+        await menu_callback(update, context)
+
+        call_kwargs = update.callback_query.edit_message_text.call_args
+        text = call_kwargs.args[0]
+        assert "none" in text
+
+    async def test_run_direct_command_stop_no_active(
+        self, builder: MenuBuilder
+    ) -> None:
+        """When /stop is tapped with no active calls, shows message."""
+        builder.build_top_level()
+        _, _ = builder.build_category("bot")
+        cmd_sid = None
+        for sid, full_id in builder.id_map.items():
+            if full_id == "bot:stop":
+                cmd_sid = sid
+                break
+        assert cmd_sid is not None
+
+        update = self._make_callback_update(f"menu:run:{cmd_sid}")
+
+        context = MagicMock()
+        context.user_data = {
+            "menu_builder": builder,
+            "menu_scanner": None,
+        }
+        context.bot_data = {}
+
+        await menu_callback(update, context)
+
+        call_kwargs = update.callback_query.edit_message_text.call_args
+        assert "No active calls" in call_kwargs.args[0]
+
+    async def test_run_inject_skill_updates_session_and_clears_force_new(
+        self, builder: MenuBuilder
+    ) -> None:
+        """After a successful skill call, force_new is cleared and session updated."""
+        builder.build_top_level()
+        skill_sid = None
+        for sid, full_id in builder.id_map.items():
+            if full_id == "custom:summarize":
+                skill_sid = sid
+                break
+        assert skill_sid is not None
+
+        update = self._make_callback_update(f"menu:run:{skill_sid}")
+        update.callback_query.message.chat_id = 12345
+        update.callback_query.message.delete = AsyncMock()
+        update.callback_query.from_user.id = 999
+
+        mock_response = MagicMock()
+        mock_response.content = "Done."
+        mock_response.session_id = "new-session-id"
+        mock_response.cost = 0.02
+
+        mock_claude = AsyncMock()
+        mock_claude.run_command = AsyncMock(return_value=mock_response)
+
+        mock_settings = MagicMock()
+        mock_settings.approved_directory = Path("/tmp/test")
+
+        mock_formatted = MagicMock()
+        mock_formatted.text = "Done."
+        mock_formatted.parse_mode = "HTML"
+
+        context = MagicMock()
+        context.user_data = {
+            "menu_builder": builder,
+            "menu_scanner": None,
+            "force_new_session": True,
+            "claude_session_id": "old-session",
+        }
+        context.bot_data = {
+            "claude_integration": mock_claude,
+            "settings": mock_settings,
+        }
+        context.bot.send_chat_action = AsyncMock()
+        context.bot.send_message = AsyncMock()
+
+        with patch(
+            "src.bot.handlers.menu.ResponseFormatter"
+        ) as MockFormatter:
+            formatter_instance = MockFormatter.return_value
+            formatter_instance.format_claude_response.return_value = [
+                mock_formatted
+            ]
+            await menu_callback(update, context)
+
+        # force_new should be cleared
+        assert context.user_data["force_new_session"] is False
+        # Session ID should be updated
+        assert context.user_data["claude_session_id"] == "new-session-id"
+        # force_new=True should have been passed to run_command
+        call_kwargs = mock_claude.run_command.call_args.kwargs
+        assert call_kwargs["force_new"] is True
 
     async def test_tog_toggles_plugin(self, builder: MenuBuilder) -> None:
         builder.build_top_level()
