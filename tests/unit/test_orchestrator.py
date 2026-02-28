@@ -82,8 +82,8 @@ def deps():
     }
 
 
-def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, stop commands."""
+def test_agentic_registers_7_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, status, verbose, repo, stop, menu commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,13 +100,14 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
+    assert len(cmd_handlers) == 7
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
     assert frozenset({"repo"}) in commands
     assert frozenset({"stop"}) in commands
+    assert frozenset({"menu"}) in commands
 
 
 def test_classic_registers_14_commands(classic_settings, deps):
@@ -151,18 +152,18 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
     # 3 message handlers (text, document, photo)
     assert len(msg_handlers) == 3
-    # 1 callback handler (for cd: only)
-    assert len(cb_handlers) == 1
+    # 2 callback handlers (cd: and menu:)
+    assert len(cb_handlers) == 2
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns 7 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
+    assert len(commands) == 7
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "stop"]
+    assert cmd_names == ["start", "new", "status", "verbose", "repo", "stop", "menu"]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
@@ -344,7 +345,7 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
 
 
 async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
-    """Agentic callback handler is registered with cd: pattern filter."""
+    """Agentic callback handlers are registered with cd: and menu: patterns."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -359,10 +360,13 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    assert len(cb_handlers) == 1
-    # The pattern attribute should match cd: prefixed data
+    assert len(cb_handlers) == 2
+    # First handler: cd: pattern
     assert cb_handlers[0].pattern is not None
     assert cb_handlers[0].pattern.match("cd:my_project")
+    # Second handler: menu: pattern
+    assert cb_handlers[1].pattern is not None
+    assert cb_handlers[1].pattern.match("menu:back")
 
 
 async def test_agentic_document_rejects_large_files(agentic_settings, deps):
@@ -825,3 +829,55 @@ async def test_private_mode_rejects_help_outside_topics(private_thread_settings,
 
     assert called["value"] is False
     update.effective_message.reply_text.assert_called_once()
+
+
+# --- Menu integration tests ---
+
+
+def test_agentic_registers_menu_handler(agentic_settings, deps):
+    """Agentic mode registers the menu command handler."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
+
+    orchestrator.register_handlers(app)
+
+    from telegram.ext import CommandHandler
+
+    cmd_handlers = [
+        call[0][0]
+        for call in app.add_handler.call_args_list
+        if isinstance(call[0][0], CommandHandler)
+    ]
+    commands = [h.commands for h in cmd_handlers]
+    assert frozenset({"menu"}) in commands
+
+
+def test_agentic_registers_menu_callback_handler(agentic_settings, deps):
+    """Agentic mode registers a menu: callback handler with pattern ^menu:."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
+
+    orchestrator.register_handlers(app)
+
+    from telegram.ext import CallbackQueryHandler
+
+    cb_handlers = [
+        call[0][0]
+        for call in app.add_handler.call_args_list
+        if isinstance(call[0][0], CallbackQueryHandler)
+    ]
+
+    menu_handlers = [
+        h for h in cb_handlers if h.pattern and h.pattern.match("menu:back")
+    ]
+    assert len(menu_handlers) == 1
+
+
+async def test_get_bot_commands_includes_menu(agentic_settings, deps):
+    """Agentic get_bot_commands includes 'menu'."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    commands = await orchestrator.get_bot_commands()
+    cmd_names = [c.command for c in commands]
+    assert "menu" in cmd_names

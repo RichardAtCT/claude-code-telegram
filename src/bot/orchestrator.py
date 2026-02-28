@@ -307,6 +307,7 @@ class MessageOrchestrator:
     def _register_agentic_handlers(self, app: Application) -> None:
         """Register agentic handlers: commands + text/file/photo."""
         from .handlers import command
+        from .handlers import menu as menu_handler
 
         # Commands
         handlers = [
@@ -316,6 +317,7 @@ class MessageOrchestrator:
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
             ("stop", command.stop_command),
+            ("menu", menu_handler.menu_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -351,6 +353,14 @@ class MessageOrchestrator:
             CallbackQueryHandler(
                 self._inject_deps(self._agentic_callback),
                 pattern=r"^cd:",
+            )
+        )
+
+        # menu: callbacks (for command palette navigation)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(menu_handler.menu_callback),
+                pattern=r"^menu:",
             )
         )
 
@@ -415,6 +425,7 @@ class MessageOrchestrator:
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("stop", "Stop running Claude call"),
+                BotCommand("menu", "Command palette & plugin manager"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
