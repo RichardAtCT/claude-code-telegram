@@ -165,9 +165,7 @@ class CommandPaletteScanner:
             short_name = qualified_name.split("@")[0]
 
             is_enabled = enabled_plugins.get(qualified_name, False)
-            is_blocked = any(
-                b.get("plugin") == qualified_name for b in blocklisted
-            )
+            is_blocked = any(b.get("plugin") == qualified_name for b in blocklisted)
             effective_enabled = is_enabled and not is_blocked
 
             plugin_items: List[PaletteItem] = []
@@ -312,9 +310,7 @@ class CommandPaletteScanner:
 
     def _load_installed_plugins(self) -> Dict[str, list]:
         """Load the installed plugins map from installed_plugins.json."""
-        installed_file = (
-            self.claude_dir / "plugins" / "installed_plugins.json"
-        )
+        installed_file = self.claude_dir / "plugins" / "installed_plugins.json"
         if not installed_file.is_file():
             return {}
         try:

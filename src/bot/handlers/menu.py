@@ -27,9 +27,7 @@ class MenuBuilder:
     incrementing numeric IDs and store the mapping in ``id_map``.
     """
 
-    def __init__(
-        self, items: List[PaletteItem], plugins: List[PluginInfo]
-    ) -> None:
+    def __init__(self, items: List[PaletteItem], plugins: List[PluginInfo]) -> None:
         self.items = items
         self.plugins = plugins
         self.id_map: Dict[str, str] = {}  # short_id -> full_id
@@ -98,17 +96,13 @@ class MenuBuilder:
                 sid = self._register(item.id)
                 label = f"{status} {plugin.name}"
                 plugin_buttons.append(
-                    InlineKeyboardButton(
-                        label, callback_data=f"menu:run:{sid}"
-                    )
+                    InlineKeyboardButton(label, callback_data=f"menu:run:{sid}")
                 )
             else:
                 sid = self._register(f"cat:{plugin.name}")
                 label = f"{status} {plugin.name} ({len(plugin.items)})"
                 plugin_buttons.append(
-                    InlineKeyboardButton(
-                        label, callback_data=f"menu:cat:{sid}"
-                    )
+                    InlineKeyboardButton(label, callback_data=f"menu:cat:{sid}")
                 )
         # Pack plugin buttons 2-per-row
         for i in range(0, len(plugin_buttons), 2):
@@ -162,14 +156,10 @@ class MenuBuilder:
         rows: List[List[InlineKeyboardButton]] = []
         for item in cat_items:
             sid = self._register(item.id)
-            label = f"{item.name} — {item.description}" if item.description else item.name
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        label, callback_data=f"menu:run:{sid}"
-                    )
-                ]
+            label = (
+                f"{item.name} — {item.description}" if item.description else item.name
             )
+            rows.append([InlineKeyboardButton(label, callback_data=f"menu:run:{sid}")])
 
         # Toggle button for plugins (not bot)
         if source != "bot":
@@ -187,13 +177,7 @@ class MenuBuilder:
                 )
 
         # Back button
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    "\u2b05 Back", callback_data="menu:back"
-                )
-            ]
-        )
+        rows.append([InlineKeyboardButton("\u2b05 Back", callback_data="menu:back")])
 
         return InlineKeyboardMarkup(rows), header
 
@@ -225,9 +209,7 @@ class MenuBuilder:
 # ======================================================================
 
 
-async def menu_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle ``/menu`` -- scan filesystem, build top-level keyboard, send."""
     scanner = CommandPaletteScanner()
     items, plugins = scanner.scan()
@@ -264,9 +246,7 @@ async def menu_command(
     )
 
 
-async def menu_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle all ``menu:`` callbacks.
 
     Actions:
@@ -311,9 +291,7 @@ async def menu_callback(
             f"{item_count} commands \u00b7 {plugin_count} plugins"
             f" \u00b7 {custom_count} custom skills"
         )
-        await query.edit_message_text(
-            text, parse_mode="HTML", reply_markup=keyboard
-        )
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         return
 
     # ------------------------------------------------------------------
@@ -321,13 +299,7 @@ async def menu_callback(
     # ------------------------------------------------------------------
     if data == "menu:store":
         back_keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "\u2b05 Back", callback_data="menu:back"
-                    )
-                ]
-            ]
+            [[InlineKeyboardButton("\u2b05 Back", callback_data="menu:back")]]
         )
         await query.edit_message_text(
             "\U0001f50c <b>Plugin Store</b>\n\nComing soon.",
@@ -373,9 +345,7 @@ async def menu_callback(
         keyboard, header = builder.build_category(source_name)
         state_label = "enabled" if new_state else "disabled"
         text = f"{header}\n\nPlugin {state_label}."
-        await query.edit_message_text(
-            text, parse_mode="HTML", reply_markup=keyboard
-        )
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
         logger.info(
             "Plugin toggled",
             plugin=qualified_name,
@@ -399,9 +369,7 @@ async def menu_callback(
 
         source = full_id[len("cat:") :]
         keyboard, header = builder.build_category(source)
-        await query.edit_message_text(
-            header, parse_mode="HTML", reply_markup=keyboard
-        )
+        await query.edit_message_text(header, parse_mode="HTML", reply_markup=keyboard)
         return
 
     # ------------------------------------------------------------------
@@ -459,9 +427,7 @@ async def menu_callback(
             # Start typing indicator
             chat_id = query.message.chat_id
             try:
-                await context.bot.send_chat_action(
-                    chat_id=chat_id, action="typing"
-                )
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
             except Exception:
                 pass
 
@@ -483,9 +449,7 @@ async def menu_callback(
 
                 # Format response
                 formatter = ResponseFormatter(settings)
-                formatted_messages = formatter.format_claude_response(
-                    response.content
-                )
+                formatted_messages = formatter.format_claude_response(response.content)
 
                 # Delete the "Working..." message
                 try:
@@ -562,9 +526,7 @@ async def menu_callback(
             elif cmd == "/status":
                 current_dir = context.user_data.get(
                     "current_directory",
-                    settings.approved_directory
-                    if settings
-                    else "unknown",
+                    settings.approved_directory if settings else "unknown",
                 )
                 session_id = context.user_data.get("claude_session_id")
                 session_status = "active" if session_id else "none"
@@ -586,8 +548,7 @@ async def menu_callback(
             elif cmd == "/verbose":
                 level = context.user_data.get("verbose_level", 1)
                 await query.edit_message_text(
-                    f"Verbose level: {level}\n"
-                    f"Use /verbose 0|1|2 to change."
+                    f"Verbose level: {level}\n" f"Use /verbose 0|1|2 to change."
                 )
 
             elif cmd == "/repo":
