@@ -150,10 +150,10 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    # 3 message handlers (text, document, photo)
-    assert len(msg_handlers) == 3
-    # 2 callback handlers (cd: and menu:)
-    assert len(cb_handlers) == 2
+    # 4 message handlers (askq_other_text at group 5, text/document/photo at group 10)
+    assert len(msg_handlers) == 4
+    # 3 callback handlers (cd:, menu:, askq:)
+    assert len(cb_handlers) == 3
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
@@ -360,13 +360,16 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    assert len(cb_handlers) == 2
+    assert len(cb_handlers) == 3
     # First handler: cd: pattern
     assert cb_handlers[0].pattern is not None
     assert cb_handlers[0].pattern.match("cd:my_project")
     # Second handler: menu: pattern
     assert cb_handlers[1].pattern is not None
     assert cb_handlers[1].pattern.match("menu:back")
+    # Third handler: askq: pattern (interactive questions)
+    assert cb_handlers[2].pattern is not None
+    assert cb_handlers[2].pattern.match("askq:0:1")
 
 
 async def test_agentic_document_rejects_large_files(agentic_settings, deps):

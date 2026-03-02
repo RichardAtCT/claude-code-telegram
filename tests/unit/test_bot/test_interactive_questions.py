@@ -644,6 +644,8 @@ class TestAskqCallback:
 class TestAskqOtherText:
     @pytest.mark.asyncio
     async def test_captures_text_when_awaiting_other(self):
+        from telegram.ext import ApplicationHandlerStop
+
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         pq = PendingQuestion(
@@ -656,20 +658,23 @@ class TestAskqOtherText:
         register_pending(user_id=7, chat_id=100, pq=pq)
 
         update = _make_update_with_text("custom answer", user_id=7, chat_id=100)
-        result = await askq_other_text(update, MagicMock())
 
-        assert result is True
+        with pytest.raises(ApplicationHandlerStop):
+            await askq_other_text(update, MagicMock())
+
         assert future.done()
         assert future.result() == "custom answer"
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_pending(self):
+    async def test_no_op_when_no_pending(self):
+        """When no pending question exists, the handler returns without raising."""
         update = _make_update_with_text("hello", user_id=7, chat_id=100)
-        result = await askq_other_text(update, MagicMock())
-        assert result is None
+        # Should return normally (not raise ApplicationHandlerStop)
+        await askq_other_text(update, MagicMock())
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_not_awaiting_other(self):
+    async def test_no_op_when_not_awaiting_other(self):
+        """When pending question exists but awaiting_other is False, returns normally."""
         loop = asyncio.get_running_loop()
         future = loop.create_future()
         pq = PendingQuestion(
@@ -682,7 +687,7 @@ class TestAskqOtherText:
         register_pending(user_id=7, chat_id=100, pq=pq)
 
         update = _make_update_with_text("hello", user_id=7, chat_id=100)
-        result = await askq_other_text(update, MagicMock())
+        # Should return normally (not raise ApplicationHandlerStop)
+        await askq_other_text(update, MagicMock())
 
-        assert result is None
         assert not future.done()

@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 logger = structlog.get_logger()
 
@@ -259,22 +259,25 @@ async def askq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def askq_other_text(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> Optional[bool]:
+) -> None:
     """Handle free-text replies for the 'Other...' option.
 
-    Returns ``True`` if the message was consumed (pending question resolved),
-    or ``None`` to let other handlers process the message.
+    Raises ``ApplicationHandlerStop`` if the message was consumed (pending
+    question resolved), which prevents further handler groups (e.g. the
+    agentic_text handler at group 10) from processing this message.
+    If no pending "Other" question exists, returns normally so the message
+    falls through to the next handler group.
     """
     if update.message is None:
-        return None
+        return
 
     user_id = update.message.from_user.id if update.message.from_user else 0
     chat_id = update.message.chat.id
 
     pq = get_pending(user_id, chat_id)
     if pq is None or not pq.awaiting_other:
-        return None
+        return
 
     answer = update.message.text or ""
     resolve_pending(user_id, chat_id, answer)
-    return True
+    raise ApplicationHandlerStop()

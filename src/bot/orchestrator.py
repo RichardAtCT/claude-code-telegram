@@ -364,6 +364,25 @@ class MessageOrchestrator:
             )
         )
 
+        # Interactive question handlers (AskUserQuestion)
+        from .features.interactive_questions import askq_callback, askq_other_text
+
+        app.add_handler(
+            CallbackQueryHandler(askq_callback, pattern=r"^askq:"),
+            group=0,
+        )
+
+        # "Other..." free-text capture — runs before agentic_text (group 10).
+        # Raises ApplicationHandlerStop when it consumes the message, so the
+        # agentic_text handler in group 10 does not also process it.
+        app.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                askq_other_text,
+            ),
+            group=5,
+        )
+
         logger.info("Agentic handlers registered")
 
     def _register_classic_handlers(self, app: Application) -> None:
@@ -905,6 +924,17 @@ class MessageOrchestrator:
         success = True
         try:
             call_id = next(self._call_counter)
+
+            # Build Telegram context for interactive questions (AskUserQuestion)
+            from .features.interactive_questions import TelegramContext
+
+            tg_ctx = TelegramContext(
+                bot=context.bot,
+                chat_id=update.message.chat_id,
+                thread_id=getattr(update.message, "message_thread_id", None),
+                user_id=user_id,
+            )
+
             task = asyncio.create_task(
                 claude_integration.run_command(
                     prompt=message_text,
@@ -914,6 +944,7 @@ class MessageOrchestrator:
                     on_stream=on_stream,
                     force_new=force_new,
                     call_id=call_id,
+                    telegram_context=tg_ctx,
                 )
             )
             thread_key = self._thread_key(context)

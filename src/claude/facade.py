@@ -46,6 +46,7 @@ class ClaudeIntegration:
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
         force_new: bool = False,
         call_id: Optional[int] = None,
+        telegram_context: Optional[Any] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -95,6 +96,7 @@ class ClaudeIntegration:
                     continue_session=should_continue,
                     stream_callback=on_stream,
                     call_id=call_id,
+                    telegram_context=telegram_context,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -120,6 +122,7 @@ class ClaudeIntegration:
                         continue_session=False,
                         stream_callback=on_stream,
                         call_id=call_id,
+                        telegram_context=telegram_context,
                     )
                 else:
                     raise
@@ -164,6 +167,7 @@ class ClaudeIntegration:
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
         call_id: Optional[int] = None,
+        telegram_context: Optional[Any] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -173,6 +177,7 @@ class ClaudeIntegration:
             continue_session=continue_session,
             stream_callback=stream_callback,
             call_id=call_id,
+            telegram_context=telegram_context,
         )
 
     async def _find_resumable_session(

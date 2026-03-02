@@ -437,12 +437,26 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 # session has access to all enabled skills.
                 prompt = item.action_value  # e.g. "/commit"
 
+                # Preserve topic/thread context for supergroup forums
+                thread_id = getattr(query.message, "message_thread_id", None)
+
+                # Build Telegram context for interactive questions
+                from ..features.interactive_questions import TelegramContext
+
+                tg_ctx = TelegramContext(
+                    bot=context.bot,
+                    chat_id=chat_id,
+                    thread_id=thread_id,
+                    user_id=query.from_user.id,
+                )
+
                 response = await claude_integration.run_command(
                     prompt=prompt,
                     working_directory=current_dir,
                     user_id=query.from_user.id,
                     session_id=session_id,
                     force_new=force_new,
+                    telegram_context=tg_ctx,
                 )
 
                 # Clear force_new flag on success
@@ -467,9 +481,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     await query.message.delete()
                 except Exception:
                     pass
-
-                # Preserve topic/thread context for supergroup forums
-                thread_id = getattr(query.message, "message_thread_id", None)
 
                 # Send formatted response
                 sent_any = False

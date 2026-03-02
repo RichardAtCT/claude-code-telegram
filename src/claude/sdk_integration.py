@@ -6,7 +6,7 @@ import platform
 import signal
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import structlog
 from claude_agent_sdk import (
@@ -17,6 +17,7 @@ from claude_agent_sdk import (
     CLIConnectionError,
     CLIJSONDecodeError,
     CLINotFoundError,
+    HookMatcher,
     Message,
     PermissionResultAllow,
     PermissionResultDeny,
@@ -39,6 +40,9 @@ from .exceptions import (
     ClaudeTimeoutError,
 )
 from .monitor import _is_claude_internal_path, check_bash_directory_boundary
+
+if TYPE_CHECKING:
+    from ..bot.features.interactive_questions import TelegramContext
 
 logger = structlog.get_logger()
 
@@ -248,6 +252,7 @@ class ClaudeSDKManager:
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         call_id: Optional[int] = None,
+        telegram_context: Optional["TelegramContext"] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -331,6 +336,22 @@ class ClaudeSDKManager:
                     approved_directory=self.config.approved_directory,
                 )
 
+            # Register PreToolUse hook for AskUserQuestion if we have
+            # Telegram context to send questions to
+            if telegram_context:
+                from ..bot.features.interactive_questions import make_ask_user_hook
+
+                ask_hook = make_ask_user_hook(telegram_context)
+                options.hooks = {
+                    "PreToolUse": [
+                        HookMatcher(
+                            matcher="AskUserQuestion",
+                            hooks=[ask_hook],
+                        )
+                    ]
+                }
+                logger.info("AskUserQuestion hook registered for Telegram")
+
             # Resume previous session if we have a session_id
             if session_id and continue_session:
                 options.resume = session_id
@@ -395,6 +416,14 @@ class ClaudeSDKManager:
                 finally:
                     if call_id is not None:
                         self._active_pids.pop(call_id, None)
+                    # Cancel any pending questions on session end
+                    if telegram_context:
+                        from ..bot.features.interactive_questions import cancel_pending
+
+                        cancel_pending(
+                            telegram_context.user_id,
+                            telegram_context.chat_id,
+                        )
                     await client.disconnect()
 
             # Execute with timeout
