@@ -10,6 +10,7 @@ import pytest
 from src.bot.features.interactive_questions import (
     PendingQuestion,
     TelegramContext,
+    _pending,
     askq_callback,
     askq_other_text,
     build_multi_select_keyboard,
@@ -20,9 +21,7 @@ from src.bot.features.interactive_questions import (
     make_ask_user_hook,
     register_pending,
     resolve_pending,
-    _pending,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -214,7 +213,9 @@ class TestBuildMultiSelectKeyboard:
             assert btn.text.startswith("☐")
 
     def test_checked_state(self, sample_options):
-        kb = build_multi_select_keyboard(sample_options, question_idx=0, selected={0, 2})
+        kb = build_multi_select_keyboard(
+            sample_options, question_idx=0, selected={0, 2}
+        )
         option_buttons = [
             btn
             for row in kb.inline_keyboard
@@ -338,7 +339,9 @@ def _make_tg_ctx(user_id: int = 7, chat_id: int = 100, thread_id: int = None):
     sent_msg = MagicMock()
     sent_msg.message_id = 42
     bot.send_message.return_value = sent_msg
-    return TelegramContext(bot=bot, chat_id=chat_id, thread_id=thread_id, user_id=user_id)
+    return TelegramContext(
+        bot=bot, chat_id=chat_id, thread_id=thread_id, user_id=user_id
+    )
 
 
 def _make_update_with_callback(data: str, user_id: int = 7, chat_id: int = 100):

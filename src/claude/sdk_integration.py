@@ -310,8 +310,7 @@ class ClaudeSDKManager:
                 plugin_paths = get_enabled_plugin_paths()
                 if plugin_paths:
                     options.plugins = [
-                        SdkPluginConfig(type="local", path=p)
-                        for p in plugin_paths
+                        SdkPluginConfig(type="local", path=p) for p in plugin_paths
                     ]
                     logger.info(
                         "Plugins configured for session",

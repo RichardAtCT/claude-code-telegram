@@ -89,7 +89,11 @@ def build_single_select_keyboard(
         )
     rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
     rows.append(
-        [InlineKeyboardButton(text="Other...", callback_data=f"askq:{question_idx}:other")]
+        [
+            InlineKeyboardButton(
+                text="Other...", callback_data=f"askq:{question_idx}:other"
+            )
+        ]
     )
     return InlineKeyboardMarkup(rows)
 
@@ -110,7 +114,11 @@ def build_multi_select_keyboard(
         )
     rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
     rows.append(
-        [InlineKeyboardButton(text="Other...", callback_data=f"askq:{question_idx}:other")]
+        [
+            InlineKeyboardButton(
+                text="Other...", callback_data=f"askq:{question_idx}:other"
+            )
+        ]
     )
     rows.append(
         [InlineKeyboardButton(text="Done ✓", callback_data=f"askq:{question_idx}:done")]
@@ -240,8 +248,7 @@ async def askq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Multi-select done
     if action == "done":
         labels = [
-            pq.options[i].get("label", f"Option {i}")
-            for i in sorted(pq.selected)
+            pq.options[i].get("label", f"Option {i}") for i in sorted(pq.selected)
         ]
         answer = ", ".join(labels)
         resolve_pending(user_id, chat_id, answer)
@@ -257,9 +264,7 @@ async def askq_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
 
-async def askq_other_text(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def askq_other_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle free-text replies for the 'Other...' option.
 
     Raises ``ApplicationHandlerStop`` if the message was consumed (pending
