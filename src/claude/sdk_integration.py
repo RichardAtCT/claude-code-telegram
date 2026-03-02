@@ -22,6 +22,7 @@ from claude_agent_sdk import (
     PermissionResultDeny,
     ProcessError,
     ResultMessage,
+    SdkPluginConfig,
     ToolPermissionContext,
     ToolUseBlock,
     UserMessage,
@@ -293,9 +294,26 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["project"],
+                setting_sources=["project", "user"],
                 stderr=_stderr_callback,
             )
+
+            # Pass enabled plugins so skills/commands are available in sessions
+            try:
+                from src.bot.features.command_palette import get_enabled_plugin_paths
+
+                plugin_paths = get_enabled_plugin_paths()
+                if plugin_paths:
+                    options.plugins = [
+                        SdkPluginConfig(type="local", path=p)
+                        for p in plugin_paths
+                    ]
+                    logger.info(
+                        "Plugins configured for session",
+                        count=len(plugin_paths),
+                    )
+            except Exception as exc:
+                logger.warning("Failed to load plugins for session", error=str(exc))
 
             # Pass MCP server configuration if enabled
             if self.config.enable_mcp and self.config.mcp_config_path:

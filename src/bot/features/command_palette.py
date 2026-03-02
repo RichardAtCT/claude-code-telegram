@@ -126,6 +126,63 @@ BOT_COMMANDS: List[PaletteItem] = [
 ]
 
 
+def get_enabled_plugin_paths(claude_dir: Optional[Path] = None) -> List[str]:
+    """Return install paths for all enabled (and non-blocked) plugins.
+
+    This is used by the SDK integration to pass plugins to Claude sessions
+    via ``ClaudeAgentOptions.plugins``.
+    """
+    claude_dir = claude_dir or Path.home() / ".claude"
+    if not claude_dir.is_dir():
+        return []
+
+    # Load settings
+    settings_file = claude_dir / "settings.json"
+    enabled_map: Dict[str, bool] = {}
+    if settings_file.is_file():
+        try:
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            enabled_map = data.get("enabledPlugins", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Load installed plugins
+    installed_file = claude_dir / "plugins" / "installed_plugins.json"
+    installed: Dict[str, list] = {}
+    if installed_file.is_file():
+        try:
+            data = json.loads(installed_file.read_text(encoding="utf-8"))
+            installed = data.get("plugins", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Load blocklist
+    blocklist_file = claude_dir / "plugins" / "blocklist.json"
+    blocked_names: set = set()
+    if blocklist_file.is_file():
+        try:
+            data = json.loads(blocklist_file.read_text(encoding="utf-8"))
+            blocked_names = {
+                b.get("plugin") for b in data.get("plugins", []) if b.get("plugin")
+            }
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    paths: List[str] = []
+    for qualified_name, installs in installed.items():
+        if not installs:
+            continue
+        if not enabled_map.get(qualified_name, False):
+            continue
+        if qualified_name in blocked_names:
+            continue
+        install_path = installs[0].get("installPath", "")
+        if install_path and Path(install_path).is_dir():
+            paths.append(install_path)
+
+    return paths
+
+
 class CommandPaletteScanner:
     """Scans ~/.claude/ for all available skills, commands, and plugins."""
 

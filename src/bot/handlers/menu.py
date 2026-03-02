@@ -432,8 +432,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 pass
 
             try:
+                # Send the skill as a slash command.  Plugins are now passed
+                # to the SDK session via ClaudeAgentOptions.plugins, so the
+                # session has access to all enabled skills.
+                prompt = item.action_value  # e.g. "/commit"
+
                 response = await claude_integration.run_command(
-                    prompt=item.action_value,
+                    prompt=prompt,
                     working_directory=current_dir,
                     user_id=query.from_user.id,
                     session_id=session_id,
@@ -447,6 +452,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 # Update session ID
                 context.user_data["claude_session_id"] = response.session_id
 
+                logger.debug(
+                    "Skill response content",
+                    content_length=len(response.content) if response.content else 0,
+                    content_preview=(response.content or "")[:200],
+                )
+
                 # Format response
                 formatter = ResponseFormatter(settings)
                 formatted_messages = formatter.format_claude_response(response.content)
@@ -457,7 +468,11 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 except Exception:
                     pass
 
+                # Preserve topic/thread context for supergroup forums
+                thread_id = getattr(query.message, "message_thread_id", None)
+
                 # Send formatted response
+                sent_any = False
                 for msg in formatted_messages:
                     if msg.text and msg.text.strip():
                         try:
@@ -465,13 +480,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                                 chat_id=chat_id,
                                 text=msg.text,
                                 parse_mode=msg.parse_mode,
+                                message_thread_id=thread_id,
                             )
+                            sent_any = True
                         except Exception:
                             # Retry without parse mode
                             await context.bot.send_message(
                                 chat_id=chat_id,
                                 text=msg.text,
+                                message_thread_id=thread_id,
                             )
+                            sent_any = True
+
+                # If Claude produced no visible text (e.g. only tool calls),
+                # send a confirmation so the user knows the skill ran.
+                if not sent_any:
+                    skill_name = item.action_value.lstrip("/")
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"/{skill_name} completed (cost: ${response.cost:.4f})",
+                        message_thread_id=thread_id,
+                    )
 
                 # Log interaction
                 storage = context.bot_data.get("storage")
