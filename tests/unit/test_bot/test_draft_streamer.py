@@ -54,18 +54,18 @@ class TestGenerateDraftId:
     def test_non_zero(self):
         """Draft ID must always be non-zero."""
         for _ in range(100):
-            did = generate_draft_id(123)
+            did = generate_draft_id()
             assert did != 0
 
     def test_positive(self):
         """Draft ID must be positive."""
         for _ in range(100):
-            did = generate_draft_id(456)
+            did = generate_draft_id()
             assert did > 0
 
-    def test_different_chats_differ(self):
-        """Different chat IDs should generally produce different draft IDs."""
-        ids = {generate_draft_id(i) for i in range(50)}
+    def test_successive_calls_differ(self):
+        """Successive calls should generally produce different draft IDs."""
+        ids = {generate_draft_id() for _ in range(50)}
         # Not all identical (statistical — extremely unlikely to fail)
         assert len(ids) > 1
 
@@ -291,3 +291,34 @@ class TestDraftStreamerComposition:
         streamer._last_send_time = time.time()
         await streamer.flush()
         mock_bot.send_message_draft.assert_called_once()
+
+    async def test_small_overflow_no_notice(self, streamer, mock_bot):
+        """Overflow of 1-2 lines should not show '... +N more' notice."""
+        streamer._tool_lines = [f"tool_{i}" for i in range(_MAX_TOOL_LINES + 2)]
+        await streamer.flush()
+        call_kwargs = mock_bot.send_message_draft.call_args[1]
+        text = call_kwargs["text"]
+        assert "... +" not in text
+
+
+class TestDraftStreamerMidStreamDisable:
+    async def test_append_noop_after_mid_stream_disable(self, streamer, mock_bot):
+        """After self-disable mid-stream, append_text/append_tool don't accumulate."""
+        mock_bot.send_message_draft.side_effect = [None, Exception("flake")]
+        await streamer.append_tool("tool1")  # succeeds, _tool_lines=["tool1"]
+        # Expire throttle so the next append actually triggers _send_draft
+        streamer._last_send_time = 0.0
+        await streamer.append_text("text")  # fails on send, disables
+
+        assert not streamer._enabled
+        mock_bot.send_message_draft.reset_mock()
+
+        await streamer.append_text("more")
+        await streamer.append_tool("tool2")
+        await streamer.flush()
+
+        # No further API calls after disable
+        mock_bot.send_message_draft.assert_not_called()
+        # State frozen at point of disable — no new data accumulated
+        assert "more" not in streamer._accumulated_text
+        assert "tool2" not in streamer._tool_lines

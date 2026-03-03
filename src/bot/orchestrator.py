@@ -724,7 +724,7 @@ class MessageOrchestrator:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
-                    if not draft_streamer and verbose_level >= 1:
+                    if verbose_level >= 1:
                         tool_log.append({"kind": "tool", "name": name, "detail": detail})
                     if draft_streamer:
                         icon = _tool_icon(name)
@@ -737,7 +737,7 @@ class MessageOrchestrator:
                 if text:
                     first_line = text.split("\n", 1)[0].strip()
                     if first_line:
-                        if not draft_streamer and verbose_level >= 1:
+                        if verbose_level >= 1:
                             tool_log.append(
                                 {"kind": "text", "detail": first_line[:120]}
                             )
@@ -910,7 +910,7 @@ class MessageOrchestrator:
             draft_streamer = DraftStreamer(
                 bot=context.bot,
                 chat_id=chat.id,
-                draft_id=generate_draft_id(chat.id),
+                draft_id=generate_draft_id(),
                 message_thread_id=update.message.message_thread_id,
                 throttle_interval=self.settings.stream_draft_interval,
             )
@@ -989,7 +989,7 @@ class MessageOrchestrator:
                 try:
                     await draft_streamer.flush()
                 except Exception:
-                    pass
+                    logger.debug("Draft flush failed in finally block", user_id=user_id)
 
         try:
             await progress_msg.delete()

@@ -200,6 +200,7 @@ class Settings(BaseSettings):
         True,
         description="Conversational agentic mode (default) vs classic command mode",
     )
+
     # Reply quoting
     reply_quote: bool = Field(
         True,

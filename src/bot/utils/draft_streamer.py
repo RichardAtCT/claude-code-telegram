@@ -1,5 +1,6 @@
 """Stream partial responses to Telegram via sendMessageDraft."""
 
+import secrets
 import time
 from typing import List, Optional
 
@@ -14,13 +15,13 @@ logger = structlog.get_logger()
 _MAX_TOOL_LINES = 10
 
 
-def generate_draft_id(chat_id: int) -> int:
-    """Generate a non-zero positive draft ID for a chat.
+def generate_draft_id() -> int:
+    """Generate a non-zero positive draft ID.
 
     The same draft_id causes Telegram to animate text transitions instead of
     replacing the draft wholesale, giving a smooth streaming effect.
     """
-    return hash(f"{chat_id}:{time.time_ns()}") & 0x7FFFFFFF | 1
+    return secrets.randbits(30) | 1
 
 
 class DraftStreamer:
@@ -94,10 +95,9 @@ class DraftStreamer:
 
         if self._tool_lines:
             visible = self._tool_lines[-_MAX_TOOL_LINES:]
-            if len(self._tool_lines) > _MAX_TOOL_LINES:
-                parts.append(
-                    f"... +{len(self._tool_lines) - _MAX_TOOL_LINES} more"
-                )
+            overflow = len(self._tool_lines) - _MAX_TOOL_LINES
+            if overflow >= 3:
+                parts.append(f"... +{overflow} more")
             parts.extend(visible)
 
         if self._accumulated_text:
