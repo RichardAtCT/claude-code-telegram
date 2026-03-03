@@ -116,7 +116,6 @@ class ActiveRequest:
     user_id: int
     interrupt_event: asyncio.Event = field(default_factory=asyncio.Event)
     progress_msg: Any = None  # telegram Message object
-    interrupted: bool = False
 
 
 class MessageOrchestrator:
@@ -1304,11 +1303,10 @@ class MessageOrchestrator:
         if not active:
             await query.answer("Already completed.", show_alert=False)
             return
-        if active.interrupted:
+        if active.interrupt_event.is_set():
             await query.answer("Already stopping...", show_alert=False)
             return
 
-        active.interrupted = True
         active.interrupt_event.set()
         await query.answer("Stopping...", show_alert=False)
 

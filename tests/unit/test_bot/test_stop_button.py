@@ -65,7 +65,7 @@ class TestActiveRequest:
         req = ActiveRequest(user_id=42)
         assert req.user_id == 42
         assert isinstance(req.interrupt_event, asyncio.Event)
-        assert req.interrupted is False
+        assert not req.interrupt_event.is_set()
         assert req.progress_msg is None
 
 
@@ -95,7 +95,6 @@ class TestStopCallback:
         await orchestrator._handle_stop_callback(update, context)
 
         assert event.is_set()
-        assert active.interrupted is True
         query.answer.assert_awaited_once_with("Stopping...", show_alert=False)
         progress_msg.edit_text.assert_awaited_once_with(
             "Stopping...", reply_markup=None
@@ -122,7 +121,6 @@ class TestStopCallback:
         await orchestrator._handle_stop_callback(update, context)
 
         assert not event.is_set()
-        assert not active.interrupted
         query.answer.assert_awaited_once_with(
             "Only the requesting user can stop this.", show_alert=True
         )
@@ -166,7 +164,7 @@ class TestStopCallback:
         active = ActiveRequest(
             user_id=100, interrupt_event=event, progress_msg=AsyncMock()
         )
-        active.interrupted = True  # already stopped once
+        event.set()  # already stopped once
         orchestrator._active_requests[100] = active
 
         query = AsyncMock()
