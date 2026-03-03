@@ -31,6 +31,7 @@ from telegram.ext import (
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
+from .utils.draft_streamer import DraftStreamer, generate_draft_id
 from .utils.html_format import escape_html
 from .utils.image_extractor import (
     ImageAttachment,
@@ -676,6 +677,7 @@ class MessageOrchestrator:
         start_time: float,
         mcp_images: Optional[List[ImageAttachment]] = None,
         approved_directory: Optional[Path] = None,
+        draft_streamer: Optional[DraftStreamer] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
@@ -683,13 +685,17 @@ class MessageOrchestrator:
         ``send_image_to_user`` tool calls and collects validated
         :class:`ImageAttachment` objects for later Telegram delivery.
 
+        When *draft_streamer* is provided, tool activity and assistant
+        text are streamed to the user in real time via
+        ``sendMessageDraft``.
+
         Returns None when verbose_level is 0 **and** no MCP image
-        collection is requested.
+        collection or draft streaming is requested.
         Typing indicators are handled by a separate heartbeat task.
         """
         need_mcp_intercept = mcp_images is not None and approved_directory is not None
 
-        if verbose_level == 0 and not need_mcp_intercept:
+        if verbose_level == 0 and not need_mcp_intercept and draft_streamer is None:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
@@ -713,24 +719,41 @@ class MessageOrchestrator:
                         if img:
                             mcp_images.append(img)
 
-            # Capture tool calls for verbose log
-            if update_obj.tool_calls and verbose_level >= 1:
+            # Capture tool calls
+            if update_obj.tool_calls:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
-                    tool_log.append({"kind": "tool", "name": name, "detail": detail})
+                    if not draft_streamer and verbose_level >= 1:
+                        tool_log.append({"kind": "tool", "name": name, "detail": detail})
+                    if draft_streamer:
+                        icon = _tool_icon(name)
+                        line = f"{icon} {name}: {detail}" if detail else f"{icon} {name}"
+                        await draft_streamer.append_tool(line)
 
             # Capture assistant text (reasoning / commentary)
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
-                if text and verbose_level >= 1:
-                    # Collapse to first meaningful line, cap length
+                if text:
                     first_line = text.split("\n", 1)[0].strip()
                     if first_line:
-                        tool_log.append({"kind": "text", "detail": first_line[:120]})
+                        if not draft_streamer and verbose_level >= 1:
+                            tool_log.append(
+                                {"kind": "text", "detail": first_line[:120]}
+                            )
+                        if draft_streamer:
+                            await draft_streamer.append_tool(
+                                f"\U0001f4ac {first_line[:120]}"
+                            )
+
+            # Stream text to user via draft (prefer token deltas;
+            # skip full assistant messages to avoid double-appending)
+            if draft_streamer and update_obj.content:
+                if update_obj.type == "stream_delta":
+                    await draft_streamer.append_text(update_obj.content)
 
             # Throttle progress message edits to avoid Telegram rate limits
-            if verbose_level >= 1:
+            if not draft_streamer and verbose_level >= 1:
                 now = time.time()
                 if (now - last_edit_time[0]) >= 2.0 and tool_log:
                     last_edit_time[0] = now
@@ -880,6 +903,18 @@ class MessageOrchestrator:
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
         mcp_images: List[ImageAttachment] = []
+
+        # Stream drafts (private chats only)
+        draft_streamer: Optional[DraftStreamer] = None
+        if self.settings.enable_stream_drafts and chat.type == "private":
+            draft_streamer = DraftStreamer(
+                bot=context.bot,
+                chat_id=chat.id,
+                draft_id=generate_draft_id(chat.id),
+                message_thread_id=update.message.message_thread_id,
+                throttle_interval=self.settings.stream_draft_interval,
+            )
+
         on_stream = self._make_stream_callback(
             verbose_level,
             progress_msg,
@@ -887,6 +922,7 @@ class MessageOrchestrator:
             start_time,
             mcp_images=mcp_images,
             approved_directory=self.settings.approved_directory,
+            draft_streamer=draft_streamer,
         )
 
         # Independent typing heartbeat — stays alive even with no stream events
@@ -949,6 +985,11 @@ class MessageOrchestrator:
             ]
         finally:
             heartbeat.cancel()
+            if draft_streamer:
+                try:
+                    await draft_streamer.flush()
+                except Exception:
+                    pass
 
         try:
             await progress_msg.delete()

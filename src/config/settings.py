@@ -200,7 +200,6 @@ class Settings(BaseSettings):
         True,
         description="Conversational agentic mode (default) vs classic command mode",
     )
-
     # Reply quoting
     reply_quote: bool = Field(
         True,
@@ -220,6 +219,18 @@ class Settings(BaseSettings):
         ),
         ge=0,
         le=2,
+    )
+
+    # Streaming drafts (Telegram sendMessageDraft)
+    enable_stream_drafts: bool = Field(
+        False,
+        description="Stream partial responses via sendMessageDraft (private chats only)",
+    )
+    stream_draft_interval: float = Field(
+        0.3,
+        description="Minimum seconds between draft updates (0.1-5.0)",
+        ge=0.1,
+        le=5.0,
     )
 
     # Monitoring

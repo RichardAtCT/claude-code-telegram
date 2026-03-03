@@ -80,6 +80,11 @@ class FeatureFlags:
             return self.settings.openai_api_key is not None
         return self.settings.mistral_api_key is not None
 
+    @property
+    def stream_drafts_enabled(self) -> bool:
+        """Check if streaming drafts via sendMessageDraft is enabled."""
+        return self.settings.enable_stream_drafts
+
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""
         feature_map = {
@@ -95,6 +100,7 @@ class FeatureFlags:
             "scheduler": self.scheduler_enabled,
             "agentic_mode": self.agentic_mode_enabled,
             "voice_messages": self.voice_messages_enabled,
+            "stream_drafts": self.stream_drafts_enabled,
         }
         return feature_map.get(feature_name, False)
 
@@ -123,4 +129,6 @@ class FeatureFlags:
             features.append("scheduler")
         if self.voice_messages_enabled:
             features.append("voice_messages")
+        if self.stream_drafts_enabled:
+            features.append("stream_drafts")
         return features
