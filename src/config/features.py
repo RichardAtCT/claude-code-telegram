@@ -71,6 +71,11 @@ class FeatureFlags:
         """Check if agentic conversational mode is enabled."""
         return self.settings.agentic_mode
 
+    @property
+    def stream_drafts_enabled(self) -> bool:
+        """Check if streaming drafts via sendMessageDraft is enabled."""
+        return self.settings.enable_stream_drafts
+
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""
         feature_map = {
@@ -85,6 +90,7 @@ class FeatureFlags:
             "api_server": self.api_server_enabled,
             "scheduler": self.scheduler_enabled,
             "agentic_mode": self.agentic_mode_enabled,
+            "stream_drafts": self.stream_drafts_enabled,
         }
         return feature_map.get(feature_name, False)
 
@@ -111,4 +117,6 @@ class FeatureFlags:
             features.append("api_server")
         if self.scheduler_enabled:
             features.append("scheduler")
+        if self.stream_drafts_enabled:
+            features.append("stream_drafts")
         return features
