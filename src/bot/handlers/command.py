@@ -2,9 +2,9 @@
 
 import os
 import signal
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from datetime import datetime, timezone
 
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -15,8 +15,8 @@ from ...config.settings import Settings
 from ...projects import PrivateTopicsUnavailableError, load_project_registry
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
-from ..utils.html_format import escape_html
 from ...storage.models import SessionModel
+from ..utils.html_format import escape_html
 
 logger = structlog.get_logger()
 
