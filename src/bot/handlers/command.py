@@ -1110,7 +1110,7 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 last_used=now,
             )
         )
-        
+
         if not actions:
             await update.message.reply_text(
                 "🤖 <b>No Actions Available</b>\n\n"
