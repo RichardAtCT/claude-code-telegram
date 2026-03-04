@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timezone
 
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -13,6 +14,7 @@ from ...projects import PrivateTopicsUnavailableError, load_project_registry
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
+from ...storage.models import SessionModel
 
 logger = structlog.get_logger()
 
@@ -1099,8 +1101,15 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         # Get context-aware actions
         actions = await quick_action_manager.get_suggestions(
-            session_data={"working_directory": str(current_dir), "user_id": user_id}
+            session=SessionModel(
+                session_id="",
+                user_id=user_id,
+                project_path=str(current_dir),
+                created_at=datetime.now(timezone.utc),
+                last_used=datetime.now(timezone.utc),
+            )
         )
+     
 
         if not actions:
             await update.message.reply_text(
