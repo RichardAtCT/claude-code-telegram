@@ -222,6 +222,18 @@ class Settings(BaseSettings):
         le=2,
     )
 
+    # Streaming drafts (Telegram sendMessageDraft)
+    enable_stream_drafts: bool = Field(
+        False,
+        description="Stream partial responses via sendMessageDraft (private chats only)",
+    )
+    stream_draft_interval: float = Field(
+        0.3,
+        description="Minimum seconds between draft updates (0.1-5.0)",
+        ge=0.1,
+        le=5.0,
+    )
+
     # Monitoring
     log_level: str = Field("INFO", description="Logging level")
     enable_telemetry: bool = Field(False, description="Enable anonymous telemetry")

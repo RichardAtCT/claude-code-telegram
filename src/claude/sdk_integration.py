@@ -24,6 +24,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+from claude_agent_sdk.types import StreamEvent
 from claude_agent_sdk._errors import MessageParseError
 from claude_agent_sdk._internal.message_parser import parse_message
 
@@ -58,7 +59,7 @@ class ClaudeResponse:
 class StreamUpdate:
     """Streaming update from Claude SDK."""
 
-    type: str  # 'assistant', 'user', 'system', 'result'
+    type: str  # 'assistant', 'user', 'system', 'result', 'stream_delta'
     content: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
     metadata: Optional[Dict] = None
@@ -202,6 +203,7 @@ class ClaudeSDKManager:
                 allowed_tools=sdk_allowed_tools,
                 disallowed_tools=sdk_disallowed_tools,
                 cli_path=self.config.claude_cli_path or None,
+                include_partial_messages=stream_callback is not None,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
                     "autoAllowBashIfSandboxed": True,
@@ -491,6 +493,19 @@ class ClaudeSDKManager:
                         content=str(content),
                     )
                     await stream_callback(update)
+
+            elif isinstance(message, StreamEvent):
+                event = message.event or {}
+                if event.get("type") == "content_block_delta":
+                    delta = event.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        text = delta.get("text", "")
+                        if text:
+                            update = StreamUpdate(
+                                type="stream_delta",
+                                content=text,
+                            )
+                            await stream_callback(update)
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
