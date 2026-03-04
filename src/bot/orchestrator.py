@@ -725,10 +725,14 @@ class MessageOrchestrator:
                     name = tc.get("name", "unknown")
                     detail = self._summarize_tool_input(name, tc.get("input", {}))
                     if verbose_level >= 1:
-                        tool_log.append({"kind": "tool", "name": name, "detail": detail})
+                        tool_log.append(
+                            {"kind": "tool", "name": name, "detail": detail}
+                        )
                     if draft_streamer:
                         icon = _tool_icon(name)
-                        line = f"{icon} {name}: {detail}" if detail else f"{icon} {name}"
+                        line = (
+                            f"{icon} {name}: {detail}" if detail else f"{icon} {name}"
+                        )
                         await draft_streamer.append_tool(line)
 
             # Capture assistant text (reasoning / commentary)

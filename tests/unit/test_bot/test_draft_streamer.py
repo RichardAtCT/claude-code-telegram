@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.bot.utils.draft_streamer import (
-    DraftStreamer,
     _MAX_TOOL_LINES,
+    DraftStreamer,
     generate_draft_id,
 )
 from src.utils.constants import TELEGRAM_MAX_MESSAGE_LENGTH
