@@ -32,6 +32,14 @@ This project is currently under active development with the following status:
    ```bash
    make dev
    ```
+   > **Linux users**: If `make dev` shows a `DBusErrorResponse` / `ItemNotFoundException`
+   > error for `aiolimiter`, this is a known Poetry keyring issue on Linux and is
+   > non-fatal — the install continues. However, `aiolimiter` may not be installed,
+   > which will cause 2 test failures. Fix it by running:
+   > ```bash
+   > poetry run pip install aiolimiter
+   > ```
+   > Then re-run `make test` to confirm all tests pass.
 
 3. **Set up configuration**:
    ```bash
