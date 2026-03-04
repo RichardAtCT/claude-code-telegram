@@ -7,18 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-03-04
+
 ### Added
-- **Voice Message Transcription**:
-  - Send voice messages to the bot for automatic transcription and Claude processing
-  - Dual provider support: Mistral Voxtral (default) and OpenAI Whisper
-  - Configurable via `VOICE_PROVIDER`, `MISTRAL_API_KEY`/`OPENAI_API_KEY`, `VOICE_TRANSCRIPTION_MODEL`
-  - Works in both agentic and classic modes
-- **Version Management & Distribution**:
-  - Single source of truth: version read from `pyproject.toml` via `importlib.metadata`
-  - GitHub Release workflow triggered by `v*` tags -- runs tests, creates Release
-  - Rolling `latest` git tag updated on each stable release for `pip install git+...@latest`
-  - Makefile targets: `bump-patch`, `bump-minor`, `bump-major`, `release`, `version`
-  - Pre-release support (`-rc`, `-beta`, `-alpha` tags)
+- **Voice Message Transcription**: Send voice messages for automatic transcription and Claude processing. Dual provider support: Mistral Voxtral (default) and OpenAI Whisper (#106)
+- **`/restart` command**: Restart bot process from Telegram, plus `set_my_commands` timing fix for reliable command registration on startup (#112)
+- **Streaming partial responses**: Stream Claude's output in real-time via Telegram `sendMessageDraft` API. Enable with `ENABLE_STREAM_DRAFTS=true` (#123)
+
+### Fixed
+- **`/actions` crash**: Corrected `SessionModel` constructor argument in `get_suggestions` (#125, closes #119)
+- **Model config ignored**: `claude_model` setting now passed to SDK `ClaudeAgentOptions`. Default deferred to CLI instead of hardcoded sonnet (#121)
+
+### Documentation
+- Linux `aiolimiter` DBus installation workaround (#124)
 
 ## [1.4.0] - 2026-02-27
 
