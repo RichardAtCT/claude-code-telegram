@@ -1100,17 +1100,17 @@ async def quick_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         # Get context-aware actions
+        now = datetime.now(timezone.utc)
         actions = await quick_action_manager.get_suggestions(
             session=SessionModel(
-                session_id="",
+                session_id="",  # ephemeral session for quick actions context
                 user_id=user_id,
                 project_path=str(current_dir),
-                created_at=datetime.now(timezone.utc),
-                last_used=datetime.now(timezone.utc),
+                created_at=now,
+                last_used=now,
             )
         )
-     
-
+        
         if not actions:
             await update.message.reply_text(
                 "🤖 <b>No Actions Available</b>\n\n"
