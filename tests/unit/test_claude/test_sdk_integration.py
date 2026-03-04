@@ -639,6 +639,63 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].sandbox["enabled"] is False
 
+    async def test_claude_model_passed_to_options(self, tmp_path):
+        """Test that claude_model from config is passed to ClaudeAgentOptions."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_model="claude-sonnet-4-20250514",
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == "claude-sonnet-4-20250514"
+
+    async def test_claude_model_none_when_unset(self, tmp_path):
+        """Test that model is None when claude_model is not configured."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model is None
+
 
 class TestClaudeMCPErrors:
     """Test MCP-specific error handling."""
