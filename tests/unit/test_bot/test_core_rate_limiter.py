@@ -31,6 +31,7 @@ def bot_with_builder(monkeypatch):
     app = MagicMock()
     app.bot = MagicMock()
     app.bot.set_my_commands = AsyncMock()
+    app.initialize = AsyncMock()
     app.add_handler = MagicMock()
     app.add_error_handler = MagicMock()
     builder.build.return_value = app
