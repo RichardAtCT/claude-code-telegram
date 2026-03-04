@@ -363,6 +363,10 @@ Each command commits, tags, and pushes automatically, triggering CI tests and a 
 
 MIT License -- see [LICENSE](LICENSE).
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=RichardAtCT/claude-code-telegram&type=Date)](https://star-history.com/#RichardAtCT/claude-code-telegram&Date)
+
 ## Acknowledgments
 
 - [Claude](https://claude.ai) by Anthropic
