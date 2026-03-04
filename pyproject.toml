@@ -52,6 +52,11 @@ fastapi = "^0.115.0"
 uvicorn = {version = "^0.34.0", extras = ["standard"]}
 apscheduler = "^3.10"
 PyYAML = "^6.0.2"
+mistralai = {version = "^1.0.0", optional = true}
+openai = {version = "^1.0.0", optional = true}
+
+[tool.poetry.extras]
+voice = ["mistralai", "openai"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.0"
