@@ -8,6 +8,7 @@ classic mode, delegates to existing full-featured handlers.
 import asyncio
 import re
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -108,12 +109,22 @@ def _tool_icon(name: str) -> str:
     return _TOOL_ICONS.get(name, "\U0001f527")
 
 
+@dataclass
+class ActiveRequest:
+    """Tracks an in-flight Claude request so it can be interrupted."""
+
+    user_id: int
+    interrupt_event: asyncio.Event = field(default_factory=asyncio.Event)
+    progress_msg: Any = None  # telegram Message object
+
+
 class MessageOrchestrator:
     """Routes messages based on mode. Single entry point for all Telegram updates."""
 
     def __init__(self, settings: Settings, deps: Dict[str, Any]):
         self.settings = settings
         self.deps = deps
+        self._active_requests: Dict[int, ActiveRequest] = {}
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
         """Wrap handler to inject dependencies into context.bot_data."""
@@ -334,6 +345,14 @@ class MessageOrchestrator:
         app.add_handler(
             MessageHandler(filters.PHOTO, self._inject_deps(self.agentic_photo)),
             group=10,
+        )
+
+        # Stop button callback (must be before cd: handler)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_stop_callback),
+                pattern=r"^stop:",
+            )
         )
 
         # Only cd: callbacks (for project selection), scoped by pattern
@@ -662,6 +681,7 @@ class MessageOrchestrator:
         start_time: float,
         mcp_images: Optional[List[ImageAttachment]] = None,
         approved_directory: Optional[Path] = None,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
         """Create a stream callback for verbose progress updates.
 
@@ -724,7 +744,9 @@ class MessageOrchestrator:
                         tool_log, verbose_level, start_time
                     )
                     try:
-                        await progress_msg.edit_text(new_text)
+                        await progress_msg.edit_text(
+                            new_text, reply_markup=reply_markup
+                        )
                     except Exception:
                         pass
 
@@ -822,7 +844,7 @@ class MessageOrchestrator:
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Direct Claude passthrough. Simple progress. No suggestions."""
+        """Direct Claude passthrough. Delegates to shared processing method."""
         user_id = update.effective_user.id
         message_text = update.message.text
 
@@ -831,6 +853,24 @@ class MessageOrchestrator:
             user_id=user_id,
             message_length=len(message_text),
         )
+
+        await self._process_text_with_claude(update, context, message_text)
+
+    async def _process_text_with_claude(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        text: str,
+        audit_command: str = "text_message",
+    ) -> None:
+        """Core Claude processing shared by text, document, and photo handlers.
+
+        Runs inline (blocks the PTB handler) so that sequential message
+        processing is preserved.  The ``StopAwareUpdateProcessor`` ensures
+        that stop-button callbacks bypass the sequential lock and can fire
+        the interrupt event while this method is awaiting ``run_command()``.
+        """
+        user_id = update.effective_user.id
 
         # Rate limit check
         rate_limiter = context.bot_data.get("rate_limiter")
@@ -844,12 +884,31 @@ class MessageOrchestrator:
         await chat.send_action("typing")
 
         verbose_level = self._get_verbose_level(context)
-        progress_msg = await update.message.reply_text("Working...")
+
+        # Create Stop button and interrupt event
+        interrupt_event = asyncio.Event()
+        stop_kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Stop", callback_data=f"stop:{user_id}")]]
+        )
+        progress_msg = await update.message.reply_text(
+            "Working...", reply_markup=stop_kb
+        )
+
+        # Register active request for stop callback
+        active_request = ActiveRequest(
+            user_id=user_id,
+            interrupt_event=interrupt_event,
+            progress_msg=progress_msg,
+        )
+        self._active_requests[user_id] = active_request
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
+            if self._active_requests.get(user_id) is active_request:
+                del self._active_requests[user_id]
             await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
+                "Claude integration not available. Check configuration.",
+                reply_markup=None,
             )
             return
 
@@ -857,12 +916,10 @@ class MessageOrchestrator:
             "current_directory", self.settings.approved_directory
         )
         session_id = context.user_data.get("claude_session_id")
-
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(context.user_data.get("force_new_session"))
+        storage = context.bot_data.get("storage")
+        audit_logger = context.bot_data.get("audit_logger")
 
-        # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
         start_time = time.time()
         mcp_images: List[ImageAttachment] = []
@@ -873,56 +930,58 @@ class MessageOrchestrator:
             start_time,
             mcp_images=mcp_images,
             approved_directory=self.settings.approved_directory,
+            reply_markup=stop_kb,
         )
 
-        # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
         success = True
+        formatted_messages: list = []  # type: ignore[type-arg]
         try:
             claude_response = await claude_integration.run_command(
-                prompt=message_text,
+                prompt=text,
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                interrupt_event=interrupt_event,
             )
 
-            # New session created successfully — clear the one-shot flag
             if force_new:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
 
-            # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
 
             _update_working_directory_from_claude_response(
                 claude_response, context, self.settings, user_id
             )
 
-            # Store interaction
-            storage = context.bot_data.get("storage")
             if storage:
                 try:
                     await storage.save_claude_interaction(
                         user_id=user_id,
                         session_id=claude_response.session_id,
-                        prompt=message_text,
+                        prompt=text,
                         response=claude_response,
                         ip_address=None,
                     )
                 except Exception as e:
                     logger.warning("Failed to log interaction", error=str(e))
 
-            # Format response (no reply_markup — strip keyboards)
             from .utils.formatting import ResponseFormatter
 
             formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(
-                claude_response.content
-            )
+
+            response_content = claude_response.content
+            if claude_response.interrupted:
+                response_content = (
+                    response_content or ""
+                ) + "\n\n_(Interrupted by user)_"
+
+            formatted_messages = formatter.format_claude_response(response_content)
 
         except Exception as e:
             success = False
@@ -935,11 +994,13 @@ class MessageOrchestrator:
             ]
         finally:
             heartbeat.cancel()
+            if self._active_requests.get(user_id) is active_request:
+                del self._active_requests[user_id]
 
         try:
             await progress_msg.delete()
         except Exception:
-            logger.debug("Failed to delete progress message, ignoring")
+            pass
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
@@ -969,7 +1030,7 @@ class MessageOrchestrator:
                     await update.message.reply_text(
                         message.text,
                         parse_mode=message.parse_mode,
-                        reply_markup=None,  # No keyboards in agentic mode
+                        reply_markup=None,
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
@@ -1011,13 +1072,11 @@ class MessageOrchestrator:
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
 
-        # Audit log
-        audit_logger = context.bot_data.get("audit_logger")
         if audit_logger:
             await audit_logger.log_command(
                 user_id=user_id,
-                command="text_message",
-                args=[message_text[:100]],
+                command=audit_command,
+                args=[text[:100]],
                 success=success,
             )
 
@@ -1050,10 +1109,6 @@ class MessageOrchestrator:
             )
             return
 
-        chat = update.message.chat
-        await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
-
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
         file_handler = features.get_file_handler() if features else None
@@ -1083,122 +1138,14 @@ class MessageOrchestrator:
                     f"```\n{content}\n```"
                 )
             except UnicodeDecodeError:
-                await progress_msg.edit_text(
+                await update.message.reply_text(
                     "Unsupported file format. Must be text-based (UTF-8)."
                 )
                 return
 
-        # Process with Claude
-        claude_integration = context.bot_data.get("claude_integration")
-        if not claude_integration:
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
-            )
-            return
-
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+        await self._process_text_with_claude(
+            update, context, prompt, audit_command="document_upload"
         )
-        session_id = context.user_data.get("claude_session_id")
-
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
-
-        verbose_level = self._get_verbose_level(context)
-        tool_log: List[Dict[str, Any]] = []
-        mcp_images_doc: List[ImageAttachment] = []
-        on_stream = self._make_stream_callback(
-            verbose_level,
-            progress_msg,
-            tool_log,
-            time.time(),
-            mcp_images=mcp_images_doc,
-            approved_directory=self.settings.approved_directory,
-        )
-
-        heartbeat = self._start_typing_heartbeat(chat)
-        try:
-            claude_response = await claude_integration.run_command(
-                prompt=prompt,
-                working_directory=current_dir,
-                user_id=user_id,
-                session_id=session_id,
-                on_stream=on_stream,
-                force_new=force_new,
-            )
-
-            if force_new:
-                context.user_data["force_new_session"] = False
-
-            context.user_data["claude_session_id"] = claude_response.session_id
-
-            from .handlers.message import _update_working_directory_from_claude_response
-
-            _update_working_directory_from_claude_response(
-                claude_response, context, self.settings, user_id
-            )
-
-            from .utils.formatting import ResponseFormatter
-
-            formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(
-                claude_response.content
-            )
-
-            try:
-                await progress_msg.delete()
-            except Exception:
-                logger.debug("Failed to delete progress message, ignoring")
-
-            # Use MCP-collected images (from send_image_to_user tool calls)
-            images: List[ImageAttachment] = mcp_images_doc
-
-            caption_sent = False
-            if images and len(formatted_messages) == 1:
-                msg = formatted_messages[0]
-                if msg.text and len(msg.text) <= 1024:
-                    try:
-                        caption_sent = await self._send_images(
-                            update,
-                            images,
-                            reply_to_message_id=update.message.message_id,
-                            caption=msg.text,
-                            caption_parse_mode=msg.parse_mode,
-                        )
-                    except Exception as img_err:
-                        logger.warning("Image+caption send failed", error=str(img_err))
-
-            if not caption_sent:
-                for i, message in enumerate(formatted_messages):
-                    await update.message.reply_text(
-                        message.text,
-                        parse_mode=message.parse_mode,
-                        reply_markup=None,
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
-                    if i < len(formatted_messages) - 1:
-                        await asyncio.sleep(0.5)
-
-                if images:
-                    try:
-                        await self._send_images(
-                            update,
-                            images,
-                            reply_to_message_id=update.message.message_id,
-                        )
-                    except Exception as img_err:
-                        logger.warning("Image send failed", error=str(img_err))
-
-        except Exception as e:
-            from .handlers.message import _format_error_message
-
-            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
-            logger.error("Claude file processing failed", error=str(e), user_id=user_id)
-        finally:
-            heartbeat.cancel()
 
     async def agentic_photo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1213,122 +1160,28 @@ class MessageOrchestrator:
             await update.message.reply_text("Photo processing is not available.")
             return
 
-        chat = update.message.chat
-        await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
-
         try:
             photo = update.message.photo[-1]
             processed_image = await image_handler.process_image(
                 photo, update.message.caption
             )
-
-            claude_integration = context.bot_data.get("claude_integration")
-            if not claude_integration:
-                await progress_msg.edit_text(
-                    "Claude integration not available. Check configuration."
-                )
-                return
-
-            current_dir = context.user_data.get(
-                "current_directory", self.settings.approved_directory
-            )
-            session_id = context.user_data.get("claude_session_id")
-
-            # Check if /new was used — skip auto-resume for this first message.
-            # Flag is only cleared after a successful run so retries keep the intent.
-            force_new = bool(context.user_data.get("force_new_session"))
-
-            verbose_level = self._get_verbose_level(context)
-            tool_log: List[Dict[str, Any]] = []
-            mcp_images_photo: List[ImageAttachment] = []
-            on_stream = self._make_stream_callback(
-                verbose_level,
-                progress_msg,
-                tool_log,
-                time.time(),
-                mcp_images=mcp_images_photo,
-                approved_directory=self.settings.approved_directory,
-            )
-
-            heartbeat = self._start_typing_heartbeat(chat)
-            try:
-                claude_response = await claude_integration.run_command(
-                    prompt=processed_image.prompt,
-                    working_directory=current_dir,
-                    user_id=user_id,
-                    session_id=session_id,
-                    on_stream=on_stream,
-                    force_new=force_new,
-                )
-            finally:
-                heartbeat.cancel()
-
-            if force_new:
-                context.user_data["force_new_session"] = False
-
-            context.user_data["claude_session_id"] = claude_response.session_id
-
-            from .utils.formatting import ResponseFormatter
-
-            formatter = ResponseFormatter(self.settings)
-            formatted_messages = formatter.format_claude_response(
-                claude_response.content
-            )
-
-            try:
-                await progress_msg.delete()
-            except Exception:
-                logger.debug("Failed to delete progress message, ignoring")
-
-            # Use MCP-collected images (from send_image_to_user tool calls)
-            images: List[ImageAttachment] = mcp_images_photo
-
-            caption_sent = False
-            if images and len(formatted_messages) == 1:
-                msg = formatted_messages[0]
-                if msg.text and len(msg.text) <= 1024:
-                    try:
-                        caption_sent = await self._send_images(
-                            update,
-                            images,
-                            reply_to_message_id=update.message.message_id,
-                            caption=msg.text,
-                            caption_parse_mode=msg.parse_mode,
-                        )
-                    except Exception as img_err:
-                        logger.warning("Image+caption send failed", error=str(img_err))
-
-            if not caption_sent:
-                for i, message in enumerate(formatted_messages):
-                    await update.message.reply_text(
-                        message.text,
-                        parse_mode=message.parse_mode,
-                        reply_markup=None,
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
-                    if i < len(formatted_messages) - 1:
-                        await asyncio.sleep(0.5)
-
-                if images:
-                    try:
-                        await self._send_images(
-                            update,
-                            images,
-                            reply_to_message_id=update.message.message_id,
-                        )
-                    except Exception as img_err:
-                        logger.warning("Image send failed", error=str(img_err))
-
         except Exception as e:
             from .handlers.message import _format_error_message
 
-            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
             logger.error(
                 "Claude photo processing failed", error=str(e), user_id=user_id
             )
+            try:
+                await update.message.reply_text(
+                    _format_error_message(e), parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            return
+
+        await self._process_text_with_claude(
+            update, context, processed_image.prompt, audit_command="photo_upload"
+        )
 
     async def agentic_repo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1425,6 +1278,42 @@ class MessageOrchestrator:
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
+
+    async def _handle_stop_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle stop: callbacks — interrupt a running Claude request."""
+        query = update.callback_query
+        if not query or not query.data or not query.from_user:
+            return
+        try:
+            target_user_id = int(query.data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await query.answer()
+            return
+
+        # Only the requesting user can stop their own request
+        if query.from_user.id != target_user_id:
+            await query.answer(
+                "Only the requesting user can stop this.", show_alert=True
+            )
+            return
+
+        active = self._active_requests.get(target_user_id)
+        if not active:
+            await query.answer("Already completed.", show_alert=False)
+            return
+        if active.interrupt_event.is_set():
+            await query.answer("Already stopping...", show_alert=False)
+            return
+
+        active.interrupt_event.set()
+        await query.answer("Stopping...", show_alert=False)
+
+        try:
+            await active.progress_msg.edit_text("Stopping...", reply_markup=None)
+        except Exception:
+            pass
 
     async def _agentic_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

@@ -3,6 +3,7 @@
 Provides simple interface for bot handlers.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -37,6 +38,7 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
         force_new: bool = False,
+        interrupt_event: Optional[asyncio.Event] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -85,6 +87,7 @@ class ClaudeIntegration:
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=on_stream,
+                    interrupt_event=interrupt_event,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -109,6 +112,7 @@ class ClaudeIntegration:
                         session_id=None,
                         continue_session=False,
                         stream_callback=on_stream,
+                        interrupt_event=interrupt_event,
                     )
                 else:
                     raise
@@ -152,6 +156,7 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
+        interrupt_event: Optional[asyncio.Event] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -160,6 +165,7 @@ class ClaudeIntegration:
             session_id=session_id,
             continue_session=continue_session,
             stream_callback=stream_callback,
+            interrupt_event=interrupt_event,
         )
 
     async def _find_resumable_session(
