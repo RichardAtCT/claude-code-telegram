@@ -26,6 +26,10 @@ from src.utils.constants import (
     DEFAULT_RATE_LIMIT_BURST,
     DEFAULT_RATE_LIMIT_REQUESTS,
     DEFAULT_RATE_LIMIT_WINDOW,
+    DEFAULT_RETRY_BACKOFF_FACTOR,
+    DEFAULT_RETRY_BASE_DELAY,
+    DEFAULT_RETRY_MAX_ATTEMPTS,
+    DEFAULT_RETRY_MAX_DELAY,
     DEFAULT_SESSION_TIMEOUT_HOURS,
 )
 
@@ -119,6 +123,21 @@ class Settings(BaseSettings):
     claude_disallowed_tools: Optional[List[str]] = Field(
         default=[],
         description="List of explicitly disallowed Claude tools/commands",
+    )
+
+    # Retry settings
+    claude_retry_max_attempts: int = Field(
+        DEFAULT_RETRY_MAX_ATTEMPTS,
+        description="Max retry attempts for transient SDK errors (0 = disabled)",
+    )
+    claude_retry_base_delay: float = Field(
+        DEFAULT_RETRY_BASE_DELAY, description="Base delay in seconds between retries"
+    )
+    claude_retry_backoff_factor: float = Field(
+        DEFAULT_RETRY_BACKOFF_FACTOR, description="Exponential backoff multiplier"
+    )
+    claude_retry_max_delay: float = Field(
+        DEFAULT_RETRY_MAX_DELAY, description="Maximum delay cap in seconds"
     )
 
     # Sandbox settings
