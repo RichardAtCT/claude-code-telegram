@@ -134,7 +134,10 @@ class Settings(BaseSettings):
     claude_retry_base_delay: float = Field(
         DEFAULT_RETRY_BASE_DELAY,
         ge=0,
-        description="Base delay in seconds between retries",
+        description=(
+            "Base delay in seconds between retries. "
+            "0 means retries are attempted immediately with no pause."
+        ),
     )
     claude_retry_backoff_factor: float = Field(
         DEFAULT_RETRY_BACKOFF_FACTOR,
@@ -144,7 +147,10 @@ class Settings(BaseSettings):
     claude_retry_max_delay: float = Field(
         DEFAULT_RETRY_MAX_DELAY,
         ge=0,
-        description="Maximum delay cap in seconds",
+        description=(
+            "Maximum delay cap in seconds. "
+            "0 disables the cap entirely (delays grow unbounded with backoff)."
+        ),
     )
 
     # Sandbox settings
