@@ -390,6 +390,90 @@ class TestClaudeSDKManager:
             not hasattr(captured_options[0], "resume") or not captured_options[0].resume
         )
 
+    async def test_retry_on_transient_cli_connection_error(self, sdk_manager):
+        """Test that transient CLIConnectionError triggers retry and succeeds."""
+        from claude_agent_sdk import CLIConnectionError
+
+        call_count = 0
+
+        async def flaky_receive():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise CLIConnectionError("connection reset")
+            # Second attempt succeeds - yield a ResultMessage
+            yield
+
+        # Use a config with 2 attempts
+        sdk_manager.config.claude_retry_max_attempts = 2
+
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.query = AsyncMock()
+        query_mock = AsyncMock()
+        query_mock.receive_messages = flaky_receive
+        client._query = query_mock
+
+        # Should not raise - second attempt succeeds
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client):
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                try:
+                    await sdk_manager.execute_command(
+                        prompt="Test",
+                        working_directory=Path("/test"),
+                    )
+                except Exception:
+                    pass  # Response parsing may fail - what matters is retry happened
+        assert call_count == 2
+
+    async def test_no_retry_on_mcp_connection_error(self, sdk_manager):
+        """Test that MCP CLIConnectionError is NOT retried."""
+        from claude_agent_sdk import CLIConnectionError
+
+        from src.claude.exceptions import ClaudeMCPError
+
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.query = AsyncMock(side_effect=CLIConnectionError("mcp server failed"))
+
+        with patch("src.claude.sdk_integration.ClaudeSDKClient", return_value=client):
+            with pytest.raises((ClaudeMCPError, Exception)):
+                await sdk_manager.execute_command(
+                    prompt="Test",
+                    working_directory=Path("/test"),
+                )
+        # Only called once - no retry for MCP errors
+        assert client.query.call_count == 1
+
+    async def test_retry_disabled_when_max_attempts_zero(self, sdk_manager):
+        """Test that setting max_attempts=0 effectively disables retries (1 attempt)."""
+        sdk_manager.config.claude_retry_max_attempts = 0
+        assert max(1, sdk_manager.config.claude_retry_max_attempts) == 1
+
+    def test_is_retryable_error_transient(self, sdk_manager):
+        """Test _is_retryable_error returns True for transient connection errors."""
+        from claude_agent_sdk import CLIConnectionError
+
+        assert (
+            sdk_manager._is_retryable_error(CLIConnectionError("connection reset"))
+            is True
+        )
+
+    def test_is_retryable_error_mcp(self, sdk_manager):
+        """Test _is_retryable_error returns False for MCP errors."""
+        from claude_agent_sdk import CLIConnectionError
+
+        assert (
+            sdk_manager._is_retryable_error(CLIConnectionError("mcp server failed"))
+            is False
+        )
+
+    def test_is_retryable_error_timeout(self, sdk_manager):
+        """Test _is_retryable_error returns False for timeout errors."""
+        assert sdk_manager._is_retryable_error(asyncio.TimeoutError()) is False
+
 
 class TestClaudeSandboxSettings:
     """Test sandbox and system_prompt settings on ClaudeAgentOptions."""

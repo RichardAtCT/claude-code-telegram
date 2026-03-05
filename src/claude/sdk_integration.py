@@ -146,6 +146,16 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
+    def _is_retryable_error(self, exc: BaseException) -> bool:
+        """Return True for transient errors that warrant a retry.
+        asyncio.TimeoutError is intentional (user-configured timeout) — not retried.
+        Only non-MCP CLIConnectionError is considered transient.
+        """
+        if isinstance(exc, CLIConnectionError):
+            msg = str(exc).lower()
+            return "mcp" not in msg  # "server" alone is too broad
+        return False
+
     async def execute_command(
         self,
         prompt: str,
@@ -288,11 +298,49 @@ class ClaudeSDKManager:
                 finally:
                     await client.disconnect()
 
-            # Execute with timeout
-            await asyncio.wait_for(
-                _run_client(),
-                timeout=self.config.claude_timeout_seconds,
-            )
+            # Execute with timeout, retrying on transient CLIConnectionError
+            max_attempts = max(1, self.config.claude_retry_max_attempts)
+
+            for attempt in range(max_attempts):
+                # Reset message accumulator each attempt so that a failed attempt
+                # does not pollute the next one with partial/duplicate messages.
+                # _run_client() closes over `messages` by reference (late-binding
+                # closure), so clearing it here is seen by every new call.
+                messages.clear()
+
+                if attempt > 0:
+                    delay = min(
+                        self.config.claude_retry_base_delay
+                        * (self.config.claude_retry_backoff_factor ** (attempt - 1)),
+                        self.config.claude_retry_max_delay,
+                    )
+                    logger.warning(
+                        "Retrying Claude SDK command",
+                        attempt=attempt + 1,
+                        max_attempts=max_attempts,
+                        delay_seconds=delay,
+                    )
+                    await asyncio.sleep(delay)
+                # Note: asyncio.TimeoutError raised by wait_for is intentionally
+                # NOT caught below — it propagates immediately to the outer
+                # `except asyncio.TimeoutError` handler, bypassing the retry
+                # loop entirely.  Timeouts reflect a user-configured hard limit
+                # and should not be retried.
+                try:
+                    await asyncio.wait_for(
+                        _run_client(),
+                        timeout=self.config.claude_timeout_seconds,
+                    )
+                    break  # success — exit retry loop
+                except CLIConnectionError as exc:
+                    if self._is_retryable_error(exc) and attempt < max_attempts - 1:
+                        logger.warning(
+                            "Transient connection error, will retry",
+                            attempt=attempt + 1,
+                            error=str(exc),
+                        )
+                        continue
+                    raise  # non-retryable or attempts exhausted
 
             # Extract cost, tools, and session_id from result message
             cost = 0.0
