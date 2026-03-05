@@ -128,16 +128,23 @@ class Settings(BaseSettings):
     # Retry settings
     claude_retry_max_attempts: int = Field(
         DEFAULT_RETRY_MAX_ATTEMPTS,
+        ge=0,
         description="Max retry attempts for transient SDK errors (0 = disabled)",
     )
     claude_retry_base_delay: float = Field(
-        DEFAULT_RETRY_BASE_DELAY, description="Base delay in seconds between retries"
+        DEFAULT_RETRY_BASE_DELAY,
+        ge=0,
+        description="Base delay in seconds between retries",
     )
     claude_retry_backoff_factor: float = Field(
-        DEFAULT_RETRY_BACKOFF_FACTOR, description="Exponential backoff multiplier"
+        DEFAULT_RETRY_BACKOFF_FACTOR,
+        gt=0,
+        description="Exponential backoff multiplier",
     )
     claude_retry_max_delay: float = Field(
-        DEFAULT_RETRY_MAX_DELAY, description="Maximum delay cap in seconds"
+        DEFAULT_RETRY_MAX_DELAY,
+        ge=0,
+        description="Maximum delay cap in seconds",
     )
 
     # Sandbox settings
