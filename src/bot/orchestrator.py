@@ -318,7 +318,7 @@ class MessageOrchestrator:
         # Text messages -> Claude
         app.add_handler(
             MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
+                filters.TEXT,
                 self._inject_deps(self.agentic_text),
             ),
             group=10,
