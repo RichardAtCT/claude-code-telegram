@@ -127,6 +127,7 @@ class MessageOrchestrator:
         self.settings = settings
         self.deps = deps
         self._active_requests: Dict[int, ActiveRequest] = {}
+        self._known_commands: frozenset[str] = frozenset()
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
         """Wrap handler to inject dependencies into context.bot_data."""
