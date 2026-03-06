@@ -9,7 +9,7 @@ import asyncio
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 import structlog
 from telegram import (
@@ -311,6 +311,9 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
+
+        # Derive known commands dynamically — avoids drift when new commands are added
+        self._known_commands: frozenset[str] = frozenset(cmd for cmd, _ in handlers)
 
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
@@ -1463,30 +1466,6 @@ class MessageOrchestrator:
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
 
-    # Commands registered via CommandHandler (group 0). Used by
-    # _handle_unknown_command to avoid forwarding known commands to Claude.
-    KNOWN_COMMANDS: frozenset = frozenset(
-        {
-            "start",
-            "help",
-            "new",
-            "continue",
-            "end",
-            "status",
-            "export",
-            "ls",
-            "cd",
-            "pwd",
-            "projects",
-            "actions",
-            "git",
-            "sync_threads",
-            "verbose",
-            "repo",
-            "restart",
-        }
-    )
-
     async def _handle_unknown_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1501,7 +1480,7 @@ class MessageOrchestrator:
         if not msg or not msg.text:
             return
         cmd = msg.text.split()[0].lstrip("/").split("@")[0].lower()
-        if cmd in self.KNOWN_COMMANDS:
+        if cmd in self._known_commands:
             return  # let the registered CommandHandler take care of it
         # Forward unrecognised /commands to Claude as natural language
         await self.agentic_text(update, context)

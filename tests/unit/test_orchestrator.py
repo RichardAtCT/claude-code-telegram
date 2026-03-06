@@ -926,3 +926,63 @@ async def test_private_mode_rejects_help_outside_topics(private_thread_settings,
 
     assert called["value"] is False
     update.effective_message.reply_text.assert_called_once()
+
+
+async def test_known_command_not_forwarded_to_claude(agentic_settings, deps):
+    """Known commands must NOT be forwarded to agentic_text."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
+    orchestrator.register_handlers(app)
+
+    update = MagicMock()
+    update.effective_message.text = "/start"
+    context = MagicMock()
+
+    with patch.object(
+        orchestrator, "agentic_text", new_callable=AsyncMock
+    ) as mock_claude:
+        await orchestrator._handle_unknown_command(update, context)
+        mock_claude.assert_not_called()
+
+
+async def test_unknown_command_forwarded_to_claude(agentic_settings, deps):
+    """Unknown slash commands must be forwarded to agentic_text."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
+    orchestrator.register_handlers(app)
+
+    update = MagicMock()
+    update.effective_message.text = "/workflow activate job-hunter"
+    context = MagicMock()
+
+    with patch.object(
+        orchestrator, "agentic_text", new_callable=AsyncMock
+    ) as mock_claude:
+        await orchestrator._handle_unknown_command(update, context)
+        mock_claude.assert_called_once_with(update, context)
+
+
+async def test_bot_suffixed_command_not_forwarded(agentic_settings, deps):
+    """Bot-suffixed known commands like /start@mybot must not reach Claude."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
+    orchestrator.register_handlers(app)
+
+    update = MagicMock()
+    update.effective_message.text = "/start@mybot"
+    context = MagicMock()
+
+    with patch.object(
+        orchestrator, "agentic_text", new_callable=AsyncMock
+    ) as mock_claude:
+        await orchestrator._handle_unknown_command(update, context)
+        mock_claude.assert_not_called()
