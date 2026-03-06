@@ -9,7 +9,7 @@ import asyncio
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 from telegram import (
