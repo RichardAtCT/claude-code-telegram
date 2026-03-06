@@ -160,6 +160,24 @@ class Settings(BaseSettings):
     )
 
     # Features
+    enable_voice_processing: bool = Field(False, description="Enable voice message transcription")
+    voice_provider: Literal["mistral", "openai", "parakeet"] = Field(
+        "parakeet",
+        description="Voice transcription provider: 'mistral', 'openai', or 'parakeet' (local GPU)",
+    )
+    ffmpeg_path: Optional[str] = Field(
+        None,
+        description="Path to ffmpeg binary. Falls back to 'ffmpeg' from PATH if not set.",
+    )
+    voice_max_file_size_mb: int = Field(
+        20,
+        description="Maximum voice message size in MB",
+        ge=1,
+        le=200,
+    )
+    # Mistral / OpenAI voice keys (used when voice_provider != parakeet)
+    mistral_api_key: Optional[SecretStr] = Field(None, description="Mistral API key for Voxtral")
+    openai_api_key: Optional[SecretStr] = Field(None, description="OpenAI API key for Whisper")
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
         None, description="MCP configuration file path"
@@ -433,3 +451,23 @@ class Settings(BaseSettings):
             if self.anthropic_api_key
             else None
         )
+
+    @property
+    def mistral_api_key_str(self) -> Optional[str]:
+        """Get Mistral API key as string."""
+        return self.mistral_api_key.get_secret_value() if self.mistral_api_key else None
+
+    @property
+    def openai_api_key_str(self) -> Optional[str]:
+        """Get OpenAI API key as string."""
+        return self.openai_api_key.get_secret_value() if self.openai_api_key else None
+
+    @property
+    def voice_max_file_size_bytes(self) -> int:
+        """Maximum allowed voice message size in bytes."""
+        return self.voice_max_file_size_mb * 1024 * 1024
+
+    @property
+    def resolved_ffmpeg_path(self) -> str:
+        """ffmpeg binary path: explicit setting or fall back to PATH."""
+        return self.ffmpeg_path or "ffmpeg"

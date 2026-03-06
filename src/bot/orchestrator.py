@@ -336,6 +336,15 @@ class MessageOrchestrator:
             group=10,
         )
 
+        # Voice/audio messages -> transcribe -> Claude
+        app.add_handler(
+            MessageHandler(
+                filters.VOICE | filters.AUDIO,
+                self._inject_deps(self.agentic_voice),
+            ),
+            group=10,
+        )
+
         # Only cd: callbacks (for project selection), scoped by pattern
         app.add_handler(
             CallbackQueryHandler(
@@ -1328,6 +1337,97 @@ class MessageOrchestrator:
             await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
             logger.error(
                 "Claude photo processing failed", error=str(e), user_id=user_id
+            )
+
+    async def agentic_voice(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Transcribe voice/audio message via configured provider, then pass to Claude."""
+        user_id = update.effective_user.id
+
+        features = context.bot_data.get("features")
+        voice_handler = features.get_voice_handler() if features else None
+
+        if not voice_handler:
+            await update.message.reply_text("Voice processing is not available.")
+            return
+
+        chat = update.message.chat
+        await chat.send_action("typing")
+        progress_msg = await update.message.reply_text("Transcribing...")
+
+        try:
+            voice = update.message.voice or update.message.audio
+            processed = await voice_handler.process_voice_message(
+                voice, caption=update.message.caption
+            )
+
+            # Show transcription to user
+            await progress_msg.edit_text(f"\U0001f3a4 {processed.transcription}")
+
+            claude_integration = context.bot_data.get("claude_integration")
+            if not claude_integration:
+                return
+
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+            session_id = context.user_data.get("claude_session_id")
+            force_new = bool(context.user_data.get("force_new_session"))
+            verbose_level = self._get_verbose_level(context)
+            tool_log: List[Dict[str, Any]] = []
+            mcp_images_voice: List[Any] = []
+            on_stream = self._make_stream_callback(
+                verbose_level,
+                progress_msg,
+                tool_log,
+                time.time(),
+                mcp_images=mcp_images_voice,
+                approved_directory=self.settings.approved_directory,
+            )
+
+            heartbeat = self._start_typing_heartbeat(chat)
+            try:
+                claude_response = await claude_integration.run_command(
+                    prompt=processed.prompt,
+                    working_directory=current_dir,
+                    user_id=user_id,
+                    session_id=session_id,
+                    on_stream=on_stream,
+                    force_new=force_new,
+                )
+            finally:
+                heartbeat.cancel()
+
+            if force_new:
+                context.user_data["force_new_session"] = False
+
+            context.user_data["claude_session_id"] = claude_response.session_id
+
+            from .utils.formatting import ResponseFormatter
+
+            formatter = ResponseFormatter(self.settings)
+            formatted_messages = formatter.format_claude_response(
+                claude_response.content
+            )
+
+            for i, message in enumerate(formatted_messages):
+                await update.message.reply_text(
+                    message.text,
+                    parse_mode=message.parse_mode,
+                    reply_to_message_id=(
+                        update.message.message_id if i == 0 else None
+                    ),
+                )
+                if i < len(formatted_messages) - 1:
+                    await asyncio.sleep(0.5)
+
+        except Exception as e:
+            from .handlers.message import _format_error_message
+
+            await progress_msg.edit_text(_format_error_message(e), parse_mode="HTML")
+            logger.error(
+                "Voice processing failed", error=str(e), user_id=user_id
             )
 
     async def agentic_repo(

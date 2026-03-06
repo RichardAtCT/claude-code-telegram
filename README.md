@@ -213,6 +213,81 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 
 - Plugin system for third-party extensions
 
+## Voice Transcription
+
+The bot can transcribe Telegram voice messages and pass them as text to Claude. Three providers are supported:
+
+| Provider | Type | Best for |
+|----------|------|----------|
+| `parakeet` (default) | Local GPU | Privacy, no API cost, fast on NVIDIA GPU |
+| `mistral` | Cloud (Voxtral) | Quality without local GPU |
+| `openai` | Cloud (Whisper) | Widely supported cloud option |
+
+### Enable voice processing
+
+```bash
+ENABLE_VOICE_PROCESSING=true
+VOICE_PROVIDER=parakeet   # or: mistral, openai
+```
+
+### Parakeet (local GPU, no API key required)
+
+[NVIDIA NeMo Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) runs on your GPU — no cloud API needed, no per-minute cost.
+
+**Requirements:**
+
+- NVIDIA GPU with CUDA support
+- [ffmpeg](https://ffmpeg.org/download.html) installed and on PATH (or set `FFMPEG_PATH`)
+- `claude-code-telegram[parakeet]` extras
+
+**Install:**
+
+```bash
+pip install "claude-code-telegram[parakeet]"
+# or with poetry:
+poetry install --with parakeet
+```
+
+**Configure:**
+
+```bash
+ENABLE_VOICE_PROCESSING=true
+VOICE_PROVIDER=parakeet
+# Optional: explicit path to ffmpeg if not on PATH
+FFMPEG_PATH=/usr/bin/ffmpeg
+```
+
+The NeMo model (~600 MB) is downloaded automatically on first use and cached locally.
+
+### Cloud providers (Mistral / OpenAI)
+
+```bash
+# Mistral Voxtral
+ENABLE_VOICE_PROCESSING=true
+VOICE_PROVIDER=mistral
+MISTRAL_API_KEY=your-mistral-api-key
+
+# OpenAI Whisper
+ENABLE_VOICE_PROCESSING=true
+VOICE_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
+```
+
+**Install cloud extras:**
+
+```bash
+pip install "claude-code-telegram[voice]"
+# or with poetry:
+poetry install --with voice
+```
+
+### Additional voice settings
+
+```bash
+VOICE_MAX_FILE_SIZE_MB=20    # Max voice message size (default: 20 MB)
+FFMPEG_PATH=                 # Optional explicit path to ffmpeg binary
+```
+
 ## Configuration
 
 ### Required
