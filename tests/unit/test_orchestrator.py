@@ -149,8 +149,8 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    # 4 message handlers (text, document, photo, voice)
-    assert len(msg_handlers) == 4
+    # 5 message handlers (text, document, photo, voice, unknown commands passthrough)
+    assert len(msg_handlers) == 5
     # 1 callback handler (for cd: only)
     assert len(cb_handlers) == 1
 

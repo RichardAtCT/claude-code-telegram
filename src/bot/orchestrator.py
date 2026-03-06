@@ -318,8 +318,21 @@ class MessageOrchestrator:
         # Text messages -> Claude
         app.add_handler(
             MessageHandler(
-                filters.TEXT,
+                filters.TEXT & ~filters.COMMAND,
                 self._inject_deps(self.agentic_text),
+            ),
+            group=10,
+        )
+
+        # Unknown slash commands -> Claude (passthrough in agentic mode).
+        # Registered commands are handled by CommandHandlers in group 0
+        # (higher priority). This catches any /command not matched there
+        # and forwards it to Claude, while skipping known commands to
+        # avoid double-firing.
+        app.add_handler(
+            MessageHandler(
+                filters.COMMAND,
+                self._inject_deps(self._handle_unknown_command),
             ),
             group=10,
         )
@@ -1449,6 +1462,49 @@ class MessageOrchestrator:
                     )
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
+
+    # Commands registered via CommandHandler (group 0). Used by
+    # _handle_unknown_command to avoid forwarding known commands to Claude.
+    KNOWN_COMMANDS: frozenset = frozenset(
+        {
+            "start",
+            "help",
+            "new",
+            "continue",
+            "end",
+            "status",
+            "export",
+            "ls",
+            "cd",
+            "pwd",
+            "projects",
+            "actions",
+            "git",
+            "sync_threads",
+            "verbose",
+            "repo",
+            "restart",
+        }
+    )
+
+    async def _handle_unknown_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Forward unknown slash commands to Claude in agentic mode.
+
+        Known commands are handled by their own CommandHandlers (group 0);
+        this handler fires for *every* COMMAND message in group 10 but
+        returns immediately when the command is registered, preventing
+        double execution.
+        """
+        msg = update.effective_message
+        if not msg or not msg.text:
+            return
+        cmd = msg.text.split()[0].lstrip("/").split("@")[0].lower()
+        if cmd in self.KNOWN_COMMANDS:
+            return  # let the registered CommandHandler take care of it
+        # Forward unrecognised /commands to Claude as natural language
+        await self.agentic_text(update, context)
 
     def _voice_unavailable_message(self) -> str:
         """Return provider-aware guidance when voice feature is unavailable."""
