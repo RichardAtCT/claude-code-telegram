@@ -40,6 +40,9 @@ from .monitor import _is_claude_internal_path, check_bash_directory_boundary
 
 logger = structlog.get_logger()
 
+# Fallback message when Claude produces no text but did use tools.
+TASK_COMPLETED_MSG = "✅ Task completed. Tools used: {tools_summary}"
+
 
 @dataclass
 class ClaudeResponse:
@@ -107,7 +110,11 @@ class StreamUpdate:
             status = self.metadata.get("status")
             if isinstance(status, str) and status.lower() == "error":
                 return True
-            if self.metadata.get("error") or self.metadata.get("error_message"):
+            error_val = self.metadata.get("error")
+            if isinstance(error_val, str) and error_val:
+                return True
+            error_msg_val = self.metadata.get("error_message")
+            if isinstance(error_msg_val, str) and error_msg_val:
                 return True
 
         if self.progress:
@@ -474,7 +481,7 @@ class ClaudeSDKManager:
                 ]
                 unique_tool_names = list(dict.fromkeys(tool_names))
                 tools_summary = ", ".join(unique_tool_names) or "unknown"
-                content = f"✅ Task completed. Tools used: {tools_summary}"
+                content = TASK_COMPLETED_MSG.format(tools_summary=tools_summary)
 
             return ClaudeResponse(
                 content=content,
