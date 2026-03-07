@@ -10,6 +10,7 @@ Features:
 
 import base64
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Optional
 
 from telegram import PhotoSize
@@ -38,36 +39,44 @@ class ImageHandler:
     async def process_image(
         self, photo: PhotoSize, caption: Optional[str] = None
     ) -> ProcessedImage:
-        """Process uploaded image"""
+        """Process uploaded image — save to temp file and build a path-based prompt."""
+        import uuid
 
-        # Download image
+        # Download image bytes
         file = await photo.get_file()
         image_bytes = await file.download_as_bytearray()
 
-        # Detect image type
-        image_type = self._detect_image_type(image_bytes)
+        # Detect format and save to temp file so Claude CLI can read it
+        fmt = self._detect_format(bytes(image_bytes))
+        ext = fmt if fmt != "unknown" else "jpg"
+        temp_dir = Path("/tmp/claude_bot_files")
+        temp_dir.mkdir(exist_ok=True)
+        image_path = temp_dir / f"image_{uuid.uuid4()}.{ext}"
+        image_path.write_bytes(bytes(image_bytes))
 
-        # Create appropriate prompt
+        # Detect image type for prompt tailoring
+        image_type = self._detect_image_type(bytes(image_bytes))
+
+        # Build prompt with actual file path so Claude CLI can see the image
         if image_type == "screenshot":
-            prompt = self._create_screenshot_prompt(caption)
+            prompt = self._create_screenshot_prompt(caption, image_path)
         elif image_type == "diagram":
-            prompt = self._create_diagram_prompt(caption)
+            prompt = self._create_diagram_prompt(caption, image_path)
         elif image_type == "ui_mockup":
-            prompt = self._create_ui_prompt(caption)
+            prompt = self._create_ui_prompt(caption, image_path)
         else:
-            prompt = self._create_generic_prompt(caption)
+            prompt = self._create_generic_prompt(caption, image_path)
 
-        # Convert to base64 for Claude (if supported in future)
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
-
         return ProcessedImage(
             prompt=prompt,
             image_type=image_type,
             base64_data=base64_image,
             size=len(image_bytes),
             metadata={
-                "format": self._detect_format(image_bytes),
+                "format": fmt,
                 "has_caption": caption is not None,
+                "temp_path": str(image_path),
             },
         )
 
@@ -93,61 +102,35 @@ class ImageHandler:
         else:
             return "unknown"
 
-    def _create_screenshot_prompt(self, caption: Optional[str]) -> str:
+    def _create_screenshot_prompt(
+        self, caption: Optional[str], image_path: Path
+    ) -> str:
         """Create prompt for screenshot analysis"""
-        base_prompt = """I'm sharing a screenshot with you. Please analyze it and help me with:
-
-1. Identifying what application or website this is from
-2. Understanding the UI elements and their purpose
-3. Any issues or improvements you notice
-4. Answering any specific questions I have
-
-"""
+        base = f"I'm sharing a screenshot with you. The image is saved at: {image_path}\n\nPlease analyze it and help me with:\n1. Identifying what application or website this is from\n2. Understanding the UI elements and their purpose\n3. Any issues or improvements you notice\n4. Answering any specific questions I have\n"
         if caption:
-            base_prompt += f"Specific request: {caption}"
+            base += f"\nSpecific request: {caption}"
+        return base
 
-        return base_prompt
-
-    def _create_diagram_prompt(self, caption: Optional[str]) -> str:
+    def _create_diagram_prompt(self, caption: Optional[str], image_path: Path) -> str:
         """Create prompt for diagram analysis"""
-        base_prompt = """I'm sharing a diagram with you. Please help me:
-
-1. Understand the components and their relationships
-2. Identify the type of diagram (flowchart, architecture, etc.)
-3. Explain any technical concepts shown
-4. Suggest improvements or clarifications
-
-"""
+        base = f"I'm sharing a diagram with you. The image is saved at: {image_path}\n\nPlease help me:\n1. Understand the components and their relationships\n2. Identify the type of diagram\n3. Explain any technical concepts shown\n4. Suggest improvements or clarifications\n"
         if caption:
-            base_prompt += f"Specific request: {caption}"
+            base += f"\nSpecific request: {caption}"
+        return base
 
-        return base_prompt
-
-    def _create_ui_prompt(self, caption: Optional[str]) -> str:
+    def _create_ui_prompt(self, caption: Optional[str], image_path: Path) -> str:
         """Create prompt for UI mockup analysis"""
-        base_prompt = """I'm sharing a UI mockup with you. Please analyze:
-
-1. The layout and visual hierarchy
-2. User experience considerations
-3. Accessibility aspects
-4. Implementation suggestions
-5. Any potential improvements
-
-"""
+        base = f"I'm sharing a UI mockup with you. The image is saved at: {image_path}\n\nPlease analyze:\n1. The layout and visual hierarchy\n2. UX improvements\n3. Accessibility concerns\n"
         if caption:
-            base_prompt += f"Specific request: {caption}"
+            base += f"\nSpecific request: {caption}"
+        return base
 
-        return base_prompt
-
-    def _create_generic_prompt(self, caption: Optional[str]) -> str:
+    def _create_generic_prompt(self, caption: Optional[str], image_path: Path) -> str:
         """Create generic image analysis prompt"""
-        base_prompt = """I'm sharing an image with you. Please analyze it and provide relevant insights.
-
-"""
+        base = f"I'm sharing an image with you. The image is saved at: {image_path}\n\nPlease analyze and describe what you see.\n"
         if caption:
-            base_prompt += f"Context: {caption}"
-
-        return base_prompt
+            base += f"\nSpecific request: {caption}"
+        return base
 
     def supports_format(self, filename: str) -> bool:
         """Check if image format is supported"""
