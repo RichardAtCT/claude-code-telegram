@@ -1018,9 +1018,11 @@ async def test_agentic_model_sets_override(agentic_settings, deps):
     update = MagicMock()
     update.message.text = "/model sonnet"
     update.message.reply_text = AsyncMock()
+    update.effective_user.id = 123
 
     context = MagicMock()
     context.user_data = {}
+    context.bot_data = {"audit_logger": AsyncMock()}
 
     await orchestrator.agentic_model(update, context)
 
@@ -1036,15 +1038,57 @@ async def test_agentic_model_reset_to_default(agentic_settings, deps):
     update = MagicMock()
     update.message.text = "/model default"
     update.message.reply_text = AsyncMock()
+    update.effective_user.id = 123
 
     context = MagicMock()
     context.user_data = {"model_override": "opus"}
+    context.bot_data = {"audit_logger": AsyncMock()}
 
     await orchestrator.agentic_model(update, context)
 
     assert "model_override" not in context.user_data
     text = update.message.reply_text.call_args.args[0]
     assert "reset" in text.lower()
+
+
+async def test_agentic_model_audit_logged(agentic_settings, deps):
+    """/model sonnet logs the action to audit logger."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model sonnet"
+    update.message.reply_text = AsyncMock()
+    update.effective_user.id = 42
+
+    audit_logger = AsyncMock()
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {"audit_logger": audit_logger}
+
+    await orchestrator.agentic_model(update, context)
+
+    audit_logger.log_command.assert_called_once_with(
+        user_id=42, command="model", args=["sonnet"], success=True,
+    )
+
+
+
+async def test_agentic_model_rejects_long_name(agentic_settings, deps):
+    """/model with overly long name is rejected."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model " + "a" * 101
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await orchestrator.agentic_model(update, context)
+
+    assert "model_override" not in context.user_data
+    text = update.message.reply_text.call_args.args[0]
+    assert "Invalid" in text
 
 
 async def test_model_override_passed_to_run_command(agentic_settings, deps):

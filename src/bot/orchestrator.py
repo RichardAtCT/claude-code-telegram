@@ -617,15 +617,15 @@ class MessageOrchestrator:
             await update.message.reply_text(
                 f"Model: <b>{escape_html(current)}</b> ({source})\n\n"
                 "Usage: <code>/model model_name</code>\n"
-                "Aliases: <code>sonnet</code>, <code>opus</code>, <code>haiku</code>\n"
-                "Full names: <code>claude-sonnet-4-6</code>, <code>claude-opus-4-6</code>, "
-                "<code>claude-haiku-4-5-20251001</code>\n"
                 "Reset: <code>/model default</code>",
                 parse_mode="HTML",
             )
             return
 
         model_name = args[0].strip()
+        if not model_name or len(model_name) > 100:
+            await update.message.reply_text("Invalid model name.")
+            return
         if model_name == "default":
             context.user_data.pop("model_override", None)
             default = self._resolve_model_display(None, self.settings.claude_model)
@@ -638,6 +638,16 @@ class MessageOrchestrator:
             await update.message.reply_text(
                 f"Model set to <b>{escape_html(model_name)}</b>",
                 parse_mode="HTML",
+            )
+
+        # Audit log
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=update.effective_user.id,
+                command="model",
+                args=[model_name],
+                success=True,
             )
 
     def _format_verbose_progress(
@@ -1461,6 +1471,7 @@ class MessageOrchestrator:
             context.user_data["force_new_session"] = False
 
         context.user_data["claude_session_id"] = claude_response.session_id
+        context.user_data["last_model"] = claude_response.model
 
         from .handlers.message import _update_working_directory_from_claude_response
 
