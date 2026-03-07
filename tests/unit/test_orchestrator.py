@@ -82,8 +82,8 @@ def deps():
     }
 
 
-def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, restart commands."""
+def test_agentic_registers_7_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, status, verbose, model, repo, restart."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,11 +100,12 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
+    assert len(cmd_handlers) == 7
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
+    assert frozenset({"model"}) in commands
     assert frozenset({"repo"}) in commands
     assert frozenset({"restart"}) in commands
 
@@ -156,13 +157,13 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns 7 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
+    assert len(commands) == 7
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    assert cmd_names == ["start", "new", "status", "verbose", "model", "repo", "restart"]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
@@ -926,3 +927,265 @@ async def test_private_mode_rejects_help_outside_topics(private_thread_settings,
 
     assert called["value"] is False
     update.effective_message.reply_text.assert_called_once()
+
+
+# --- /model command tests ---
+
+
+async def test_agentic_model_shows_last_model_when_unset(agentic_settings, deps):
+    """/model with no override shows the model from the last response."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {"last_model": "claude-opus-4-6"}
+
+    await orchestrator.agentic_model(update, context)
+
+    call_args = update.message.reply_text.call_args
+    text = call_args.args[0]
+    assert "claude-opus-4-6" in text
+    assert "Claude Code default" in text
+
+
+async def test_agentic_model_shows_unknown_before_first_message(agentic_settings, deps):
+    """/model before any message shows unknown."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await orchestrator.agentic_model(update, context)
+
+    call_args = update.message.reply_text.call_args
+    text = call_args.args[0]
+    assert "unknown" in text.lower()
+    assert call_args.kwargs.get("parse_mode") == "HTML"
+
+
+async def test_agentic_model_shows_config_model(tmp_dir, deps):
+    """/model shows the server-configured model when CLAUDE_MODEL is set."""
+    settings = create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=True,
+        claude_model="claude-opus-4-6",
+    )
+    orchestrator = MessageOrchestrator(settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await orchestrator.agentic_model(update, context)
+
+    text = update.message.reply_text.call_args.args[0]
+    assert "claude-opus-4-6" in text
+    assert "server config" in text
+
+
+async def test_agentic_model_shows_user_override(agentic_settings, deps):
+    """/model shows the user's override when one is set."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {"model_override": "haiku"}
+
+    await orchestrator.agentic_model(update, context)
+
+    text = update.message.reply_text.call_args.args[0]
+    assert "haiku" in text
+    assert "user override" in text
+
+
+async def test_agentic_model_sets_override(agentic_settings, deps):
+    """/model sonnet sets the user's model override."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model sonnet"
+    update.message.reply_text = AsyncMock()
+    update.effective_user.id = 123
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {"audit_logger": AsyncMock()}
+
+    await orchestrator.agentic_model(update, context)
+
+    assert context.user_data["model_override"] == "sonnet"
+    text = update.message.reply_text.call_args.args[0]
+    assert "sonnet" in text
+
+
+async def test_agentic_model_reset_to_default(agentic_settings, deps):
+    """/model default clears the user's model override."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model default"
+    update.message.reply_text = AsyncMock()
+    update.effective_user.id = 123
+
+    context = MagicMock()
+    context.user_data = {"model_override": "opus"}
+    context.bot_data = {"audit_logger": AsyncMock()}
+
+    await orchestrator.agentic_model(update, context)
+
+    assert "model_override" not in context.user_data
+    text = update.message.reply_text.call_args.args[0]
+    assert "reset" in text.lower()
+
+
+async def test_agentic_model_audit_logged(agentic_settings, deps):
+    """/model sonnet logs the action to audit logger."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model sonnet"
+    update.message.reply_text = AsyncMock()
+    update.effective_user.id = 42
+
+    audit_logger = AsyncMock()
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {"audit_logger": audit_logger}
+
+    await orchestrator.agentic_model(update, context)
+
+    audit_logger.log_command.assert_called_once_with(
+        user_id=42, command="model", args=["sonnet"], success=True,
+    )
+
+
+async def test_agentic_model_reset_audit_logged(agentic_settings, deps):
+    """/model default logs as model_reset with empty args."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model default"
+    update.message.reply_text = AsyncMock()
+    update.effective_user.id = 42
+
+    audit_logger = AsyncMock()
+    context = MagicMock()
+    context.user_data = {"model_override": "opus"}
+    context.bot_data = {"audit_logger": audit_logger}
+
+    await orchestrator.agentic_model(update, context)
+
+    audit_logger.log_command.assert_called_once_with(
+        user_id=42, command="model_reset", args=[], success=True,
+    )
+
+
+
+async def test_agentic_model_rejects_long_name(agentic_settings, deps):
+    """/model with overly long name is rejected."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    update = MagicMock()
+    update.message.text = "/model " + "a" * 101
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await orchestrator.agentic_model(update, context)
+
+    assert "model_override" not in context.user_data
+    text = update.message.reply_text.call_args.args[0]
+    assert "Invalid" in text
+
+
+async def test_model_override_passed_to_run_command(agentic_settings, deps):
+    """User model override is passed through to claude_integration.run_command."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "session-abc"
+    mock_response.content = "Hello!"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "Help me"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {"model_override": "haiku"}
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    claude_integration.run_command.assert_called_once()
+    call_kwargs = claude_integration.run_command.call_args.kwargs
+    assert call_kwargs["model_override"] == "haiku"
+
+
+async def test_model_override_none_when_not_set(agentic_settings, deps):
+    """model_override is None when user hasn't set one."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "session-abc"
+    mock_response.content = "Hello!"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "Help me"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    call_kwargs = claude_integration.run_command.call_args.kwargs
+    assert call_kwargs["model_override"] is None

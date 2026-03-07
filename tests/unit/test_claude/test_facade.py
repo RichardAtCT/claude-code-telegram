@@ -269,6 +269,85 @@ class TestForceNewSurvivesFailure:
         assert user_data["force_new_session"] is False
 
 
+class TestModelOverride:
+    """Verify model_override is passed through to _execute."""
+
+    async def test_model_override_forwarded_to_execute(self, facade, session_manager):
+        """run_command passes model_override through to _execute."""
+        project = Path("/test/project")
+        user_id = 123
+
+        with patch.object(
+            facade,
+            "_execute",
+            return_value=_make_mock_response(),
+        ) as mock_execute:
+            await facade.run_command(
+                prompt="hello",
+                working_directory=project,
+                user_id=user_id,
+                model_override="opus",
+            )
+
+        mock_execute.assert_called_once()
+        assert mock_execute.call_args.kwargs["model_override"] == "opus"
+
+    async def test_model_override_none_by_default(self, facade, session_manager):
+        """run_command passes model_override=None when not specified."""
+        project = Path("/test/project")
+        user_id = 123
+
+        with patch.object(
+            facade,
+            "_execute",
+            return_value=_make_mock_response(),
+        ) as mock_execute:
+            await facade.run_command(
+                prompt="hello",
+                working_directory=project,
+                user_id=user_id,
+            )
+
+        mock_execute.assert_called_once()
+        assert mock_execute.call_args.kwargs["model_override"] is None
+
+    async def test_model_override_survives_session_retry(self, facade, session_manager):
+        """model_override is preserved when session resume fails and retries."""
+        project = Path("/test/project")
+        user_id = 123
+
+        # Seed an existing session so resume is attempted
+        existing = ClaudeSession(
+            session_id="old-session",
+            user_id=user_id,
+            project_path=project,
+            created_at=datetime.utcnow(),
+            last_used=datetime.utcnow(),
+        )
+        await session_manager.storage.save_session(existing)
+        session_manager.active_sessions[existing.session_id] = existing
+
+        call_count = [0]
+
+        async def _execute_side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("session expired")
+            return _make_mock_response()
+
+        with patch.object(facade, "_execute", side_effect=_execute_side_effect):
+            await facade.run_command(
+                prompt="hello",
+                working_directory=project,
+                user_id=user_id,
+                session_id="old-session",
+                model_override="haiku",
+            )
+
+        # Both the initial call and retry should have model_override="haiku"
+        assert call_count[0] == 2
+
+
 class TestEmptySessionIdWarning:
     """Verify facade warns when final session_id is empty."""
 
