@@ -626,6 +626,7 @@ class MessageOrchestrator:
         if not model_name or len(model_name) > 100:
             await update.message.reply_text("Invalid model name.")
             return
+        audit_logger = context.bot_data.get("audit_logger")
         if model_name == "default":
             context.user_data.pop("model_override", None)
             default = self._resolve_model_display(None, self.settings.claude_model)
@@ -633,22 +634,26 @@ class MessageOrchestrator:
                 f"Model reset to <b>{escape_html(default)}</b>",
                 parse_mode="HTML",
             )
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=update.effective_user.id,
+                    command="model_reset",
+                    args=[],
+                    success=True,
+                )
         else:
             context.user_data["model_override"] = model_name
             await update.message.reply_text(
                 f"Model set to <b>{escape_html(model_name)}</b>",
                 parse_mode="HTML",
             )
-
-        # Audit log
-        audit_logger = context.bot_data.get("audit_logger")
-        if audit_logger:
-            await audit_logger.log_command(
-                user_id=update.effective_user.id,
-                command="model",
-                args=[model_name],
-                success=True,
-            )
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=update.effective_user.id,
+                    command="model",
+                    args=[model_name],
+                    success=True,
+                )
 
     def _format_verbose_progress(
         self,
