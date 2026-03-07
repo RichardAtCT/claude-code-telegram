@@ -53,6 +53,7 @@ class ClaudeResponse:
     is_error: bool = False
     error_type: Optional[str] = None
     tools_used: List[Dict[str, Any]] = field(default_factory=list)
+    model: Optional[str] = None
 
 
 @dataclass
@@ -153,6 +154,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        model_override: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -197,7 +199,7 @@ class ClaudeSDKManager:
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
-                model=self.config.claude_model or None,
+                model=model_override or self.config.claude_model or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,
@@ -294,11 +296,12 @@ class ClaudeSDKManager:
                 timeout=self.config.claude_timeout_seconds,
             )
 
-            # Extract cost, tools, and session_id from result message
+            # Extract cost, tools, session_id, and model from result message
             cost = 0.0
             tools_used: List[Dict[str, Any]] = []
             claude_session_id = None
             result_content = None
+            response_model: Optional[str] = None
             for message in messages:
                 if isinstance(message, ResultMessage):
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
@@ -307,6 +310,8 @@ class ClaudeSDKManager:
                     current_time = asyncio.get_event_loop().time()
                     for msg in messages:
                         if isinstance(msg, AssistantMessage):
+                            if not response_model:
+                                response_model = getattr(msg, "model", None)
                             msg_content = getattr(msg, "content", [])
                             if msg_content and isinstance(msg_content, list):
                                 for block in msg_content:
@@ -377,6 +382,7 @@ class ClaudeSDKManager:
                     ]
                 ),
                 tools_used=tools_used,
+                model=response_model,
             )
 
         except asyncio.TimeoutError:

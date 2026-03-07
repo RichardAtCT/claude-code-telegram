@@ -696,6 +696,66 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].model is None
 
+    async def test_model_override_takes_priority(self, tmp_path):
+        """Test that model_override overrides claude_model from config."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_model="claude-sonnet-4-6",
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+                model_override="claude-opus-4-6",
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == "claude-opus-4-6"
+
+    async def test_model_override_none_uses_config(self, tmp_path):
+        """Test that model_override=None falls back to config model."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_model="claude-haiku-4-5-20251001",
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+                model_override=None,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == "claude-haiku-4-5-20251001"
+
 
 class TestClaudeMCPErrors:
     """Test MCP-specific error handling."""

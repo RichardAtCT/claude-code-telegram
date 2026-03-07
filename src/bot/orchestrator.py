@@ -306,6 +306,7 @@ class MessageOrchestrator:
             ("new", self.agentic_new),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
+            ("model", self.agentic_model),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
         ]
@@ -415,6 +416,7 @@ class MessageOrchestrator:
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("model", "Switch Claude model"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -577,6 +579,66 @@ class MessageOrchestrator:
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
             parse_mode="HTML",
         )
+
+    def _get_model_override(self, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+        """Return per-user model override, or None to use the default."""
+        return context.user_data.get("model_override")
+
+    @staticmethod
+    def _resolve_model_display(
+        user_override: Optional[str],
+        config_model: Optional[str],
+        last_model: Optional[str] = None,
+    ) -> str:
+        """Return a human-readable model string showing what will actually be used."""
+        if user_override:
+            return user_override
+        if config_model:
+            return config_model
+        if last_model:
+            return last_model
+        return "unknown (send a message first to detect)"
+
+    async def agentic_model(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Set Claude model: /model [model_name]."""
+        args = update.message.text.split()[1:] if update.message.text else []
+        user_override = self._get_model_override(context)
+        last_model = context.user_data.get("last_model")
+        current = self._resolve_model_display(
+            user_override, self.settings.claude_model, last_model
+        )
+
+        if not args:
+            source = "user override" if user_override else (
+                "server config" if self.settings.claude_model else "Claude Code default"
+            )
+            await update.message.reply_text(
+                f"Model: <b>{escape_html(current)}</b> ({source})\n\n"
+                "Usage: <code>/model model_name</code>\n"
+                "Aliases: <code>sonnet</code>, <code>opus</code>, <code>haiku</code>\n"
+                "Full names: <code>claude-sonnet-4-6</code>, <code>claude-opus-4-6</code>, "
+                "<code>claude-haiku-4-5-20251001</code>\n"
+                "Reset: <code>/model default</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        model_name = args[0].strip()
+        if model_name == "default":
+            context.user_data.pop("model_override", None)
+            default = self._resolve_model_display(None, self.settings.claude_model)
+            await update.message.reply_text(
+                f"Model reset to <b>{escape_html(default)}</b>",
+                parse_mode="HTML",
+            )
+        else:
+            context.user_data["model_override"] = model_name
+            await update.message.reply_text(
+                f"Model set to <b>{escape_html(model_name)}</b>",
+                parse_mode="HTML",
+            )
 
     def _format_verbose_progress(
         self,
@@ -941,6 +1003,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model_override=self._get_model_override(context),
             )
 
             # New session created successfully — clear the one-shot flag
@@ -948,6 +1011,8 @@ class MessageOrchestrator:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+            if claude_response.model:
+                context.user_data["last_model"] = claude_response.model
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
@@ -1185,12 +1250,15 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model_override=self._get_model_override(context),
             )
 
             if force_new:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+            if claude_response.model:
+                context.user_data["last_model"] = claude_response.model
 
             from .handlers.message import _update_working_directory_from_claude_response
 
@@ -1384,6 +1452,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model_override=self._get_model_override(context),
             )
         finally:
             heartbeat.cancel()
