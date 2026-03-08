@@ -55,8 +55,12 @@ class ImageHandler:
             )
         _TEMP_DIR.mkdir(mode=0o700, exist_ok=True)
         image_path = _TEMP_DIR / f"image_{uuid.uuid4()}.{fmt}"
-        image_path.write_bytes(image_bytes)
-        image_path.chmod(0o600)
+        try:
+            image_path.write_bytes(image_bytes)
+            image_path.chmod(0o600)
+        except Exception:
+            image_path.unlink(missing_ok=True)
+            raise
 
         # Detect image type for prompt tailoring
         image_type = self._detect_image_type(image_bytes)
