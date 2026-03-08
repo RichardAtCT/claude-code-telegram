@@ -1276,6 +1276,7 @@ class MessageOrchestrator:
         await chat.send_action("typing")
         progress_msg = await update.message.reply_text("Working...")
 
+        processed_image = None
         try:
             photo = update.message.photo[-1]
             processed_image = await image_handler.process_image(
@@ -1297,6 +1298,11 @@ class MessageOrchestrator:
             logger.error(
                 "Claude photo processing failed", error=str(e), user_id=user_id
             )
+        finally:
+            if processed_image is not None:
+                temp_path = processed_image.metadata.get("temp_path")
+                if temp_path:
+                    Path(temp_path).unlink(missing_ok=True)
 
     async def agentic_voice(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
