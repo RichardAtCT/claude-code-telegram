@@ -206,8 +206,7 @@ class ClaudeCodeBot:
                     allowed_updates=Update.ALL_TYPES,
                 )
             else:
-                # Polling mode - initialize and start polling manually
-                await self.app.initialize()
+                # Polling mode - start polling (already initialized in self.initialize())
                 await self.app.start()
                 await self.app.updater.start_polling(
                     allowed_updates=Update.ALL_TYPES,

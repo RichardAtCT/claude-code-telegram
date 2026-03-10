@@ -4,6 +4,7 @@ import asyncio
 from typing import Optional
 
 import structlog
+import telegram.error
 from telegram import InputMediaPhoto, Update
 from telegram.ext import ContextTypes
 
@@ -359,6 +360,8 @@ async def handle_text_message(
         mcp_images: list[ImageAttachment] = []
 
         # Enhanced stream updates handler with progress tracking
+        _last_stream_edit = {"ts": 0.0}
+
         async def stream_handler(update_obj):
             # Intercept send_image_to_user MCP tool calls.
             # The SDK namespaces MCP tools as "mcp__<server>__<tool>".
@@ -380,7 +383,16 @@ async def handle_text_message(
             try:
                 progress_text = await _format_progress_update(update_obj)
                 if progress_text:
+                    now = asyncio.get_event_loop().time()
+                    if now - _last_stream_edit["ts"] < 2.0:
+                        return
+                    _last_stream_edit["ts"] = now
                     await progress_msg.edit_text(progress_text, parse_mode="HTML")
+            except telegram.error.BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    logger.warning("Failed to update progress message", error=str(e))
+            except telegram.error.RetryAfter as e:
+                logger.debug("Telegram rate limit on edit_text", retry_after=e.retry_after)
             except Exception as e:
                 logger.warning("Failed to update progress message", error=str(e))
 
@@ -521,14 +533,6 @@ async def handle_text_message(
                         logger.error(
                             "Failed to send plain text fallback response",
                             error=str(plain_err),
-                        )
-                        await update.message.reply_text(
-                            f"Failed to deliver response "
-                            f"(Telegram error: {str(plain_err)[:150]}). "
-                            f"Please try again.",
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
                         )
 
             # Send images separately
