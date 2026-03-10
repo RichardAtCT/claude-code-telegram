@@ -23,6 +23,7 @@ def create_api_app(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    gamification_repo=None,
 ) -> FastAPI:
     """Create the FastAPI application."""
 
@@ -129,6 +130,57 @@ def create_api_app(
         )
 
         return {"status": "accepted", "event_id": event.id}
+
+    @app.get("/api/rpg/profile")
+    async def rpg_profile(user_id: int) -> Dict[str, Any]:
+        if not gamification_repo:
+            return {"error": "Gamification not enabled"}
+        profile = await gamification_repo.get_profile(user_id)
+        if not profile:
+            return {"error": "No profile"}
+        from src.gamification.constants import xp_for_level
+        return {
+            **profile.to_dict(),
+            "xp_for_next_level": xp_for_level(profile.level + 1),
+            "xp_for_current_level": xp_for_level(profile.level),
+        }
+
+    @app.get("/api/rpg/achievements")
+    async def rpg_achievements(user_id: int) -> Dict[str, Any]:
+        if not gamification_repo:
+            return {"error": "Gamification not enabled"}
+        definitions = await gamification_repo.get_active_definitions()
+        unlocked = await gamification_repo.get_user_achievements(user_id)
+        unlocked_ids = {a.achievement_id for a in unlocked}
+        return {
+            "definitions": [d.to_dict() for d in definitions],
+            "unlocked": [a.to_dict() for a in unlocked],
+            "unlocked_ids": list(unlocked_ids),
+        }
+
+    @app.get("/api/rpg/timeline")
+    async def rpg_timeline(user_id: int, limit: int = 50) -> Dict[str, Any]:
+        if not gamification_repo:
+            return {"error": "Gamification not enabled"}
+        history = await gamification_repo.get_xp_history(user_id, limit=limit)
+        return {"entries": [e.to_dict() for e in history]}
+
+    @app.get("/api/rpg/stats/chart")
+    async def rpg_stats_chart(user_id: int) -> Dict[str, Any]:
+        if not gamification_repo:
+            return {"error": "Gamification not enabled"}
+        profile = await gamification_repo.get_profile(user_id)
+        if not profile:
+            return {"error": "No profile"}
+        return {
+            "stats": [
+                {"name": "STR", "value": profile.str_points},
+                {"name": "INT", "value": profile.int_points},
+                {"name": "DEX", "value": profile.dex_points},
+                {"name": "CON", "value": profile.con_points},
+                {"name": "WIS", "value": profile.wis_points},
+            ]
+        }
 
     return app
 
