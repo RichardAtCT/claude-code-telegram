@@ -41,6 +41,9 @@ class Settings(BaseSettings):
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")
+    approved_directories: Optional[List[Path]] = Field(
+        None, description="List of approved directories for projects (alternative to single approved_directory)"
+    )
     allowed_users: Optional[List[int]] = Field(
         None, description="Allowed Telegram user IDs"
     )
@@ -335,6 +338,30 @@ class Settings(BaseSettings):
             raise ValueError(f"Approved directory is not a directory: {path}")
         return path  # type: ignore[no-any-return]
 
+    @field_validator("approved_directories", mode="before")
+    @classmethod
+    def validate_approved_directories(cls, v: Any) -> Optional[List[Path]]:
+        """Ensure all approved directories exist and are absolute."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Parse comma-separated paths
+            paths = [p.strip() for p in v.split(",") if p.strip()]
+            v = [Path(p) for p in paths]
+        if isinstance(v, list):
+            validated_paths = []
+            for path_item in v:
+                if isinstance(path_item, str):
+                    path_item = Path(path_item)
+                path = path_item.resolve()
+                if not path.exists():
+                    raise ValueError(f"Approved directory does not exist: {path}")
+                if not path.is_dir():
+                    raise ValueError(f"Approved directory is not a directory: {path}")
+                validated_paths.append(path)
+            return validated_paths
+        return v  # type: ignore[no-any-return]
+
     @field_validator("mcp_config_path", mode="before")
     @classmethod
     def validate_mcp_config(cls, v: Any, info: Any) -> Optional[Path]:
@@ -459,6 +486,13 @@ class Settings(BaseSettings):
                 )
 
         return self
+
+    @property
+    def effective_approved_directories(self) -> List[Path]:
+        """Get the list of approved directories to use for validation."""
+        if self.approved_directories:
+            return self.approved_directories
+        return [self.approved_directory]
 
     @property
     def is_production(self) -> bool:

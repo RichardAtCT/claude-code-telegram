@@ -132,14 +132,17 @@ class SecurityValidator:
     ]
 
     def __init__(
-        self, approved_directory: Path, disable_security_patterns: bool = False
+        self, approved_directory: Path, approved_directories: Optional[List[Path]] = None, disable_security_patterns: bool = False
     ):
-        """Initialize validator with approved directory."""
+        """Initialize validator with approved directory/directories."""
         self.approved_directory = approved_directory.resolve()
+        self.approved_directories = [d.resolve() for d in approved_directories] if approved_directories else []
+        self.all_approved_directories = [self.approved_directory] + self.approved_directories
         self.disable_security_patterns = disable_security_patterns
         logger.info(
             "Security validator initialized",
             approved_directory=str(self.approved_directory),
+            approved_directories=[str(d) for d in self.approved_directories],
             disable_security_patterns=self.disable_security_patterns,
         )
 
@@ -186,15 +189,20 @@ class SecurityValidator:
             # Resolve path and check boundaries
             target = target.resolve()
 
-            # Ensure target is within approved directory
-            if not self._is_within_directory(target, self.approved_directory):
+            # Ensure target is within any of the approved directories
+            is_within_any = any(
+                self._is_within_directory(target, approved_dir)
+                for approved_dir in self.all_approved_directories
+            )
+
+            if not is_within_any:
                 logger.warning(
                     "Path traversal attempt detected",
                     requested_path=user_path,
                     resolved_path=str(target),
-                    approved_directory=str(self.approved_directory),
+                    approved_directories=[str(d) for d in self.all_approved_directories],
                 )
-                return False, None, "Access denied: path outside approved directory"
+                return False, None, "Access denied: path outside approved directories"
 
             logger.debug(
                 "Path validation successful",

@@ -1,10 +1,19 @@
 projects:
+  # Relative path (resolved against APPROVED_DIRECTORY)
   - slug: claude-code-telegram
     name: Claude Code Telegram
     path: claude-code-telegram-main
     enabled: true
 
+  # Relative path
   - slug: infra
     name: Infrastructure
     path: infrastructure
     enabled: true
+
+  # Absolute path example (must be within one of the approved directories)
+  # Uncomment and adjust if using APPROVED_DIRECTORIES
+  # - slug: external-project
+  #   name: External Project
+  #   path: /path/to/other/approved/directory/project
+  #   enabled: true

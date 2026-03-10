@@ -40,7 +40,7 @@ class ProjectRegistry:
 
 
 def load_project_registry(
-    config_path: Path, approved_directory: Path
+    config_path: Path, approved_directory: Path, approved_directories: Optional[List[Path]] = None
 ) -> ProjectRegistry:
     """Load and validate project definitions from YAML."""
     if not config_path.exists():
@@ -56,10 +56,14 @@ def load_project_registry(
     if not isinstance(raw_projects, list) or not raw_projects:
         raise ValueError("Projects config must contain a non-empty 'projects' list")
 
-    approved_root = approved_directory.resolve()
+    # Build list of all approved directories
+    all_approved_dirs = [approved_directory.resolve()]
+    if approved_directories:
+        all_approved_dirs.extend([d.resolve() for d in approved_directories])
+
     seen_slugs = set()
     seen_names = set()
-    seen_rel_paths = set()
+    seen_abs_paths = set()
     projects: List[ProjectDefinition] = []
 
     for idx, raw in enumerate(raw_projects):
@@ -68,28 +72,59 @@ def load_project_registry(
 
         slug = str(raw.get("slug", "")).strip()
         name = str(raw.get("name", "")).strip()
-        rel_path_raw = str(raw.get("path", "")).strip()
+        path_raw = str(raw.get("path", "")).strip()
         enabled = bool(raw.get("enabled", True))
 
         if not slug:
             raise ValueError(f"Project entry at index {idx} is missing 'slug'")
         if not name:
             raise ValueError(f"Project '{slug}' is missing 'name'")
-        if not rel_path_raw:
+        if not path_raw:
             raise ValueError(f"Project '{slug}' is missing 'path'")
 
-        rel_path = Path(rel_path_raw)
-        if rel_path.is_absolute():
-            raise ValueError(f"Project '{slug}' path must be relative: {rel_path_raw}")
+        path_obj = Path(path_raw)
 
-        absolute_path = (approved_root / rel_path).resolve()
+        # Handle both absolute and relative paths
+        if path_obj.is_absolute():
+            # Absolute path - validate it's within one of the approved directories
+            absolute_path = path_obj.resolve()
 
-        try:
-            absolute_path.relative_to(approved_root)
-        except ValueError as e:
-            raise ValueError(
-                f"Project '{slug}' path outside approved " f"directory: {rel_path_raw}"
-            ) from e
+            # Check if path is within any approved directory
+            is_within_any = False
+            matched_base = None
+            for approved_dir in all_approved_dirs:
+                try:
+                    rel = absolute_path.relative_to(approved_dir)
+                    is_within_any = True
+                    matched_base = approved_dir
+                    relative_path = rel
+                    break
+                except ValueError:
+                    continue
+
+            if not is_within_any:
+                raise ValueError(
+                    f"Project '{slug}' absolute path is outside all approved directories: {path_raw}"
+                )
+        else:
+            # Relative path - resolve against primary approved_directory
+            relative_path = path_obj
+            absolute_path = (approved_directory / relative_path).resolve()
+
+            # Validate it's within one of the approved directories
+            is_within_any = False
+            for approved_dir in all_approved_dirs:
+                try:
+                    absolute_path.relative_to(approved_dir)
+                    is_within_any = True
+                    break
+                except ValueError:
+                    continue
+
+            if not is_within_any:
+                raise ValueError(
+                    f"Project '{slug}' path outside all approved directories: {path_raw}"
+                )
 
         if not absolute_path.exists() or not absolute_path.is_dir():
             raise ValueError(
@@ -97,23 +132,23 @@ def load_project_registry(
                 f"is not a directory: {absolute_path}"
             )
 
-        rel_path_norm = str(rel_path)
+        abs_path_str = str(absolute_path)
         if slug in seen_slugs:
             raise ValueError(f"Duplicate project slug: {slug}")
         if name in seen_names:
             raise ValueError(f"Duplicate project name: {name}")
-        if rel_path_norm in seen_rel_paths:
-            raise ValueError(f"Duplicate project path: {rel_path_norm}")
+        if abs_path_str in seen_abs_paths:
+            raise ValueError(f"Duplicate project path: {abs_path_str}")
 
         seen_slugs.add(slug)
         seen_names.add(name)
-        seen_rel_paths.add(rel_path_norm)
+        seen_abs_paths.add(abs_path_str)
 
         projects.append(
             ProjectDefinition(
                 slug=slug,
                 name=name,
-                relative_path=rel_path,
+                relative_path=relative_path,
                 absolute_path=absolute_path,
                 enabled=enabled,
             )

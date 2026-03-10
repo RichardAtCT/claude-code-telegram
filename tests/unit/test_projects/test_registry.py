@@ -71,4 +71,4 @@ def test_load_project_registry_rejects_outside_approved_dir(tmp_path: Path) -> N
     with pytest.raises(ValueError) as exc_info:
         load_project_registry(config_file, approved)
 
-    assert "outside approved directory" in str(exc_info.value)
+    assert "outside all approved directories" in str(exc_info.value)
