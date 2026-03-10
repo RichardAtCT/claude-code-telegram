@@ -28,6 +28,7 @@ from telegram.ext import (
     filters,
 )
 
+from ..claude.model_mapper import get_display_name, resolve_model_name
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
@@ -306,6 +307,7 @@ class MessageOrchestrator:
             ("new", self.agentic_new),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
+            ("model", self.agentic_model),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
         ]
@@ -344,11 +346,11 @@ class MessageOrchestrator:
             group=10,
         )
 
-        # Only cd: callbacks (for project selection), scoped by pattern
+        # Callback handlers for cd: (project selection) and model: (model selection)
         app.add_handler(
             CallbackQueryHandler(
                 self._inject_deps(self._agentic_callback),
-                pattern=r"^cd:",
+                pattern=r"^(cd|model):",
             )
         )
 
@@ -415,6 +417,7 @@ class MessageOrchestrator:
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("model", "Switch Claude model"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -575,6 +578,152 @@ class MessageOrchestrator:
         labels = {0: "quiet", 1: "normal", 2: "detailed"}
         await update.message.reply_text(
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
+            parse_mode="HTML",
+        )
+
+    def _get_selected_model(self, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+        """Return effective model: per-user override or config default.
+
+        Note: Returns the user's selection as-is (could be alias or full name).
+        Resolution to full Anthropic model name happens in SDK integration layer.
+        """
+        user_override = context.user_data.get("selected_model")
+        if user_override is not None:
+            return str(user_override)
+        return self.settings.claude_model
+
+    async def agentic_model(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Switch Claude model: /model [model-name]."""
+        args = update.message.text.split()[1:] if update.message.text else []
+
+        # Get available models from config
+        available_models = self.settings.anthropic_models or []
+
+        if not args:
+            # Show current model and available options with inline keyboard
+            current = self._get_selected_model(context)
+
+            # Get friendly display name (resolves aliases)
+            current_display_name = get_display_name(current)
+            current_display = (
+                f"<b>{escape_html(current_display_name)}</b>"
+                if current
+                else "<i>default</i>"
+            )
+
+            if not available_models:
+                await update.message.reply_text(
+                    f"Current model: {current_display}\n\n"
+                    f"ℹ️ No models configured in ANTHROPIC_MODELS.\n"
+                    f"Add models to your .env file:\n"
+                    f"<code>ANTHROPIC_MODELS=claude-opus-4-6,claude-sonnet-4-6,claude-haiku-4-5</code>\n\n"
+                    f"Usage: <code>/model &lt;model-name&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+            # Build model list display with friendly names
+            lines: List[str] = []
+            for m in available_models:
+                # Show both display name and actual model string if different
+                display = get_display_name(m)
+                resolved = resolve_model_name(m)
+
+                # Check if current selection matches (compare resolved names)
+                current_resolved = resolve_model_name(current) if current else None
+                marker = " ◀" if resolved == current_resolved else ""
+
+                # Show display name with actual model in parentheses if different
+                if display != m:
+                    lines.append(
+                        f"  • <b>{escape_html(display)}</b> "
+                        f"<code>({escape_html(m)})</code>{marker}"
+                    )
+                else:
+                    lines.append(f"  • <code>{escape_html(m)}</code>{marker}")
+
+            # Build inline keyboard (1 per row for clarity)
+            keyboard_rows: List[List[InlineKeyboardButton]] = []
+            for model_name in available_models:
+                keyboard_rows.append(
+                    [
+                        InlineKeyboardButton(
+                            model_name, callback_data=f"model:{model_name}"
+                        )
+                    ]
+                )
+
+            # Add "Reset to Default" button if user has override
+            if context.user_data.get("selected_model"):
+                keyboard_rows.append(
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Reset to Default", callback_data="model:default"
+                        )
+                    ]
+                )
+
+            reply_markup = InlineKeyboardMarkup(keyboard_rows)
+
+            await update.message.reply_text(
+                f"<b>Select Model</b>\n\n"
+                f"Current: {current_display}\n\n" + "\n".join(lines),
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            return
+
+        # Handle command with argument: /model <name>
+        model_name = " ".join(args).strip()
+
+        # Handle reset to default
+        if model_name.lower() in ("default", "reset", "clear"):
+            context.user_data.pop("selected_model", None)
+            default = self.settings.claude_model or "CLI default"
+            default_display = get_display_name(default)
+            await update.message.reply_text(
+                f"✅ Model reset to default: <b>{escape_html(default_display)}</b>",
+                parse_mode="HTML",
+            )
+            return
+
+        # Validate model is in available list (if list is configured)
+        # Compare resolved names to support aliases
+        if available_models:
+            model_resolved = resolve_model_name(model_name)
+            available_resolved = [resolve_model_name(m) for m in available_models]
+
+            if model_resolved not in available_resolved:
+                models_list = ", ".join(
+                    f"<code>{escape_html(m)}</code>" for m in available_models
+                )
+                await update.message.reply_text(
+                    f"❌ Model <code>{escape_html(model_name)}</code> not in available list.\n\n"
+                    f"Available models: {models_list}",
+                    parse_mode="HTML",
+                )
+                return
+
+        # Set the model (store user's input, resolution happens in SDK layer)
+        context.user_data["selected_model"] = model_name
+
+        # Clear session to avoid tool state conflicts
+        # (switching mid-conversation with pending tools causes API errors)
+        old_session_id = context.user_data.get("claude_session_id")
+        if old_session_id:
+            context.user_data.pop("claude_session_id", None)
+            logger.info(
+                "Cleared session due to model switch",
+                old_session_id=old_session_id,
+                new_model=model_name,
+            )
+
+        model_display = get_display_name(model_name)
+        await update.message.reply_text(
+            f"✅ Model switched to: <b>{escape_html(model_display)}</b>\n\n"
+            f"Starting fresh session with new model.",
             parse_mode="HTML",
         )
 
@@ -932,6 +1081,9 @@ class MessageOrchestrator:
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
+        # Get user's selected model (if any)
+        selected_model = self._get_selected_model(context)
+
         success = True
         try:
             claude_response = await claude_integration.run_command(
@@ -941,6 +1093,7 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model=selected_model,
             )
 
             # New session created successfully — clear the one-shot flag
@@ -1558,52 +1711,115 @@ class MessageOrchestrator:
     async def _agentic_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle cd: callbacks — switch directory and resume session if available."""
+        """Handle cd: and model: callbacks."""
         query = update.callback_query
         await query.answer()
 
         data = query.data
-        _, project_name = data.split(":", 1)
+        prefix, value = data.split(":", 1)
 
-        base = self.settings.approved_directory
-        new_path = base / project_name
+        if prefix == "cd":
+            # Handle directory change
+            project_name = value
+            base = self.settings.approved_directory
+            new_path = base / project_name
 
-        if not new_path.is_dir():
+            if not new_path.is_dir():
+                await query.edit_message_text(
+                    f"Directory not found: <code>{escape_html(project_name)}</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+            context.user_data["current_directory"] = new_path
+
+            # Look for a resumable session instead of always clearing
+            claude_integration = context.bot_data.get("claude_integration")
+            session_id = None
+            if claude_integration:
+                existing = await claude_integration._find_resumable_session(
+                    query.from_user.id, new_path
+                )
+                if existing:
+                    session_id = existing.session_id
+            context.user_data["claude_session_id"] = session_id
+
+            is_git = (new_path / ".git").is_dir()
+            git_badge = " (git)" if is_git else ""
+            session_badge = " · session resumed" if session_id else ""
+
             await query.edit_message_text(
-                f"Directory not found: <code>{escape_html(project_name)}</code>",
+                f"Switched to <code>{escape_html(project_name)}/</code>"
+                f"{git_badge}{session_badge}",
                 parse_mode="HTML",
             )
-            return
 
-        context.user_data["current_directory"] = new_path
+        elif prefix == "model":
+            # Handle model selection
+            model_name = value
 
-        # Look for a resumable session instead of always clearing
-        claude_integration = context.bot_data.get("claude_integration")
-        session_id = None
-        if claude_integration:
-            existing = await claude_integration._find_resumable_session(
-                query.from_user.id, new_path
+            if model_name == "default":
+                # Reset to config default
+                context.user_data.pop("selected_model", None)
+                default = self.settings.claude_model or "CLI default"
+                default_display = get_display_name(default)
+                await query.edit_message_text(
+                    f"✅ Model reset to default: <b>{escape_html(default_display)}</b>",
+                    parse_mode="HTML",
+                )
+                return
+
+            # Validate model is in available list (if configured)
+            # Compare resolved names to support aliases
+            available_models = self.settings.anthropic_models or []
+            if available_models:
+                model_resolved = resolve_model_name(model_name)
+                available_resolved = [resolve_model_name(m) for m in available_models]
+
+                if model_resolved not in available_resolved:
+                    await query.edit_message_text(
+                        f"❌ Model <code>{escape_html(model_name)}</code> not in available list.",
+                        parse_mode="HTML",
+                    )
+                    return
+
+            # Set the model (store user's input, resolution happens in SDK layer)
+            context.user_data["selected_model"] = model_name
+
+            # Clear session to avoid tool state conflicts
+            old_session_id = context.user_data.get("claude_session_id")
+            if old_session_id:
+                context.user_data.pop("claude_session_id", None)
+                logger.info(
+                    "Cleared session due to model switch",
+                    old_session_id=old_session_id,
+                    new_model=model_name,
+                )
+
+            model_display = get_display_name(model_name)
+            await query.edit_message_text(
+                f"✅ Model switched to: <b>{escape_html(model_display)}</b>\n\n"
+                f"Starting fresh session with new model.",
+                parse_mode="HTML",
             )
-            if existing:
-                session_id = existing.session_id
-        context.user_data["claude_session_id"] = session_id
 
-        is_git = (new_path / ".git").is_dir()
-        git_badge = " (git)" if is_git else ""
-        session_badge = " · session resumed" if session_id else ""
-
-        await query.edit_message_text(
-            f"Switched to <code>{escape_html(project_name)}/</code>"
-            f"{git_badge}{session_badge}",
-            parse_mode="HTML",
-        )
-
-        # Audit log
-        audit_logger = context.bot_data.get("audit_logger")
-        if audit_logger:
-            await audit_logger.log_command(
-                user_id=query.from_user.id,
-                command="cd",
-                args=[project_name],
-                success=True,
-            )
+        # Audit log - only for cd commands
+        if prefix == "cd":
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=query.from_user.id,
+                    command="cd",
+                    args=[project_name],
+                    success=True,
+                )
+        elif prefix == "model":
+            # Audit log for model commands
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=query.from_user.id,
+                    command="model",
+                    args=[model_name],
+                    success=True,
+                )

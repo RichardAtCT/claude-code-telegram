@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     claude_model: Optional[str] = Field(
         None, description="Claude model to use (defaults to CLI default if unset)"
     )
+    anthropic_models: Optional[List[str]] = Field(
+        None,
+        description="Available Claude models for user selection (comma-separated)",
+    )
     claude_max_turns: int = Field(
         DEFAULT_CLAUDE_MAX_TURNS, description="Max conversation turns"
     )
@@ -305,10 +309,10 @@ class Settings(BaseSettings):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
-    @field_validator("claude_allowed_tools", mode="before")
+    @field_validator("claude_allowed_tools", "anthropic_models", mode="before")
     @classmethod
     def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
-        """Parse comma-separated tool names."""
+        """Parse comma-separated tool names and model lists."""
         if v is None:
             return None
         if isinstance(v, str):

@@ -36,6 +36,7 @@ from .exceptions import (
     ClaudeProcessError,
     ClaudeTimeoutError,
 )
+from .model_mapper import resolve_model_name
 from .monitor import _is_claude_internal_path, check_bash_directory_boundary
 
 logger = structlog.get_logger()
@@ -149,7 +150,10 @@ class ClaudeSDKManager:
         # Set up custom base URL if provided
         if config.anthropic_base_url_str:
             os.environ["ANTHROPIC_BASE_URL"] = config.anthropic_base_url_str
-            logger.info("Using custom base URL for Claude SDK", base_url=config.anthropic_base_url_str)
+            logger.info(
+                "Using custom base URL for Claude SDK",
+                base_url=config.anthropic_base_url_str,
+            )
 
     async def execute_command(
         self,
@@ -158,6 +162,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        model: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -200,9 +205,23 @@ class ClaudeSDKManager:
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
             # Build Claude Agent options
+            # Use per-request model override if provided, otherwise fall back to config
+            user_model = model or self.config.claude_model or None
+
+            # Resolve model aliases (e.g., "cc-opus" → "claude-opus-4-6")
+            # This supports enterprise/proxy endpoints with custom model names
+            effective_model = resolve_model_name(user_model)
+
+            if effective_model != user_model:
+                logger.info(
+                    "Resolved model alias",
+                    input=user_model,
+                    resolved=effective_model,
+                )
+
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
-                model=self.config.claude_model or None,
+                model=effective_model,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,

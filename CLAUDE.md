@@ -102,6 +102,8 @@ Multi-project topics: `ENABLE_PROJECT_THREADS` (default false), `PROJECT_THREADS
 
 Output verbosity: `VERBOSE_LEVEL` (default 1, range 0-2). Controls how much of Claude's background activity is shown to the user in real-time. 0 = quiet (only final response, typing indicator still active), 1 = normal (tool names + reasoning snippets shown during execution), 2 = detailed (tool names with input summaries + longer reasoning text). Users can override per-session via `/verbose 0|1|2`. A persistent typing indicator is refreshed every ~2 seconds at all levels.
 
+Model selection: `ANTHROPIC_MODELS` (comma-separated list, optional). Defines available Claude models that users can switch between via `/model <model-name>`. Example: `ANTHROPIC_MODELS=claude-opus-4-6,claude-sonnet-4-6,claude-haiku-4-5`. Users can switch models mid-session with `/model` command. The selected model persists in `context.user_data["selected_model"]` and overrides `CLAUDE_MODEL` config for that user's session.
+
 Voice transcription: `ENABLE_VOICE_MESSAGES` (default true), `VOICE_PROVIDER` (`mistral`|`openai`, default `mistral`), `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `VOICE_TRANSCRIPTION_MODEL`. Provider implementation is in `src/bot/features/voice_handler.py`.
 
 Feature flags in `src/config/features.py` control: MCP, git integration, file uploads, quick actions, session export, image uploads, voice messages, conversation mode, agentic mode, API server, scheduler.
@@ -122,7 +124,7 @@ All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow(
 
 ### Agentic mode
 
-Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
+Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/model`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
 
 1. Add handler function in `src/bot/orchestrator.py`
 2. Register in `MessageOrchestrator._register_agentic_handlers()`
