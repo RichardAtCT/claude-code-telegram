@@ -1260,6 +1260,72 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     os.kill(os.getpid(), signal.SIGTERM)
 
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stats — show RPG profile card."""
+    user_id = update.effective_user.id
+    gamification = context.bot_data.get("gamification_service")
+    if not gamification:
+        await update.message.reply_text("Gamification is not enabled.")
+        return
+
+    profile = await gamification.repo.get_profile(user_id)
+    if not profile:
+        await update.message.reply_text("No RPG profile yet. Start coding to earn XP!")
+        return
+
+    from src.gamification.constants import xp_for_level
+
+    next_level_xp = xp_for_level(profile.level + 1)
+    progress = profile.total_xp - xp_for_level(profile.level)
+    needed = next_level_xp - xp_for_level(profile.level)
+    bar_len = 16
+    filled = int(bar_len * progress / needed) if needed > 0 else bar_len
+    bar = "\u2588" * filled + "\u2591" * (bar_len - filled)
+
+    text = (
+        f"<b>{update.effective_user.first_name}</b> \u00b7 Lv.{profile.level}\n"
+        f"<i>{profile.title}</i>\n\n"
+        f"XP: <code>{bar}</code> {profile.total_xp}/{next_level_xp}\n\n"
+        f"STR {profile.str_points:>3}  \u00b7  Backend, Shell\n"
+        f"INT {profile.int_points:>3}  \u00b7  Architecture\n"
+        f"DEX {profile.dex_points:>3}  \u00b7  Frontend, Swift\n"
+        f"CON {profile.con_points:>3}  \u00b7  Tests, QA\n"
+        f"WIS {profile.wis_points:>3}  \u00b7  Docs, Planning\n\n"
+        f"Streak: {profile.current_streak} days (best: {profile.longest_streak})"
+    )
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def achievements_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /achievements — show recent achievements."""
+    user_id = update.effective_user.id
+    gamification = context.bot_data.get("gamification_service")
+    if not gamification:
+        await update.message.reply_text("Gamification is not enabled.")
+        return
+
+    unlocked = await gamification.repo.get_user_achievements(user_id)
+    all_defs = await gamification.repo.get_active_definitions()
+    total = len(all_defs)
+    count = len(unlocked)
+
+    if not unlocked:
+        text = f"No achievements yet (0/{total}). Keep coding!"
+    else:
+        lines = [f"<b>Achievements</b> ({count}/{total})\n"]
+        for ach in unlocked[:5]:
+            defn = next((d for d in all_defs if d.achievement_id == ach.achievement_id), None)
+            if defn:
+                rarity_tag = f"[{defn.rarity.upper()}]"
+                lines.append(f"{defn.icon} <b>{defn.name}</b> {rarity_tag}\n  <i>{defn.description}</i>")
+        if count > 5:
+            lines.append(f"\n... and {count - 5} more")
+        text = "\n".join(lines)
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
 def _format_file_size(size: int) -> str:
     """Format file size in human-readable format."""
     for unit in ["B", "KB", "MB", "GB"]:
