@@ -85,6 +85,11 @@ class FeatureFlags:
         """Check if streaming drafts via sendMessageDraft is enabled."""
         return self.settings.enable_stream_drafts
 
+    @property
+    def gamification_enabled(self) -> bool:
+        """Check if RPG gamification system is enabled."""
+        return self.settings.enable_gamification
+
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""
         feature_map = {
@@ -101,6 +106,7 @@ class FeatureFlags:
             "agentic_mode": self.agentic_mode_enabled,
             "voice_messages": self.voice_messages_enabled,
             "stream_drafts": self.stream_drafts_enabled,
+            "gamification": self.gamification_enabled,
         }
         return feature_map.get(feature_name, False)
 

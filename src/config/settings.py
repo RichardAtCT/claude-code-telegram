@@ -227,6 +227,7 @@ class Settings(BaseSettings):
         False,
         description="Stream partial responses via sendMessageDraft (private chats only)",
     )
+    enable_gamification: bool = Field(False, description="Enable RPG gamification system")
     stream_draft_interval: float = Field(
         0.3,
         description="Minimum seconds between draft updates (0.1-5.0)",
