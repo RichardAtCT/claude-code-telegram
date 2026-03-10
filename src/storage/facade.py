@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 import structlog
 
 from ..claude.sdk_integration import ClaudeResponse
+from ..events.bus import EventBus
 from .database import DatabaseManager
 from .models import (
     AuditLogModel,
@@ -34,9 +35,10 @@ logger = structlog.get_logger()
 class Storage:
     """Main storage interface."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, event_bus: Optional[EventBus] = None):
         """Initialize storage with database URL."""
         self.db_manager = DatabaseManager(database_url)
+        self.event_bus = event_bus
         self.users = UserRepository(self.db_manager)
         self.sessions = SessionRepository(self.db_manager)
         self.project_threads = ProjectThreadRepository(self.db_manager)
@@ -108,6 +110,16 @@ class Storage:
                     error_message=response.error_type if response.is_error else None,
                 )
                 await self.tools.save_tool_usage(tool_usage)
+
+                if self.event_bus:
+                    from ..events.types import ToolUsageSavedEvent
+                    await self.event_bus.publish(ToolUsageSavedEvent(
+                        user_id=user_id,
+                        session_id=session_id,
+                        tool_name=tool["name"],
+                        tool_input=tool.get("input", {}),
+                        success=not response.is_error,
+                    ))
 
         # Update cost tracking
         await self.costs.update_daily_cost(user_id, response.cost)

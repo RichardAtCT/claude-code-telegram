@@ -52,3 +52,50 @@ class AgentResponseEvent(Event):
     reply_to_message_id: Optional[int] = None
     source: str = "agent"
     originating_event_id: Optional[str] = None
+
+
+@dataclass
+class ToolUsageSavedEvent(Event):
+    """Published after tool usage is saved to DB."""
+
+    user_id: int = 0
+    session_id: str = ""
+    tool_name: str = ""
+    tool_input: Dict[str, Any] = field(default_factory=dict)
+    success: bool = True
+    source: str = "storage"
+
+
+@dataclass
+class XpGainedEvent(Event):
+    """Published when XP is awarded."""
+
+    user_id: int = 0
+    xp_amount: int = 0
+    stat_type: Optional[str] = None
+    xp_source: str = ""
+    new_total_xp: int = 0
+    source: str = "gamification"
+
+
+@dataclass
+class LevelUpEvent(Event):
+    """Published on level up."""
+
+    user_id: int = 0
+    new_level: int = 0
+    title: str = ""
+    previous_level: int = 0
+    source: str = "gamification"
+
+
+@dataclass
+class AchievementUnlockedEvent(Event):
+    """Published when achievement is unlocked."""
+
+    user_id: int = 0
+    achievement_id: str = ""
+    name: str = ""
+    rarity: str = ""
+    xp_reward: int = 0
+    source: str = "gamification"
