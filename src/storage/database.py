@@ -310,6 +310,96 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- RPG Gamification tables
+
+                -- User RPG profile with stats
+                CREATE TABLE IF NOT EXISTS rpg_profile (
+                    user_id INTEGER PRIMARY KEY,
+                    level INTEGER NOT NULL DEFAULT 1,
+                    total_xp INTEGER NOT NULL DEFAULT 0,
+                    str_points INTEGER NOT NULL DEFAULT 0,
+                    int_points INTEGER NOT NULL DEFAULT 0,
+                    dex_points INTEGER NOT NULL DEFAULT 0,
+                    con_points INTEGER NOT NULL DEFAULT 0,
+                    wis_points INTEGER NOT NULL DEFAULT 0,
+                    current_streak INTEGER NOT NULL DEFAULT 0,
+                    longest_streak INTEGER NOT NULL DEFAULT 0,
+                    last_activity_date TEXT,
+                    title TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                );
+
+                -- XP history log
+                CREATE TABLE IF NOT EXISTS xp_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    xp_amount INTEGER NOT NULL,
+                    stat_type TEXT,
+                    source TEXT,
+                    details TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_xp_log_user_created
+                    ON xp_log(user_id, created_at);
+
+                -- Achievement template definitions
+                CREATE TABLE IF NOT EXISTS achievement_definitions (
+                    achievement_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    icon TEXT,
+                    category TEXT,
+                    condition_type TEXT NOT NULL,
+                    condition_key TEXT NOT NULL,
+                    condition_value INTEGER NOT NULL,
+                    xp_reward INTEGER NOT NULL DEFAULT 0,
+                    rarity TEXT NOT NULL DEFAULT 'common',
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE
+                );
+
+                -- User unlocked achievements
+                CREATE TABLE IF NOT EXISTS achievements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    achievement_id TEXT NOT NULL,
+                    unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    data TEXT,
+                    UNIQUE(user_id, achievement_id),
+                    FOREIGN KEY (user_id) REFERENCES users(user_id),
+                    FOREIGN KEY (achievement_id) REFERENCES achievement_definitions(achievement_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_achievements_user_id
+                    ON achievements(user_id);
+
+                -- Seed starter achievement definitions
+                INSERT OR IGNORE INTO achievement_definitions
+                    (achievement_id, name, description, icon, category, condition_type, condition_key, condition_value, xp_reward, rarity)
+                VALUES
+                    ('first_blood', 'First Blood', 'First commit', '🩸', 'commits', 'counter', 'commit_count', 1, 10, 'common'),
+                    ('toolbox', 'Toolbox', '5 different tools used', '🧰', 'tools', 'counter', 'unique_tools', 5, 10, 'common'),
+                    ('early_bird', 'Early Bird', 'Activity before 7:00', '🌅', 'time', 'unique', 'early_activity', 1, 10, 'common'),
+                    ('night_owl', 'Night Owl', 'Activity after 23:00', '🦉', 'time', 'unique', 'late_activity', 1, 10, 'common'),
+                    ('test_ninja', 'Test Ninja', '50 test runs', '🥷', 'testing', 'counter', 'test_runs', 50, 50, 'rare'),
+                    ('streak_week', 'Streak Week', '7 day streak', '🔥', 'streaks', 'streak', 'streak_days', 7, 30, 'rare'),
+                    ('polyglot', 'Polyglot', '3+ languages used', '🌐', 'languages', 'counter', 'languages_used', 3, 40, 'rare'),
+                    ('bug_hunter', 'Bug Hunter', '10 fix commits', '🐛', 'commits', 'counter', 'fix_commits', 10, 40, 'rare'),
+                    ('architect', 'Architect', '10 refactor commits', '🏛️', 'commits', 'counter', 'refactor_commits', 10, 40, 'rare'),
+                    ('clean_sweep', 'Clean Sweep', 'QA with no findings', '✨', 'quality', 'counter', 'qa_clean_runs', 1, 100, 'epic'),
+                    ('streak_month', 'Streak Month', '30 day streak', '📅', 'streaks', 'streak', 'streak_days', 30, 100, 'epic'),
+                    ('centurion', 'Centurion', '100 commits', '💯', 'commits', 'counter', 'commit_count', 100, 100, 'epic'),
+                    ('stat_master', 'Stat Master', 'Any stat reaches 100', '⭐', 'stats', 'threshold', 'max_stat', 100, 100, 'epic'),
+                    ('streak_100', 'Streak 100', '100 day streak', '🏆', 'streaks', 'streak', 'streak_days', 100, 300, 'legendary'),
+                    ('max_level', 'Max Level', 'Level 50', '👑', 'progression', 'threshold', 'level', 50, 500, 'legendary'),
+                    ('pentagram', 'Pentagram', 'All 5 stats reach 50', '⚡', 'stats', 'threshold', 'min_stat', 50, 300, 'legendary'),
+                    ('thousand', 'Thousand', '1000 commits', '🌟', 'commits', 'counter', 'commit_count', 1000, 500, 'legendary');
+                """,
+            ),
         ]
 
     async def _init_pool(self):
