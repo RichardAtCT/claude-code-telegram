@@ -64,6 +64,9 @@ DISABLE_TOOL_VALIDATION=false
 # Authentication
 ANTHROPIC_API_KEY=sk-ant-api03-...    # Optional: API key for SDK (uses CLI auth if omitted)
 
+# Custom API endpoint (optional, for proxy/enterprise endpoints)
+ANTHROPIC_BASE_URL=https://your-proxy.example.com/v1    # Optional: custom base URL for Anthropic API
+
 # Maximum conversation turns before requiring new session
 CLAUDE_MAX_TURNS=10
 

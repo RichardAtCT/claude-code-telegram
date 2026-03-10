@@ -41,6 +41,9 @@ class Settings(BaseSettings):
 
     # Security
     approved_directory: Path = Field(..., description="Base directory for projects")
+    approved_directories: Optional[List[Path]] = Field(
+        None, description="List of approved directories for projects (alternative to single approved_directory)"
+    )
     allowed_users: Optional[List[int]] = Field(
         None, description="Allowed Telegram user IDs"
     )
@@ -74,8 +77,16 @@ class Settings(BaseSettings):
         None,
         description="Anthropic API key for SDK (optional if CLI logged in)",
     )
+    anthropic_base_url: Optional[str] = Field(
+        None,
+        description="Base URL for Anthropic API (optional, defaults to standard Anthropic API)",
+    )
     claude_model: Optional[str] = Field(
         None, description="Claude model to use (defaults to CLI default if unset)"
+    )
+    anthropic_models: Optional[List[str]] = Field(
+        None,
+        description="Available Claude models for user selection (comma-separated)",
     )
     claude_max_turns: int = Field(
         DEFAULT_CLAUDE_MAX_TURNS, description="Max conversation turns"
@@ -301,10 +312,10 @@ class Settings(BaseSettings):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
-    @field_validator("claude_allowed_tools", mode="before")
+    @field_validator("claude_allowed_tools", "anthropic_models", mode="before")
     @classmethod
     def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
-        """Parse comma-separated tool names."""
+        """Parse comma-separated tool names and model lists."""
         if v is None:
             return None
         if isinstance(v, str):
@@ -326,6 +337,30 @@ class Settings(BaseSettings):
         if not path.is_dir():
             raise ValueError(f"Approved directory is not a directory: {path}")
         return path  # type: ignore[no-any-return]
+
+    @field_validator("approved_directories", mode="before")
+    @classmethod
+    def validate_approved_directories(cls, v: Any) -> Optional[List[Path]]:
+        """Ensure all approved directories exist and are absolute."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # Parse comma-separated paths
+            paths = [p.strip() for p in v.split(",") if p.strip()]
+            v = [Path(p) for p in paths]
+        if isinstance(v, list):
+            validated_paths = []
+            for path_item in v:
+                if isinstance(path_item, str):
+                    path_item = Path(path_item)
+                path = path_item.resolve()
+                if not path.exists():
+                    raise ValueError(f"Approved directory does not exist: {path}")
+                if not path.is_dir():
+                    raise ValueError(f"Approved directory is not a directory: {path}")
+                validated_paths.append(path)
+            return validated_paths
+        return v  # type: ignore[no-any-return]
 
     @field_validator("mcp_config_path", mode="before")
     @classmethod
@@ -453,6 +488,13 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def effective_approved_directories(self) -> List[Path]:
+        """Get the list of approved directories to use for validation."""
+        if self.approved_directories:
+            return self.approved_directories
+        return [self.approved_directory]
+
+    @property
     def is_production(self) -> bool:
         """Check if running in production mode."""
         return not (self.debug or self.development_mode)
@@ -485,6 +527,11 @@ class Settings(BaseSettings):
             if self.anthropic_api_key
             else None
         )
+
+    @property
+    def anthropic_base_url_str(self) -> Optional[str]:
+        """Get Anthropic base URL as string."""
+        return self.anthropic_base_url
 
     @property
     def mistral_api_key_str(self) -> Optional[str]:

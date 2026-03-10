@@ -147,3 +147,4 @@ sessions/
 backups/
 uploads/
 config/mcp.json
+config/projects.yaml
