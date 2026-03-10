@@ -92,3 +92,11 @@ disallow_untyped_defs = true
 [tool.flake8]
 max-line-length = 88
 extend-ignore = ["E203", "W503"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+]
