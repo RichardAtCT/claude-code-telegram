@@ -228,11 +228,12 @@ async def run_api_server(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    gamification_repo: Optional[Any] = None,
 ) -> None:
     """Run the FastAPI server using uvicorn."""
     import uvicorn
 
-    app = create_api_app(event_bus, settings, db_manager)
+    app = create_api_app(event_bus, settings, db_manager, gamification_repo=gamification_repo)
 
     config = uvicorn.Config(
         app=app,

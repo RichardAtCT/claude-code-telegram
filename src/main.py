@@ -99,8 +99,11 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     features = FeatureFlags(config)
 
+    # Event bus — initialized early so storage can publish events
+    event_bus = EventBus()
+
     # Initialize storage system
-    storage = Storage(config.database_url)
+    storage = Storage(config.database_url, event_bus=event_bus)
     await storage.initialize()
 
     # Create security components
@@ -151,7 +154,6 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
 
     # --- Event bus and agentic platform components ---
-    event_bus = EventBus()
 
     # Event security middleware
     event_security = EventSecurityMiddleware(
@@ -170,6 +172,20 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     agent_handler.register()
 
+    # Gamification (RPG system)
+    gamification_service = None
+    gamification_repo = None
+    if config.enable_gamification:
+        from src.gamification.repository import GamificationRepository
+        from src.gamification.service import GamificationService
+
+        gamification_repo = GamificationRepository(storage.db_manager)
+        gamification_service = GamificationService(
+            repo=gamification_repo, event_bus=event_bus,
+        )
+        gamification_service.register()
+        logger.info("Gamification service enabled")
+
     # Create bot with all dependencies
     dependencies = {
         "auth_manager": auth_manager,
@@ -181,6 +197,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        "gamification_service": gamification_service,
     }
 
     bot = ClaudeCodeBot(config, dependencies)
@@ -201,6 +218,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "agent_handler": agent_handler,
         "auth_manager": auth_manager,
         "security_validator": security_validator,
+        "gamification_repo": gamification_repo,
     }
 
 
@@ -213,6 +231,7 @@ async def run_application(app: Dict[str, Any]) -> None:
     config: Settings = app["config"]
     features: FeatureFlags = app["features"]
     event_bus: EventBus = app["event_bus"]
+    gamification_repo = app.get("gamification_repo")
 
     notification_service: Optional[NotificationService] = None
     scheduler: Optional[JobScheduler] = None
@@ -301,7 +320,10 @@ async def run_application(app: Dict[str, Any]) -> None:
             from src.api.server import run_api_server
 
             api_task = asyncio.create_task(
-                run_api_server(event_bus, config, storage.db_manager)
+                run_api_server(
+                    event_bus, config, storage.db_manager,
+                    gamification_repo=gamification_repo,
+                )
             )
             tasks.append(api_task)
             logger.info("API server enabled", port=config.api_server_port)
