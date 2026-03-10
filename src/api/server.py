@@ -5,6 +5,7 @@ Receives external webhooks and publishes them as events on the bus.
 """
 
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import structlog
@@ -181,6 +182,12 @@ def create_api_app(
                 {"name": "WIS", "value": profile.wis_points},
             ]
         }
+
+    # Serve Mini App static files (production build)
+    mini_app_path = Path(__file__).parent.parent.parent / "mini-app" / "dist"
+    if mini_app_path.exists():
+        from starlette.staticfiles import StaticFiles
+        app.mount("/mini-app", StaticFiles(directory=str(mini_app_path), html=True))
 
     return app
 
