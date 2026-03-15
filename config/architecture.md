@@ -2,9 +2,7 @@
 
 ## What It Is
 
-A personal prioritization coach delivered through Telegram, powered by Claude Code as the agent runtime.
-
-The user chats with a Telegram bot. The bot forwards messages to a locally running Claude Code instance. Claude Code — guided by an agent personality file and equipped with goal tracking tools — coaches the user on prioritization, records outcomes, and learns their values over time.
+A personal prioritization coach powered by Claude Code as the agent runtime. The user interacts via Telegram — the bot is just a thin delivery layer that forwards messages to Claude Code and sends responses back.
 
 ## How the User Experiences It
 
@@ -24,25 +22,17 @@ The user never sees Claude Code, SDKs, databases, or tools. They see a coach who
 ## Technical Stack
 
 ```
-┌─────────────┐
-│  Telegram   │  User interface (phone/desktop)
-└──────┬──────┘
-       │
-┌──────▼──────┐
-│  Telegram   │  python-telegram-bot
-│  Bot Layer  │  Auth, rate limiting, message routing
-└──────┬──────┘
-       │
-┌──────▼──────┐
-│ Claude Code │  claude-agent-sdk
-│   (Agent)   │  Reasoning, coaching, tool calls
-└──────┬──────┘
-       │
-┌──────▼──────┐
-│   Tools     │  Goal tracking, user profile
-│  (SQLite)   │  Structured data store
-└─────────────┘
+Telegram (user interface)
+    │
+    ▼
+Claude Code (agent runtime, via claude-agent-sdk)
+    │
+    ├── Agent Personality (static markdown, system prompt)
+    ├── User Profile (per-user markdown file, read/written by agent)
+    └── Goal Tracking (SQLite, structured outcome data)
 ```
+
+The existing `claude-code-telegram` bot handles message transport, auth, and session resume. No changes to its core — all agent behavior is defined by the personality file and tools.
 
 ## Components
 
@@ -58,7 +48,7 @@ Does **not** contain user-specific decision rules — those live in the user pro
 
 ### 2. Claude Code (Runtime)
 
-The agent brain. Handles all reasoning, conversation, and coaching logic. We don't build any of this — Claude Code provides it.
+The agent brain. Handles all reasoning, conversation, and coaching logic. We don't build any of this.
 
 What Claude Code gives us for free:
 - Natural language understanding and generation
@@ -71,26 +61,9 @@ Configuration:
 - `LOAD_PROJECT_CLAUDE_MD=false` — prevents loading the repo's dev docs as agent context
 - Session auto-resume via the existing bot integration
 
-### 3. Goal Tracking Tool
+### 3. User Profile (Per-User Markdown File)
 
-Structured data store for goals and outcomes. Two tables in SQLite.
-
-**`goals`** — What the user is working toward
-- Yearly goals, monthly sub-goals, weekly focus areas
-- Each has a title, description, and "why" (user-articulated reasoning)
-- Status: active / completed / dropped
-- Parent linkage (monthly goal → yearly goal)
-
-**`goal_outcomes`** — What happened each day
-- Date, goal reference, status (completed / partial / skipped / missed)
-- Reason for success or failure
-- One record per goal per day
-
-**Operations:** `set_goal`, `record_outcome`, `get_goals`, `get_history`, `get_summary`
-
-### 4. User Profile Store
-
-The agent's learned understanding of each user. A living document that evolves through interactions.
+A markdown file per user (e.g., `profiles/{user_id}.md`) that the agent reads at session start and updates through conversation. Claude Code reads and writes it directly using its native file tools.
 
 **Three sections:**
 
@@ -109,48 +82,52 @@ The agent's learned understanding of each user. A living document that evolves t
 - Completion tendencies (which goal types stick, which get skipped)
 - Time patterns (productive days, low-energy periods)
 - Response to different coaching approaches
-- Updated automatically from goal outcome data
+- Updated automatically as the agent notices trends in goal outcomes
 
-**Storage:** `user_values` table in SQLite — key-value pairs with categories, timestamps, and source attribution (user-stated vs. agent-inferred).
+This is a living document. The agent owns it. It grows and changes as the agent learns the user.
 
-### 5. Telegram Bot Layer (Existing)
+### 4. Goal Tracking Tool
 
-The existing `claude-code-telegram` bot, configured for agent mode:
-- Authenticates users
-- Forwards messages to Claude Code via the SDK
-- Streams progress back (typing indicator while agent thinks)
-- Sends final response
-- Manages session continuity (auto-resume)
+Structured data store for goals and daily outcomes. SQLite — because this is relational data that needs querying (completion rates, date ranges, aggregations).
 
-No changes to the bot's core architecture. The agent behavior is entirely defined by the CLAUDE.md personality file and the tools available to Claude Code.
+**`goals`** — What the user is working toward
+- Yearly goals, monthly sub-goals, weekly focus areas
+- Each has a title, description, and "why" (user-articulated reasoning)
+- Status: active / completed / dropped
+- Parent linkage (monthly goal → yearly goal)
+
+**`goal_outcomes`** — What happened each day
+- Date, goal reference, status (completed / partial / skipped / missed)
+- Reason for success or failure
+- One record per goal per day
+
+**Operations:** `set_goal`, `record_outcome`, `get_goals`, `get_history`, `get_summary`
 
 ## Data Flow
 
 ### Daily Check-in
 ```
 User sends message
-  → Bot forwards to Claude Code
-    → Agent reads user profile (soul, framework, patterns)
-    → Agent reads active goals + recent history
-    → Agent reasons about today's priority
-    → Agent responds with recommendation + reasoning
-  → Bot sends response to Telegram
+  → Agent reads user profile markdown (soul, framework, patterns)
+  → Agent reads active goals + recent outcomes from goal tool
+  → Agent reasons about today's priority using profile + data
+  → Agent responds with recommendation + reasoning
 ```
 
 ### Recording an Outcome
 ```
 User says "done" or "skipped because..."
-  → Agent calls record_outcome tool
+  → Agent calls record_outcome tool (SQLite)
   → Agent checks if outcome reveals new pattern
-  → If yes: updates user profile (decision framework or patterns)
+  → If yes: updates user profile markdown (patterns or framework section)
   → Agent acknowledges and optionally adjusts tomorrow's plan
 ```
 
 ### Learning a Value
 ```
 User says "actually health is more important to me than career right now"
-  → Agent updates user profile (soul/motivation section)
-  → Agent updates decision framework ("health > career for current period")
+  → Agent updates user profile markdown (soul/motivation section)
+  → Agent updates decision framework section
   → Future daily recommendations shift accordingly
 ```
 
@@ -161,14 +138,11 @@ User says "actually health is more important to me than career right now"
 | Reasoning & coaching | Claude Code |
 | Conversation memory | Claude Code sessions |
 | Personality & philosophy | Agent CLAUDE.md (static file) |
+| User values & decision rules | User profile (per-user markdown, read/written by agent) |
 | Goal definitions & outcomes | Goal tracking tool (SQLite) |
-| User values & learned rules | User profile store (SQLite) |
-| Message transport | Telegram bot (existing) |
-| Auth & rate limiting | Telegram bot (existing) |
+| Message transport & auth | Telegram bot (existing, no changes) |
 
 ## Deployment
-
-Minimal config for a working deployment:
 
 ```env
 TELEGRAM_BOT_TOKEN=xxx
