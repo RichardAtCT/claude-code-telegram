@@ -32,7 +32,7 @@ Claude Code (agent runtime, via claude-agent-sdk)
     └── Goal Tracking (SQLite, structured outcome data)
 ```
 
-The existing `claude-code-telegram` bot handles message transport, auth, and session resume. No changes to its core — all agent behavior is defined by the personality file and tools.
+This project is built on top of [claude-code-telegram](https://github.com/gx-ai-architect/claude-code-telegram), which already provides Claude Code integration (via `claude-agent-sdk`) and Telegram bot infrastructure (auth, session resume, message routing, streaming progress). We build the agent personality and goal tracking tools on top of that existing foundation.
 
 ## Components
 
@@ -140,7 +140,7 @@ User says "actually health is more important to me than career right now"
 | Personality & philosophy | Agent CLAUDE.md (static file) |
 | User values & decision rules | User profile (per-user markdown, read/written by agent) |
 | Goal definitions & outcomes | Goal tracking tool (SQLite) |
-| Message transport & auth | Telegram bot (existing, no changes) |
+| Message transport & auth | claude-code-telegram (existing) |
 
 ## Deployment
 
