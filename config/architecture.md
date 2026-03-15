@@ -105,6 +105,33 @@ Structured data store for goals and daily outcomes. SQLite — because this is r
 
 **Operations:** `set_goal`, `record_outcome`, `get_goals`, `get_history`, `get_summary`
 
+### 5. Check-in Scheduler Tool
+
+The agent decides when to check in next and schedules it itself. This is a tool the agent calls — not a fixed cron.
+
+**How it works:**
+1. At the end of a conversation, the agent calls `schedule_checkin` with a time and context
+2. Under the hood, this creates an APScheduler job (using the existing scheduler infrastructure)
+3. When the clock hits that time: scheduler fires → Claude Code runs with the stored context → agent loads profile + goals → sends a check-in message to the user via Telegram
+
+**Example flow:**
+```
+Agent: "You're doing system design for 45 min. I'll check in at 2pm."
+  → agent calls schedule_checkin(time="14:00", context="Check on system design chapter progress")
+
+At 2pm:
+  → Scheduler fires ScheduledEvent
+  → AgentHandler calls ClaudeIntegration.run_command() with the context
+  → Agent loads profile, sees today's goal, generates: "How's chapter 4 going?"
+  → NotificationService delivers to Telegram
+```
+
+**The agent controls the rhythm.** Morning priorities, midday follow-up, evening review — the timing adapts to what the user is actually doing, not a rigid schedule. If the user says "I'm free after 3pm today," the agent schedules accordingly.
+
+**Operation:** `schedule_checkin(user_id, time, context)`
+
+Built on the existing `JobScheduler` → `EventBus` → `AgentHandler` → `NotificationService` pipeline. No new infrastructure — just a new tool that creates scheduler jobs.
+
 ## Data Flow
 
 ### Daily Check-in
@@ -125,6 +152,17 @@ User says "done" or "skipped because..."
   → Agent acknowledges and optionally adjusts tomorrow's plan
 ```
 
+### Agent-Initiated Check-in
+```
+Previous conversation ended with agent scheduling a 2pm check-in
+  → Scheduler fires at 2pm
+  → Claude Code runs with stored context ("Check on system design progress")
+  → Agent reads profile + today's goals
+  → Agent sends: "How's chapter 4 going?"
+  → User replies → normal conversation flow
+  → Agent schedules next check-in based on outcome
+```
+
 ### Learning a Value
 ```
 User says "actually health is more important to me than career right now"
@@ -142,6 +180,7 @@ User says "actually health is more important to me than career right now"
 | Personality & philosophy | Agent CLAUDE.md (static file) |
 | User values & decision rules | User profile (per-user markdown, read/written by agent) |
 | Goal definitions & outcomes | Goal tracking tool (SQLite) |
+| Proactive check-ins | Agent-scheduled via scheduler tool (existing infra) |
 | Message transport & auth | claude-code-telegram (existing) |
 
 ## Deployment
