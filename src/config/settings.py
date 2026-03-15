@@ -78,6 +78,14 @@ class Settings(BaseSettings):
             "agent personality and behavior for the Telegram bot."
         ),
     )
+    load_project_claude_md: bool = Field(
+        True,
+        description=(
+            "Load CLAUDE.md from the working directory into the system prompt. "
+            "Set to false when deploying as an agent bot to avoid loading the "
+            "repo's own development-focused CLAUDE.md."
+        ),
+    )
     anthropic_api_key: Optional[SecretStr] = Field(
         None,
         description="Anthropic API key for SDK (optional if CLI logged in)",

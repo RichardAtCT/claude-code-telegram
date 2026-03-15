@@ -200,13 +200,14 @@ class ClaudeSDKManager:
                 "Use relative paths."
             )
 
-            claude_md_path = Path(working_directory) / "CLAUDE.md"
-            if claude_md_path.exists():
-                prompt_parts.append(claude_md_path.read_text(encoding="utf-8"))
-                logger.info(
-                    "Loaded project CLAUDE.md into system prompt",
-                    path=str(claude_md_path),
-                )
+            if self.config.load_project_claude_md:
+                claude_md_path = Path(working_directory) / "CLAUDE.md"
+                if claude_md_path.exists():
+                    prompt_parts.append(claude_md_path.read_text(encoding="utf-8"))
+                    logger.info(
+                        "Loaded project CLAUDE.md into system prompt",
+                        path=str(claude_md_path),
+                    )
 
             base_prompt = "\n\n".join(prompt_parts)
 
@@ -235,7 +236,9 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["project"],
+                setting_sources=(
+                    ["project"] if self.config.load_project_claude_md else []
+                ),
                 stderr=_stderr_callback,
             )
 
