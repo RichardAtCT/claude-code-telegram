@@ -210,22 +210,23 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Output verbosity (0=quiet, 1=normal, 2=detailed)
+    # Output verbosity (0=quiet, 1=normal, 2=detailed, 3=full)
     verbose_level: int = Field(
         1,
         description=(
             "Bot output verbosity: 0=quiet (final response only), "
             "1=normal (tool names + reasoning), "
-            "2=detailed (tool inputs + longer reasoning)"
+            "2=detailed (tool inputs + longer reasoning), "
+            "3=full (tool results + complete commands)"
         ),
         ge=0,
-        le=2,
+        le=3,
     )
 
-    # Streaming drafts (Telegram sendMessageDraft)
+    # Streaming drafts (Telegram sendMessageDraft / editMessageText)
     enable_stream_drafts: bool = Field(
         False,
-        description="Stream partial responses via sendMessageDraft (private chats only)",
+        description="Stream partial responses to Telegram in real-time",
     )
     stream_draft_interval: float = Field(
         0.3,
