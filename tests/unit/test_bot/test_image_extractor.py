@@ -98,11 +98,13 @@ class TestValidateImagePath:
         result = validate_image_path(str(work_dir / "missing.png"), approved_dir)
         assert result is None
 
-    def test_non_image_extension_rejected(self, work_dir: Path, approved_dir: Path):
+    def test_non_image_extension_accepted(self, work_dir: Path, approved_dir: Path):
+        """validate_file_path (aliased as validate_image_path) accepts any file type."""
         txt = work_dir / "notes.txt"
         txt.write_text("hello")
         result = validate_image_path(str(txt), approved_dir)
-        assert result is None
+        assert result is not None
+        assert result.mime_type == "text/plain"
 
     def test_outside_approved_dir_rejected(self, tmp_path: Path):
         outside = tmp_path / "outside"
