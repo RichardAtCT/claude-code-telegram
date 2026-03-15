@@ -137,6 +137,8 @@ class ClaudeSDKManager:
         """Initialize SDK manager with configuration."""
         self.config = config
         self.security_validator = security_validator
+        self._active_client: Optional[ClaudeSDKClient] = None
+        self._is_processing: bool = False
 
         # Set up environment for Claude Code SDK if API key is provided
         # If no API key is provided, the SDK will use existing CLI authentication
@@ -145,6 +147,32 @@ class ClaudeSDKManager:
             logger.info("Using provided API key for Claude SDK authentication")
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
+
+    @property
+    def is_processing(self) -> bool:
+        """Return True if a command is currently being processed."""
+        return self._is_processing
+
+    async def interrupt(self) -> None:
+        """Send interrupt signal to the active Claude client (like Ctrl+C)."""
+        client = self._active_client
+        if client is not None:
+            try:
+                await client.interrupt()
+                logger.info("Sent interrupt to active Claude client")
+            except Exception as e:
+                logger.warning("Failed to interrupt Claude client", error=str(e))
+
+    async def abort(self) -> None:
+        """Interrupt and then forcefully disconnect the active client."""
+        await self.interrupt()
+        client = self._active_client
+        if client is not None:
+            try:
+                await client.disconnect()
+                logger.info("Force-disconnected active Claude client")
+            except Exception as e:
+                logger.warning("Failed to disconnect Claude client", error=str(e))
 
     async def execute_command(
         self,
@@ -155,6 +183,7 @@ class ClaudeSDKManager:
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
+        self._is_processing = True
         start_time = asyncio.get_event_loop().time()
 
         logger.info(
@@ -247,6 +276,7 @@ class ClaudeSDKManager:
                 # a plain string. connect(None) uses an empty async
                 # iterable internally, satisfying the requirement.
                 client = ClaudeSDKClient(options)
+                self._active_client = client
                 try:
                     await client.connect()
                     await client.query(prompt)
@@ -286,6 +316,7 @@ class ClaudeSDKManager:
                                     error_type=type(callback_error).__name__,
                                 )
                 finally:
+                    self._active_client = None
                     await client.disconnect()
 
             # Execute with timeout
@@ -454,6 +485,9 @@ class ClaudeSDKManager:
                 error_type=type(e).__name__,
             )
             raise ClaudeProcessError(f"Unexpected error: {str(e)}")
+
+        finally:
+            self._is_processing = False
 
     async def _handle_stream_message(
         self, message: Message, stream_callback: Callable[[StreamUpdate], None]
