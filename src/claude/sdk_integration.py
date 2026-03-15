@@ -172,18 +172,43 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
-            # Build system prompt, loading CLAUDE.md from working directory if present
-            base_prompt = (
+            # Build system prompt:
+            # 1. Global agent CLAUDE.md (personality/behavior, always loaded)
+            # 2. Directory constraint
+            # 3. Per-project CLAUDE.md from working directory (if present)
+            prompt_parts: List[str] = []
+
+            if self.config.agent_claude_md_path:
+                try:
+                    agent_md = self.config.agent_claude_md_path.read_text(
+                        encoding="utf-8"
+                    )
+                    prompt_parts.append(agent_md)
+                    logger.info(
+                        "Loaded agent CLAUDE.md into system prompt",
+                        path=str(self.config.agent_claude_md_path),
+                    )
+                except OSError as e:
+                    logger.warning(
+                        "Failed to read agent CLAUDE.md",
+                        path=str(self.config.agent_claude_md_path),
+                        error=str(e),
+                    )
+
+            prompt_parts.append(
                 f"All file operations must stay within {working_directory}. "
                 "Use relative paths."
             )
+
             claude_md_path = Path(working_directory) / "CLAUDE.md"
             if claude_md_path.exists():
-                base_prompt += "\n\n" + claude_md_path.read_text(encoding="utf-8")
+                prompt_parts.append(claude_md_path.read_text(encoding="utf-8"))
                 logger.info(
-                    "Loaded CLAUDE.md into system prompt",
+                    "Loaded project CLAUDE.md into system prompt",
                     path=str(claude_md_path),
                 )
+
+            base_prompt = "\n\n".join(prompt_parts)
 
             # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
             # tools so the SDK does not restrict tool usage (e.g. MCP tools).

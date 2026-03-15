@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     claude_cli_path: Optional[str] = Field(
         None, description="Path to Claude CLI executable"
     )
+    agent_claude_md_path: Optional[Path] = Field(
+        None,
+        description=(
+            "Path to a global agent CLAUDE.md file that is always loaded into "
+            "the system prompt, regardless of working directory. Defines the "
+            "agent personality and behavior for the Telegram bot."
+        ),
+    )
     anthropic_api_key: Optional[SecretStr] = Field(
         None,
         description="Anthropic API key for SDK (optional if CLI logged in)",
@@ -326,6 +334,23 @@ class Settings(BaseSettings):
         if not path.is_dir():
             raise ValueError(f"Approved directory is not a directory: {path}")
         return path  # type: ignore[no-any-return]
+
+    @field_validator("agent_claude_md_path", mode="before")
+    @classmethod
+    def validate_agent_claude_md_path(cls, v: Any) -> Optional[Path]:
+        """Validate agent CLAUDE.md path if provided."""
+        if not v:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            v = Path(value)
+        if not v.exists():
+            raise ValueError(f"Agent CLAUDE.md file does not exist: {v}")
+        if not v.is_file():
+            raise ValueError(f"Agent CLAUDE.md path is not a file: {v}")
+        return v
 
     @field_validator("mcp_config_path", mode="before")
     @classmethod
