@@ -99,7 +99,7 @@ The bot supports two interaction modes:
 The default conversational mode. Just talk to Claude naturally -- no special commands required.
 
 **Commands:** `/start`, `/new`, `/status`, `/verbose`, `/repo`
-If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
+If `ENABLE_PROJECT_THREADS=true`: `/sync_threads` | If `ENABLE_SCHEDULER=true`: `/schedule`
 
 ```
 You: What files are in this project?
@@ -157,8 +157,8 @@ Use `/repo` to list cloned repos in your workspace, or `/repo <name>` to switch 
 
 Set `AGENTIC_MODE=false` to enable the full 13-command terminal-like interface with directory navigation, inline keyboards, quick actions, git integration, and session export.
 
-**Commands:** `/start`, `/help`, `/new`, `/continue`, `/end`, `/status`, `/cd`, `/ls`, `/pwd`, `/projects`, `/export`, `/actions`, `/git`  
-If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
+**Commands:** `/start`, `/help`, `/new`, `/continue`, `/end`, `/status`, `/cd`, `/ls`, `/pwd`, `/projects`, `/export`, `/actions`, `/git`
+If `ENABLE_PROJECT_THREADS=true`: `/sync_threads` | If `ENABLE_SCHEDULER=true`: `/schedule`
 
 ```
 You: /cd my-web-app
@@ -176,7 +176,7 @@ Bot: [Run Tests] [Install Deps] [Format Code] [Run Linter]
 Beyond direct chat, the bot can respond to external triggers:
 
 - **Webhooks** -- Receive GitHub events (push, PR, issues) and route them through Claude for automated summaries or code review
-- **Scheduler** -- Run recurring Claude tasks on a cron schedule (e.g., daily code health checks)
+- **Scheduler** -- Run recurring Claude tasks on a cron schedule (e.g., daily code health checks). Manage jobs directly from Telegram with `/schedule`
 - **Notifications** -- Deliver agent responses to configured Telegram chats
 
 Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setup.md](docs/setup.md) for configuration.

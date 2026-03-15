@@ -311,6 +311,10 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
+        if self.settings.enable_scheduler:
+            from .handlers import schedule
+
+            handlers.append(("schedule", schedule.schedule_command))
 
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
@@ -376,6 +380,10 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
+        if self.settings.enable_scheduler:
+            from .handlers import schedule
+
+            handlers.append(("schedule", schedule.schedule_command))
 
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
@@ -420,6 +428,8 @@ class MessageOrchestrator:
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
+            if self.settings.enable_scheduler:
+                commands.append(BotCommand("schedule", "Manage scheduled jobs"))
             return commands
         else:
             commands = [
@@ -440,6 +450,8 @@ class MessageOrchestrator:
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
+            if self.settings.enable_scheduler:
+                commands.append(BotCommand("schedule", "Manage scheduled jobs"))
             return commands
 
     # --- Agentic handlers ---

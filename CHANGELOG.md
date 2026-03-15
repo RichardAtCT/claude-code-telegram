@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`/schedule` command**: Create, list, pause, resume, and remove scheduled jobs directly from Telegram. Auto-populates chat, directory, and user from context. Requires `ENABLE_SCHEDULER=true` (#150)
+
 ## [1.5.0] - 2026-03-04
 
 ### Added
