@@ -6,18 +6,20 @@ A personal prioritization coach powered by Claude Code as the agent runtime. The
 
 ## How the User Experiences It
 
+The agent is **active, not passive**. It doesn't wait for the user to check in — it initiates contact based on the user's goals and progress.
+
 ```
-User opens Telegram → sends "morning" →
-Agent loads user profile + goal history →
-Agent proposes today's 1-2 priorities with reasoning →
-User confirms or pushes back →
-Agent records the plan →
-...later...
-User says "done with the system design chapter" →
-Agent records completion, asks about the next day
+Morning: Agent messages the user with today's priorities + reasoning
+Midday:  Agent checks in — "How's the system design chapter going?"
+Evening: Agent asks for outcome — done, partial, skipped? Why?
+         Agent records result and adjusts tomorrow's plan
+
+User can also message anytime:
+  "I got pulled into a meeting, can't finish today"
+  → Agent adjusts, no guilt, records the reason
 ```
 
-The user never sees Claude Code, SDKs, databases, or tools. They see a coach who knows them, remembers their goals, and helps them focus.
+The user never sees Claude Code, SDKs, databases, or tools. They see a coach who knows them, checks on them, and keeps them focused throughout the day.
 
 ## Technical Stack
 
@@ -32,7 +34,7 @@ Claude Code (agent runtime, via claude-agent-sdk)
     └── Goal Tracking (SQLite, structured outcome data)
 ```
 
-This project is built on top of [claude-code-telegram](https://github.com/gx-ai-architect/claude-code-telegram), which already provides Claude Code integration (via `claude-agent-sdk`) and Telegram bot infrastructure (auth, session resume, message routing, streaming progress). We build the agent personality and goal tracking tools on top of that existing foundation.
+This project is built on top of [claude-code-telegram](https://github.com/gx-ai-architect/claude-code-telegram), which already provides Claude Code integration (via `claude-agent-sdk`), Telegram bot infrastructure (auth, session resume, message routing, streaming progress), and a scheduler (APScheduler) for proactive agent-initiated messages. We build the agent personality and goal tracking tools on top of that existing foundation.
 
 ## Components
 
