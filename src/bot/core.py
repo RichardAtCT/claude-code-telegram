@@ -53,6 +53,9 @@ class ClaudeCodeBot:
         builder.token(self.settings.telegram_token_str)
         builder.defaults(Defaults(do_quote=self.settings.reply_quote))
         builder.rate_limiter(AIORateLimiter(max_retries=1))
+        # Allow concurrent update processing so follow-up messages
+        # can interrupt a running Claude task
+        builder.concurrent_updates(True)
 
         # Configure connection settings
         builder.connect_timeout(30)

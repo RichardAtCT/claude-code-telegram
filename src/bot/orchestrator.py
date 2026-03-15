@@ -34,8 +34,10 @@ from ..projects import PrivateTopicsUnavailableError
 from .utils.draft_streamer import DraftStreamer, generate_draft_id
 from .utils.html_format import escape_html
 from .utils.image_extractor import (
+    FileAttachment,
     ImageAttachment,
     should_send_as_photo,
+    validate_file_path,
     validate_image_path,
 )
 
@@ -304,8 +306,10 @@ class MessageOrchestrator:
         handlers = [
             ("start", self.agentic_start),
             ("new", self.agentic_new),
+            ("stop", self.agentic_stop),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
+            ("cleanup", self.agentic_cleanup),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
         ]
@@ -324,10 +328,11 @@ class MessageOrchestrator:
             group=10,
         )
 
-        # File uploads -> Claude
+        # File uploads -> Claude (documents, audio files, video files)
         app.add_handler(
             MessageHandler(
-                filters.Document.ALL, self._inject_deps(self.agentic_document)
+                filters.Document.ALL | filters.AUDIO | filters.VIDEO,
+                self._inject_deps(self.agentic_document),
             ),
             group=10,
         )
@@ -413,8 +418,10 @@ class MessageOrchestrator:
             commands = [
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
+                BotCommand("stop", "Stop current Claude task"),
                 BotCommand("status", "Show session status"),
-                BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("verbose", "Set output verbosity (0/1/2/3)"),
+                BotCommand("cleanup", "Delete tool/thinking messages"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -550,33 +557,75 @@ class MessageOrchestrator:
         args = update.message.text.split()[1:] if update.message.text else []
         if not args:
             current = self._get_verbose_level(context)
-            labels = {0: "quiet", 1: "normal", 2: "detailed"}
+            labels = {0: "quiet", 1: "normal", 2: "detailed", 3: "full"}
             await update.message.reply_text(
                 f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
-                "Usage: <code>/verbose 0|1|2</code>\n"
+                "Usage: <code>/verbose 0|1|2|3</code>\n"
                 "  0 = quiet (final response only)\n"
                 "  1 = normal (tools + reasoning)\n"
-                "  2 = detailed (tools with inputs + reasoning)",
+                "  2 = detailed (tools with inputs + reasoning)\n"
+                "  3 = full (commands + output, like vanilla Claude Code)",
                 parse_mode="HTML",
             )
             return
 
         try:
             level = int(args[0])
-            if level not in (0, 1, 2):
+            if level not in (0, 1, 2, 3):
                 raise ValueError
         except ValueError:
             await update.message.reply_text(
-                "Please use: /verbose 0, /verbose 1, or /verbose 2"
+                "Please use: /verbose 0, /verbose 1, /verbose 2, or /verbose 3"
             )
             return
 
         context.user_data["verbose_level"] = level
-        labels = {0: "quiet", 1: "normal", 2: "detailed"}
+        labels = {0: "quiet", 1: "normal", 2: "detailed", 3: "full (commands + output)"}
         await update.message.reply_text(
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
             parse_mode="HTML",
         )
+
+    async def agentic_cleanup(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Delete tool/thinking messages from the last response: /cleanup."""
+        msg_ids = context.user_data.get("last_tool_message_ids", [])
+        chat_id = context.user_data.get("last_tool_chat_id")
+
+        if not msg_ids or not chat_id:
+            await update.message.reply_text("No tool messages to clean up.")
+            return
+
+        deleted = 0
+        for msg_id in msg_ids:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                deleted += 1
+            except Exception:
+                pass  # message may already be deleted or too old
+
+        context.user_data["last_tool_message_ids"] = []
+        await update.message.reply_text(f"Cleaned up {deleted} messages.")
+
+    async def agentic_stop(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Stop the currently running Claude task: /stop."""
+        task = context.user_data.get("running_claude_task")
+        if task and not task.done():
+            # Kill the Claude CLI subprocess first
+            claude_integration = context.bot_data.get("claude_integration")
+            if claude_integration:
+                sdk_manager = getattr(claude_integration, "sdk_manager", None)
+                if sdk_manager:
+                    await sdk_manager.abort()
+            # Then cancel the asyncio task
+            task.cancel()
+            context.user_data["running_claude_task"] = None
+            await update.message.reply_text("⛔ Stopped.")
+        else:
+            await update.message.reply_text("Nothing running.")
 
     def _format_verbose_progress(
         self,
@@ -591,18 +640,24 @@ class MessageOrchestrator:
         elapsed = time.time() - start_time
         lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
 
-        for entry in activity_log[-15:]:  # Show last 15 entries max
+        max_entries = 30 if verbose_level >= 3 else 15
+        for entry in activity_log[-max_entries:]:
             kind = entry.get("kind", "tool")
             if kind == "text":
-                # Claude's intermediate reasoning/commentary
                 snippet = entry.get("detail", "")
-                if verbose_level >= 2:
+                if verbose_level >= 3:
+                    lines.append(f"\U0001f4ac {snippet}")
+                elif verbose_level >= 2:
                     lines.append(f"\U0001f4ac {snippet}")
                 else:
-                    # Level 1: one short line
                     lines.append(f"\U0001f4ac {snippet[:80]}")
+            elif kind == "result":
+                # Tool result (level 3 only)
+                result = entry.get("detail", "")
+                if "base64" in result and len(result) > 100:
+                    result = "[binary/image data]"
+                lines.append(f"  \u2514\u2500 {result[:300]}")
             else:
-                # Tool call
                 icon = _tool_icon(entry["name"])
                 if verbose_level >= 2 and entry.get("detail"):
                     lines.append(f"{icon} {entry['name']}: {entry['detail']}")
@@ -678,98 +733,239 @@ class MessageOrchestrator:
         mcp_images: Optional[List[ImageAttachment]] = None,
         approved_directory: Optional[Path] = None,
         draft_streamer: Optional[DraftStreamer] = None,
+        chat: Any = None,
+        reply_to_message_id: Optional[int] = None,
     ) -> Optional[Callable[[StreamUpdate], Any]]:
-        """Create a stream callback for verbose progress updates.
+        """Create a stream callback that sends per-event messages.
+
+        At verbose >= 1, each tool call and thinking block gets its own
+        Telegram message (like linuz90's bot). Tool messages are tracked
+        in tool_log for optional cleanup.
 
         When *mcp_images* is provided, the callback also intercepts
-        ``send_image_to_user`` tool calls and collects validated
+        ``send_file_to_user`` tool calls and collects validated
         :class:`ImageAttachment` objects for later Telegram delivery.
-
-        When *draft_streamer* is provided, tool activity and assistant
-        text are streamed to the user in real time via
-        ``sendMessageDraft``.
-
-        Returns None when verbose_level is 0 **and** no MCP image
-        collection or draft streaming is requested.
-        Typing indicators are handled by a separate heartbeat task.
         """
         need_mcp_intercept = mcp_images is not None and approved_directory is not None
 
         if verbose_level == 0 and not need_mcp_intercept and draft_streamer is None:
             return None
 
-        last_edit_time = [0.0]  # mutable container for closure
+        # Track sent tool message IDs for optional cleanup
+        tool_message_ids: List[int] = []
+        tool_log.append({"_tool_message_ids": tool_message_ids})
+        last_tool_msg_id: List[Optional[int]] = [None]  # track last tool msg for result appending
+        last_edit_time = [0.0]  # mutable container for throttled progress edits
+        has_used_tools = [False]  # track whether any tool calls were seen
+
+        async def _send_tool_msg(text: str) -> Optional[int]:
+            """Send a tool status message and track its ID."""
+            if not chat:
+                return None
+            try:
+                msg = await chat.send_message(text)
+                tool_message_ids.append(msg.message_id)
+                return msg.message_id
+            except Exception:
+                return None
+
+        async def _edit_tool_msg(msg_id: int, text: str) -> None:
+            """Edit a previously sent tool message."""
+            if not chat:
+                return
+            try:
+                await chat._bot.edit_message_text(
+                    text, chat_id=chat.id, message_id=msg_id
+                )
+            except Exception:
+                pass
+
+        def _format_tool_detail(name: str, tool_input: dict) -> str:
+            """Format tool input for display — clean, human-readable."""
+            if name == "Bash":
+                cmd = tool_input.get("command", "")
+                # Show first 200 chars of command
+                return cmd[:200] + ("..." if len(cmd) > 200 else "")
+            elif name in ("Read", "Write", "Edit", "MultiEdit"):
+                path = tool_input.get("file_path", "")
+                return path.rsplit("/", 1)[-1] if "/" in path else path
+            elif name in ("Grep", "Glob"):
+                pattern = tool_input.get("pattern", "")
+                path = tool_input.get("path", "")
+                short_path = path.rsplit("/", 1)[-1] if "/" in path else path
+                return f'"{pattern}" in {short_path}' if short_path else f'"{pattern}"'
+            elif name == "Skill":
+                return tool_input.get("skill", "")
+            elif name == "ToolSearch":
+                return tool_input.get("query", "")
+            elif name in ("WebFetch", "WebSearch"):
+                return (tool_input.get("url", "") or tool_input.get("query", ""))[:80]
+            elif "send_file" in name or "send_image" in name:
+                path = tool_input.get("file_path", "")
+                return path.rsplit("/", 1)[-1] if "/" in path else path
+            else:
+                # Generic: show first meaningful value
+                for v in tool_input.values():
+                    if isinstance(v, str) and v:
+                        return v[:80]
+                return ""
+
+        def _clean_result(text: str) -> str:
+            """Clean tool result for display."""
+            if not text:
+                return ""
+            # Skip binary/base64 data
+            if "base64" in text or len(text) > 1000:
+                if "base64" in text:
+                    return "[imagen/datos binarios]"
+                return text[:200] + "..."
+            # Clean up common noise
+            text = text.strip()
+            if text.startswith("[{'type':") or text.startswith("{'type':"):
+                return "[datos estructurados]"
+            return text[:300]
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
-            # Intercept send_image_to_user MCP tool calls.
-            # The SDK namespaces MCP tools as "mcp__<server>__<tool>",
-            # so match both the bare name and the namespaced variant.
+            # Intercept send_file_to_user / send_image_to_user MCP tool calls
             if update_obj.tool_calls and need_mcp_intercept:
                 for tc in update_obj.tool_calls:
                     tc_name = tc.get("name", "")
-                    if tc_name == "send_image_to_user" or tc_name.endswith(
-                        "__send_image_to_user"
+                    if tc_name in ("send_file_to_user", "send_image_to_user") or tc_name.endswith(
+                        ("__send_file_to_user", "__send_image_to_user")
                     ):
                         tc_input = tc.get("input", {})
                         file_path = tc_input.get("file_path", "")
                         caption = tc_input.get("caption", "")
-                        img = validate_image_path(
+                        attachment = validate_file_path(
                             file_path, approved_directory, caption
                         )
-                        if img:
-                            mcp_images.append(img)
+                        if attachment:
+                            mcp_images.append(attachment)
 
-            # Capture tool calls
+            # Send per-event messages for tool calls
             if update_obj.tool_calls:
+                has_used_tools[0] = True
+            if update_obj.tool_calls and verbose_level >= 1:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
-                    detail = self._summarize_tool_input(name, tc.get("input", {}))
-                    if verbose_level >= 1:
-                        tool_log.append(
-                            {"kind": "tool", "name": name, "detail": detail}
-                        )
-                    if draft_streamer:
-                        icon = _tool_icon(name)
-                        line = (
-                            f"{icon} {name}: {detail}" if detail else f"{icon} {name}"
-                        )
-                        await draft_streamer.append_tool(line)
+                    tool_input = tc.get("input", {})
+                    icon = _tool_icon(name)
+                    detail = _format_tool_detail(name, tool_input)
 
-            # Capture assistant text (reasoning / commentary)
+                    if verbose_level >= 3 and name == "Bash":
+                        # Level 3: show full command
+                        cmd = tool_input.get("command", "")[:400]
+                        msg_text = f"{icon} {cmd}"
+                    elif detail:
+                        msg_text = f"{icon} {name}: {detail}"
+                    else:
+                        msg_text = f"{icon} {name}"
+
+                    msg_id = await _send_tool_msg(msg_text)
+                    last_tool_msg_id[0] = msg_id
+
+                    # Also log for reference
+                    tool_log.append({"kind": "tool", "name": name, "detail": detail})
+
+                    # Don't duplicate tool lines in the draft — they're already
+                    # sent as individual messages above.
+
+            # Tool results — edit the last tool message to append result
+            if verbose_level >= 3 and update_obj.type == "tool_result":
+                result_text = _clean_result(str(getattr(update_obj, "content", "") or ""))
+                if result_text and last_tool_msg_id[0]:
+                    # Read current message and append result
+                    tool_log.append({"kind": "result", "detail": result_text})
+
+            # Extended thinking (ThinkingBlocks — Claude's internal reasoning)
+            if update_obj.type == "thinking" and update_obj.content:
+                thinking = update_obj.content.strip()
+                if thinking and verbose_level >= 1:
+                    # Show first line of thinking as a 🧠 message
+                    first_line = thinking.split("\n", 1)[0].strip()[:200]
+                    if first_line:
+                        await _send_tool_msg(f"🧠 {first_line}")
+                        tool_log.append({"kind": "text", "detail": f"🧠 {first_line}"})
+
+            # Assistant text (visible reasoning / commentary)
+            # Only show 💬 when tools have been used (intermediate thinking).
+            # For pure text responses, skip — the final formatted message
+            # will show the same text.
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
-                if text:
-                    first_line = text.split("\n", 1)[0].strip()
+                if text and "[ThinkingBlock(" in text:
+                    text = ""
+                if text and verbose_level >= 1 and has_used_tools[0]:
+                    first_line = text.split("\n", 1)[0].strip()[:200]
                     if first_line:
-                        if verbose_level >= 1:
-                            tool_log.append(
-                                {"kind": "text", "detail": first_line[:120]}
-                            )
+                        await _send_tool_msg(f"💬 {first_line}")
+                        tool_log.append({"kind": "text", "detail": first_line})
+                        # Reset draft so it only shows NEW text going forward
                         if draft_streamer:
-                            await draft_streamer.append_tool(
-                                f"\U0001f4ac {first_line[:120]}"
-                            )
+                            draft_streamer.reset_text()
 
-            # Stream text to user via draft (prefer token deltas;
-            # skip full assistant messages to avoid double-appending)
+            # Stream response text to user via draft (live typing preview).
+            # The draft is temporary (vanishes when next real message arrives)
+            # but the persistent 💬 and final messages capture everything.
             if draft_streamer and update_obj.content:
                 if update_obj.type == "stream_delta":
                     await draft_streamer.append_text(update_obj.content)
 
-            # Throttle progress message edits to avoid Telegram rate limits
-            if not draft_streamer and verbose_level >= 1:
+            # Throttle progress message edits to avoid Telegram rate limits.
+            # Update "Working..." with elapsed time counter.
+            if verbose_level >= 1:
                 now = time.time()
-                if (now - last_edit_time[0]) >= 2.0 and tool_log:
+                if (now - last_edit_time[0]) >= 3.0:
                     last_edit_time[0] = now
-                    new_text = self._format_verbose_progress(
-                        tool_log, verbose_level, start_time
-                    )
+                    elapsed = int(now - start_time)
+                    new_text = f"⏳ Working... ({elapsed}s)"
                     try:
                         await progress_msg.edit_text(new_text)
                     except Exception:
                         pass
 
         return _on_stream
+
+    async def _send_formatted_message(
+        self,
+        update: Update,
+        text: str,
+        parse_mode: str = "HTML",
+        reply_to_message_id: Optional[int] = None,
+    ) -> None:
+        """Send a formatted message with HTML fallback to plain text.
+
+        If Telegram rejects the HTML, strips tags and retries as plain text.
+        """
+        try:
+            await update.message.reply_text(
+                text,
+                parse_mode=parse_mode,
+                reply_markup=None,
+                reply_to_message_id=reply_to_message_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "HTML send failed, falling back to plain text",
+                error=str(e),
+                html_preview=text[:200],
+            )
+            # Strip HTML tags for plain text fallback
+            plain = re.sub(r"<[^>]+>", "", text)
+            # Also unescape HTML entities
+            plain = plain.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            try:
+                await update.message.reply_text(
+                    plain,
+                    reply_markup=None,
+                    reply_to_message_id=reply_to_message_id,
+                )
+            except Exception as plain_err:
+                await update.message.reply_text(
+                    f"Failed to deliver response "
+                    f"(error: {str(plain_err)[:150]}). Please try again.",
+                    reply_to_message_id=reply_to_message_id,
+                )
 
     async def _send_images(
         self,
@@ -873,6 +1069,39 @@ class MessageOrchestrator:
             message_length=len(message_text),
         )
 
+        # If Claude is currently processing, interrupt and send follow-up
+        running_task = context.user_data.get("running_claude_task")
+        if running_task and not running_task.done():
+            claude_integration = context.bot_data.get("claude_integration")
+            if claude_integration:
+                sdk_manager = getattr(claude_integration, "sdk_manager", None)
+                if sdk_manager and sdk_manager.is_processing:
+                    logger.info(
+                        "Follow-up message during processing, interrupting",
+                        user_id=user_id,
+                    )
+                    await update.message.reply_text(
+                        f"📨 Interrupting... {message_text[:80]}"
+                    )
+                    # 1. Send interrupt signal (like Ctrl+C)
+                    await sdk_manager.interrupt()
+                    # 2. Give it 3 seconds to stop gracefully
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(running_task), timeout=3.0
+                        )
+                    except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                        # 3. Didn't stop — forcefully kill the subprocess
+                        logger.info("Interrupt didn't stop in time, aborting")
+                        await sdk_manager.abort()
+                        running_task.cancel()
+                        try:
+                            await running_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    context.user_data["running_claude_task"] = None
+                    # Fall through to process this message as a continuation
+
         # Rate limit check
         rate_limiter = context.bot_data.get("rate_limiter")
         if rate_limiter:
@@ -908,15 +1137,16 @@ class MessageOrchestrator:
         start_time = time.time()
         mcp_images: List[ImageAttachment] = []
 
-        # Stream drafts (private chats only)
+        # Stream drafts (private chats use sendMessageDraft, groups fall back to editMessageText)
         draft_streamer: Optional[DraftStreamer] = None
-        if self.settings.enable_stream_drafts and chat.type == "private":
+        if self.settings.enable_stream_drafts:
             draft_streamer = DraftStreamer(
                 bot=context.bot,
                 chat_id=chat.id,
                 draft_id=generate_draft_id(),
                 message_thread_id=update.message.message_thread_id,
                 throttle_interval=self.settings.stream_draft_interval,
+                is_private_chat=(chat.type == "private"),
             )
 
         on_stream = self._make_stream_callback(
@@ -927,14 +1157,16 @@ class MessageOrchestrator:
             mcp_images=mcp_images,
             approved_directory=self.settings.approved_directory,
             draft_streamer=draft_streamer,
+            chat=chat,
+            reply_to_message_id=update.message.message_id,
         )
 
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
-        success = True
-        try:
-            claude_response = await claude_integration.run_command(
+        # Track the running task so /stop can cancel it
+        run_task = asyncio.ensure_future(
+            claude_integration.run_command(
                 prompt=message_text,
                 working_directory=current_dir,
                 user_id=user_id,
@@ -942,6 +1174,12 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
             )
+        )
+        context.user_data["running_claude_task"] = run_task
+
+        success = True
+        try:
+            claude_response = await run_task
 
             # New session created successfully — clear the one-shot flag
             if force_new:
@@ -978,6 +1216,15 @@ class MessageOrchestrator:
                 claude_response.content
             )
 
+        except asyncio.CancelledError:
+            success = False
+            logger.info("Claude task cancelled by user", user_id=user_id)
+            from .utils.formatting import FormattedMessage
+
+            formatted_messages = [
+                FormattedMessage("⛔ Task stopped.", parse_mode=None)
+            ]
+
         except Exception as e:
             success = False
             logger.error("Claude integration failed", error=str(e), user_id=user_id)
@@ -989,18 +1236,12 @@ class MessageOrchestrator:
             ]
         finally:
             heartbeat.cancel()
-            if draft_streamer:
-                try:
-                    await draft_streamer.flush()
-                except Exception:
-                    logger.debug("Draft flush failed in finally block", user_id=user_id)
+            context.user_data["running_claude_task"] = None
 
-        try:
-            await progress_msg.delete()
-        except Exception:
-            logger.debug("Failed to delete progress message, ignoring")
+        # Keep progress messages visible (don't delete)
+        pass
 
-        # Use MCP-collected images (from send_image_to_user tool calls)
+        # Use MCP-collected files (from send_file_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
 
         # Try to combine text + images in one message when possible
@@ -1019,45 +1260,25 @@ class MessageOrchestrator:
                 except Exception as img_err:
                     logger.warning("Image+caption send failed", error=str(img_err))
 
-        # Send text messages (skip if caption was already embedded in photos)
+        # Clear the draft streamer before sending final response
+        if draft_streamer:
+            try:
+                await draft_streamer.clear()
+            except Exception:
+                pass
+
+        # Send response FIRST (so it appears before draft disappears)
         if not caption_sent:
             for i, message in enumerate(formatted_messages):
                 if not message.text or not message.text.strip():
                     continue
-                try:
-                    await update.message.reply_text(
-                        message.text,
-                        parse_mode=message.parse_mode,
-                        reply_markup=None,  # No keyboards in agentic mode
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
-                    )
-                    if i < len(formatted_messages) - 1:
-                        await asyncio.sleep(0.5)
-                except Exception as send_err:
-                    logger.warning(
-                        "Failed to send HTML response, retrying as plain text",
-                        error=str(send_err),
-                        message_index=i,
-                    )
-                    try:
-                        await update.message.reply_text(
-                            message.text,
-                            reply_markup=None,
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
-                        )
-                    except Exception as plain_err:
-                        await update.message.reply_text(
-                            f"Failed to deliver response "
-                            f"(Telegram error: {str(plain_err)[:150]}). "
-                            f"Please try again.",
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
-                        )
+                await self._send_formatted_message(
+                    update,
+                    message.text,
+                    parse_mode=message.parse_mode,
+                )
+                if i < len(formatted_messages) - 1:
+                    await asyncio.sleep(0.5)
 
             # Send images separately if caption wasn't used
             if images:
@@ -1069,6 +1290,22 @@ class MessageOrchestrator:
                     )
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
+
+        # Update progress message with final elapsed time
+        elapsed = int(time.time() - start_time)
+        try:
+            await progress_msg.edit_text(f"⏱ {elapsed}s")
+        except Exception:
+            pass
+
+        # Save tool message IDs for /cleanup command
+        all_tool_msg_ids: List[int] = []
+        for entry in tool_log:
+            ids = entry.get("_tool_message_ids")
+            if ids:
+                all_tool_msg_ids.extend(ids)
+        context.user_data["last_tool_message_ids"] = all_tool_msg_ids
+        context.user_data["last_tool_chat_id"] = chat.id
 
         # Audit log
         audit_logger = context.bot_data.get("audit_logger")
@@ -1083,69 +1320,70 @@ class MessageOrchestrator:
     async def agentic_document(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Process file upload -> Claude, minimal chrome."""
+        """Process file upload -> Claude, minimal chrome.
+
+        Downloads the file to /tmp/telegram-uploads/ and passes the local
+        path to Claude so it can read the file during the session. The file
+        is intentionally kept on disk after the response.
+        """
         user_id = update.effective_user.id
-        document = update.message.document
+        msg = update.message
+
+        # Unified handling: document, audio, or video attachments
+        document = msg.document or msg.audio or msg.video
+        if not document:
+            await msg.reply_text("No file detected in this message.")
+            return
+
+        file_name_raw = getattr(document, "file_name", None)
 
         logger.info(
             "Agentic document upload",
             user_id=user_id,
-            filename=document.file_name,
+            filename=file_name_raw,
         )
 
         # Security validation
         security_validator = context.bot_data.get("security_validator")
-        if security_validator:
-            valid, error = security_validator.validate_filename(document.file_name)
+        if security_validator and file_name_raw:
+            valid, error = security_validator.validate_filename(file_name_raw)
             if not valid:
-                await update.message.reply_text(f"File rejected: {error}")
+                await msg.reply_text(f"File rejected: {error}")
                 return
 
         # Size check
         max_size = 10 * 1024 * 1024
-        if document.file_size > max_size:
-            await update.message.reply_text(
+        if document.file_size and document.file_size > max_size:
+            await msg.reply_text(
                 f"File too large ({document.file_size / 1024 / 1024:.1f}MB). Max: 10MB."
             )
             return
 
-        chat = update.message.chat
+        chat = msg.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await msg.reply_text("Working...")
 
-        # Try enhanced file handler, fall back to basic
-        features = context.bot_data.get("features")
-        file_handler = features.get_file_handler() if features else None
-        prompt: Optional[str] = None
+        # Download file to /tmp/telegram-uploads/ so Claude can read it
+        upload_dir = Path("/tmp/telegram-uploads")
+        upload_dir.mkdir(parents=True, exist_ok=True)
 
-        if file_handler:
-            try:
-                processed_file = await file_handler.handle_document_upload(
-                    document,
-                    user_id,
-                    update.message.caption or "Please review this file:",
-                )
-                prompt = processed_file.prompt
-            except Exception:
-                file_handler = None
+        file_name = file_name_raw or f"file_{document.file_unique_id}"
+        dest_path = upload_dir / file_name
 
-        if not file_handler:
-            file = await document.get_file()
-            file_bytes = await file.download_as_bytearray()
-            try:
-                content = file_bytes.decode("utf-8")
-                if len(content) > 50000:
-                    content = content[:50000] + "\n... (truncated)"
-                caption = update.message.caption or "Please review this file:"
-                prompt = (
-                    f"{caption}\n\n**File:** `{document.file_name}`\n\n"
-                    f"```\n{content}\n```"
-                )
-            except UnicodeDecodeError:
-                await progress_msg.edit_text(
-                    "Unsupported file format. Must be text-based (UTF-8)."
-                )
-                return
+        # Avoid collisions by appending a suffix
+        if dest_path.exists():
+            stem = dest_path.stem
+            suffix = dest_path.suffix
+            counter = 1
+            while dest_path.exists():
+                dest_path = upload_dir / f"{stem}_{counter}{suffix}"
+                counter += 1
+
+        tg_file = await document.get_file()
+        await tg_file.download_to_drive(str(dest_path))
+
+        caption = update.message.caption or "El usuario envio este archivo"
+        prompt = f"[Archivo adjunto: {dest_path}]\n\n{caption}"
 
         # Process with Claude
         claude_integration = context.bot_data.get("claude_integration")
@@ -1167,6 +1405,19 @@ class MessageOrchestrator:
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         mcp_images_doc: List[ImageAttachment] = []
+
+        # Stream drafts for document handler too
+        draft_streamer_doc: Optional[DraftStreamer] = None
+        if self.settings.enable_stream_drafts:
+            draft_streamer_doc = DraftStreamer(
+                bot=context.bot,
+                chat_id=chat.id,
+                draft_id=generate_draft_id(),
+                message_thread_id=msg.message_thread_id,
+                throttle_interval=self.settings.stream_draft_interval,
+                is_private_chat=(chat.type == "private"),
+            )
+
         on_stream = self._make_stream_callback(
             verbose_level,
             progress_msg,
@@ -1174,11 +1425,16 @@ class MessageOrchestrator:
             time.time(),
             mcp_images=mcp_images_doc,
             approved_directory=self.settings.approved_directory,
+            draft_streamer=draft_streamer_doc,
+            chat=chat,
+            reply_to_message_id=update.message.message_id,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
-        try:
-            claude_response = await claude_integration.run_command(
+
+        # Track the running task so follow-up messages can interrupt it
+        run_task = asyncio.ensure_future(
+            claude_integration.run_command(
                 prompt=prompt,
                 working_directory=current_dir,
                 user_id=user_id,
@@ -1186,6 +1442,11 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
             )
+        )
+        context.user_data["running_claude_task"] = run_task
+
+        try:
+            claude_response = await run_task
 
             if force_new:
                 context.user_data["force_new_session"] = False
@@ -1210,7 +1471,14 @@ class MessageOrchestrator:
             except Exception:
                 logger.debug("Failed to delete progress message, ignoring")
 
-            # Use MCP-collected images (from send_image_to_user tool calls)
+            # Clear draft streamer before final response
+            if draft_streamer_doc:
+                try:
+                    await draft_streamer_doc.clear()
+                except Exception:
+                    pass
+
+            # Use MCP-collected files (from send_file_to_user tool calls)
             images: List[ImageAttachment] = mcp_images_doc
 
             caption_sent = False
@@ -1230,10 +1498,10 @@ class MessageOrchestrator:
 
             if not caption_sent:
                 for i, message in enumerate(formatted_messages):
-                    await update.message.reply_text(
+                    await self._send_formatted_message(
+                        update,
                         message.text,
                         parse_mode=message.parse_mode,
-                        reply_markup=None,
                         reply_to_message_id=(
                             update.message.message_id if i == 0 else None
                         ),
@@ -1258,6 +1526,7 @@ class MessageOrchestrator:
             logger.error("Claude file processing failed", error=str(e), user_id=user_id)
         finally:
             heartbeat.cancel()
+            context.user_data["running_claude_task"] = None
 
     async def agentic_photo(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1277,14 +1546,22 @@ class MessageOrchestrator:
         progress_msg = await update.message.reply_text("Working...")
 
         try:
+            import os
             photo = update.message.photo[-1]
-            processed_image = await image_handler.process_image(
-                photo, update.message.caption
-            )
+            # Download photo to disk so Claude can read it
+            file = await photo.get_file()
+            os.makedirs("/tmp/telegram-uploads", exist_ok=True)
+            timestamp = int(update.message.date.timestamp() * 1000) if update.message.date else 0
+            photo_path = f"/tmp/telegram-uploads/photo_{timestamp}.jpg"
+            await file.download_to_drive(photo_path)
+
+            caption = update.message.caption or ""
+            prompt = f"[Foto: {photo_path}]\n\n{caption}" if caption else f"[Foto: {photo_path}]"
+
             await self._handle_agentic_media_message(
                 update=update,
                 context=context,
-                prompt=processed_image.prompt,
+                prompt=prompt,
                 progress_msg=progress_msg,
                 user_id=user_id,
                 chat=chat,
@@ -1321,7 +1598,14 @@ class MessageOrchestrator:
                 voice, update.message.caption
             )
 
-            await progress_msg.edit_text("Working...")
+            # Show transcription to user
+            transcript_display = processed_voice.transcription
+            if len(transcript_display) > 4000:
+                transcript_display = transcript_display[:4000] + "…"
+            await progress_msg.edit_text(f'🎤 "{transcript_display}"')
+
+            # Send a new progress message for Claude's response
+            progress_msg = await update.message.reply_text("Working...")
             await self._handle_agentic_media_message(
                 update=update,
                 context=context,
@@ -1366,6 +1650,19 @@ class MessageOrchestrator:
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
         mcp_images_media: List[ImageAttachment] = []
+
+        # Stream drafts for media handler
+        draft_streamer_media: Optional[DraftStreamer] = None
+        if self.settings.enable_stream_drafts:
+            draft_streamer_media = DraftStreamer(
+                bot=context.bot,
+                chat_id=chat.id,
+                draft_id=generate_draft_id(),
+                message_thread_id=getattr(update.message, "message_thread_id", None),
+                throttle_interval=self.settings.stream_draft_interval,
+                is_private_chat=(chat.type == "private"),
+            )
+
         on_stream = self._make_stream_callback(
             verbose_level,
             progress_msg,
@@ -1373,11 +1670,16 @@ class MessageOrchestrator:
             time.time(),
             mcp_images=mcp_images_media,
             approved_directory=self.settings.approved_directory,
+            draft_streamer=draft_streamer_media,
+            chat=chat,
+            reply_to_message_id=update.message.message_id,
         )
 
         heartbeat = self._start_typing_heartbeat(chat)
-        try:
-            claude_response = await claude_integration.run_command(
+
+        # Track the running task so follow-up messages can interrupt it
+        run_task = asyncio.ensure_future(
+            claude_integration.run_command(
                 prompt=prompt,
                 working_directory=current_dir,
                 user_id=user_id,
@@ -1385,8 +1687,14 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
             )
+        )
+        context.user_data["running_claude_task"] = run_task
+
+        try:
+            claude_response = await run_task
         finally:
             heartbeat.cancel()
+            context.user_data["running_claude_task"] = None
 
         if force_new:
             context.user_data["force_new_session"] = False
@@ -1404,12 +1712,17 @@ class MessageOrchestrator:
         formatter = ResponseFormatter(self.settings)
         formatted_messages = formatter.format_claude_response(claude_response.content)
 
-        try:
-            await progress_msg.delete()
-        except Exception:
-            logger.debug("Failed to delete progress message, ignoring")
+        # Keep progress messages visible (don't delete)
+        pass
 
-        # Use MCP-collected images (from send_image_to_user tool calls).
+        # Clear draft streamer before final response
+        if draft_streamer_media:
+            try:
+                await draft_streamer_media.clear()
+            except Exception:
+                pass
+
+        # Use MCP-collected files (from send_file_to_user tool calls).
         images: List[ImageAttachment] = mcp_images_media
 
         caption_sent = False
@@ -1431,10 +1744,10 @@ class MessageOrchestrator:
             for i, message in enumerate(formatted_messages):
                 if not message.text or not message.text.strip():
                     continue
-                await update.message.reply_text(
+                await self._send_formatted_message(
+                    update,
                     message.text,
                     parse_mode=message.parse_mode,
-                    reply_markup=None,
                     reply_to_message_id=(update.message.message_id if i == 0 else None),
                 )
                 if i < len(formatted_messages) - 1:

@@ -9,6 +9,7 @@ Features:
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, List, Literal, Optional
 
@@ -169,9 +170,9 @@ class Settings(BaseSettings):
     enable_voice_messages: bool = Field(
         True, description="Enable voice message transcription"
     )
-    voice_provider: Literal["mistral", "openai"] = Field(
-        "mistral",
-        description="Voice transcription provider: 'mistral' or 'openai'",
+    voice_provider: Literal["gemini", "mistral", "openai"] = Field(
+        "gemini",
+        description="Voice transcription provider: 'gemini', 'mistral', or 'openai'",
     )
     mistral_api_key: Optional[SecretStr] = Field(
         None, description="Mistral API key for voice transcription"
@@ -210,22 +211,23 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Output verbosity (0=quiet, 1=normal, 2=detailed)
+    # Output verbosity (0=quiet, 1=normal, 2=detailed, 3=full)
     verbose_level: int = Field(
         1,
         description=(
             "Bot output verbosity: 0=quiet (final response only), "
             "1=normal (tool names + reasoning), "
-            "2=detailed (tool inputs + longer reasoning)"
+            "2=detailed (tool inputs + longer reasoning), "
+            "3=full (tool results + complete commands)"
         ),
         ge=0,
-        le=2,
+        le=3,
     )
 
-    # Streaming drafts (Telegram sendMessageDraft)
+    # Streaming drafts (Telegram sendMessageDraft / editMessageText)
     enable_stream_drafts: bool = Field(
         False,
-        description="Stream partial responses via sendMessageDraft (private chats only)",
+        description="Stream partial responses to Telegram in real-time",
     )
     stream_draft_interval: float = Field(
         0.3,
@@ -284,7 +286,10 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=os.environ.get("ENV_FILE", ".env"),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
     )
 
     @field_validator("allowed_users", "notification_chat_ids", mode="before")
@@ -393,10 +398,10 @@ class Settings(BaseSettings):
     def validate_voice_provider(cls, v: Any) -> str:
         """Validate and normalize voice transcription provider."""
         if v is None:
-            return "mistral"
+            return "gemini"
         provider = str(v).strip().lower()
-        if provider not in {"mistral", "openai"}:
-            raise ValueError("voice_provider must be one of ['mistral', 'openai']")
+        if provider not in {"gemini", "mistral", "openai"}:
+            raise ValueError("voice_provider must be one of ['gemini', 'mistral', 'openai']")
         return provider
 
     @field_validator("project_threads_chat_id", mode="before")
@@ -503,6 +508,8 @@ class Settings(BaseSettings):
             return self.voice_transcription_model
         if self.voice_provider == "openai":
             return "whisper-1"
+        if self.voice_provider == "gemini":
+            return "gemini-3.1-flash-lite-preview"
         return "voxtral-mini-latest"
 
     @property
@@ -515,6 +522,8 @@ class Settings(BaseSettings):
         """API key environment variable required for the configured voice provider."""
         if self.voice_provider == "openai":
             return "OPENAI_API_KEY"
+        if self.voice_provider == "gemini":
+            return ""  # No API key needed
         return "MISTRAL_API_KEY"
 
     @property
@@ -522,4 +531,6 @@ class Settings(BaseSettings):
         """Human-friendly label for the configured voice provider."""
         if self.voice_provider == "openai":
             return "OpenAI Whisper"
+        if self.voice_provider == "gemini":
+            return "Gemini Flash Lite"
         return "Mistral Voxtral"
