@@ -528,8 +528,7 @@ class ToolUsageRepository:
     async def get_tool_stats(self) -> List[Dict[str, any]]:
         """Get tool usage statistics."""
         async with self.db.get_connection() as conn:
-            cursor = await conn.execute(
-                """
+            cursor = await conn.execute("""
                 SELECT
                     tool_name,
                     COUNT(*) as usage_count,
@@ -539,8 +538,7 @@ class ToolUsageRepository:
                 FROM tool_usage
                 GROUP BY tool_name
                 ORDER BY usage_count DESC
-            """
-            )
+            """)
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
@@ -746,8 +744,7 @@ class AnalyticsRepository:
         """Get system-wide statistics."""
         async with self.db.get_connection() as conn:
             # Overall stats
-            cursor = await conn.execute(
-                """
+            cursor = await conn.execute("""
                 SELECT
                     COUNT(DISTINCT user_id) as total_users,
                     COUNT(DISTINCT session_id) as total_sessions,
@@ -755,26 +752,22 @@ class AnalyticsRepository:
                     SUM(cost) as total_cost,
                     AVG(duration_ms) as avg_duration
                 FROM messages
-            """
-            )
+            """)
 
             overall = dict(await cursor.fetchone())
 
             # Active users (last 7 days)
-            cursor = await conn.execute(
-                """
+            cursor = await conn.execute("""
                 SELECT COUNT(DISTINCT user_id) as active_users
                 FROM messages
                 WHERE timestamp > datetime('now', '-7 days')
-            """
-            )
+            """)
 
             active_users = (await cursor.fetchone())[0]
             overall["active_users_7d"] = active_users
 
             # Top users by cost
-            cursor = await conn.execute(
-                """
+            cursor = await conn.execute("""
                 SELECT
                     u.user_id,
                     u.telegram_username,
@@ -785,14 +778,12 @@ class AnalyticsRepository:
                 GROUP BY u.user_id
                 ORDER BY total_cost DESC
                 LIMIT 10
-            """
-            )
+            """)
 
             top_users = [dict(row) for row in await cursor.fetchall()]
 
             # Tool usage stats
-            cursor = await conn.execute(
-                """
+            cursor = await conn.execute("""
                 SELECT
                     tool_name,
                     COUNT(*) as usage_count,
@@ -801,14 +792,12 @@ class AnalyticsRepository:
                 GROUP BY tool_name
                 ORDER BY usage_count DESC
                 LIMIT 10
-            """
-            )
+            """)
 
             tool_stats = [dict(row) for row in await cursor.fetchall()]
 
             # Daily activity (last 30 days)
-            cursor = await conn.execute(
-                """
+            cursor = await conn.execute("""
                 SELECT
                     date(timestamp) as date,
                     COUNT(DISTINCT user_id) as active_users,
@@ -818,8 +807,7 @@ class AnalyticsRepository:
                 WHERE timestamp >= datetime('now', '-30 days')
                 GROUP BY date(timestamp)
                 ORDER BY date DESC
-            """
-            )
+            """)
 
             daily_activity = [dict(row) for row in await cursor.fetchall()]
 

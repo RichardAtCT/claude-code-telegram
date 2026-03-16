@@ -12,10 +12,13 @@ from apscheduler.schedulers.asyncio import (
     AsyncIOScheduler,  # type: ignore[import-untyped]
 )
 from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-untyped]
+from apscheduler.triggers.date import DateTrigger  # type: ignore[import-untyped]
 
 from ..events.bus import EventBus
 from ..events.types import ScheduledEvent
 from ..storage.database import DatabaseManager
+
+_CHECKIN_POLL_SECONDS = 30
 
 logger = structlog.get_logger()
 
@@ -38,6 +41,15 @@ class JobScheduler:
         """Load persisted jobs and start the scheduler."""
         await self._load_jobs_from_db()
         self._scheduler.start()
+
+        # Poll for new check-ins created by the CLI
+        self._scheduler.add_job(
+            self._poll_new_checkins,
+            "interval",
+            seconds=_CHECKIN_POLL_SECONDS,
+            id="_checkin_poller",
+            replace_existing=True,
+        )
         logger.info("Job scheduler started")
 
     async def stop(self) -> None:
@@ -244,3 +256,121 @@ class JobScheduler:
                 (job_id,),
             )
             await conn.commit()
+
+    # --- Check-in polling ---
+
+    async def _poll_new_checkins(self) -> None:
+        """Poll for pending check-ins without a job_id and schedule them."""
+        try:
+            from src.goals.db import (
+                get_db,
+                get_pending_checkins_without_job,
+                mark_checkin_fired,
+                mark_checkin_picked_up,
+            )
+        except ImportError:
+            return  # goals module not installed yet
+
+        try:
+            conn = get_db()
+            pending = get_pending_checkins_without_job(conn)
+
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc)
+
+            for checkin in pending:
+                fire_at_raw = checkin["fire_at"]
+                if isinstance(fire_at_raw, str):
+                    fire_at = datetime.fromisoformat(fire_at_raw)
+                else:
+                    fire_at = fire_at_raw
+
+                if fire_at.tzinfo is None:
+                    fire_at = fire_at.replace(tzinfo=timezone.utc)
+
+                checkin_id: str = checkin["id"]
+
+                if fire_at <= now:
+                    # Past due — fire immediately
+                    mark_checkin_fired(conn, checkin_id)
+                    await self._fire_checkin_event(checkin)
+                    logger.info(
+                        "Fired past-due checkin",
+                        checkin_id=checkin_id,
+                    )
+                else:
+                    # Schedule for the future
+                    trigger = DateTrigger(run_date=fire_at)
+                    job = self._scheduler.add_job(
+                        self._fire_checkin_callback,
+                        trigger=trigger,
+                        kwargs={"checkin": dict(checkin)},
+                        name=f"checkin-{checkin_id}",
+                    )
+                    mark_checkin_picked_up(conn, checkin_id, job.id)
+                    logger.info(
+                        "Scheduled checkin",
+                        checkin_id=checkin_id,
+                        fire_at=str(fire_at),
+                        job_id=job.id,
+                    )
+
+            conn.close()
+        except Exception:
+            logger.exception("Error polling for new check-ins")
+
+    async def _fire_checkin_callback(self, checkin: Dict[str, Any]) -> None:
+        """APScheduler callback when a check-in fires."""
+        try:
+            from src.goals.db import get_db, mark_checkin_fired
+
+            conn = get_db()
+            mark_checkin_fired(conn, checkin["id"])
+            conn.close()
+        except Exception:
+            logger.exception(
+                "Failed to mark checkin as fired", checkin_id=checkin.get("id")
+            )
+
+        await self._fire_checkin_event(checkin)
+
+    async def _fire_checkin_event(self, checkin: Dict[str, Any]) -> None:
+        """Publish a ScheduledEvent for a check-in."""
+        context = checkin.get("context", "")
+        prompt = self._build_checkin_prompt(context)
+
+        chat_id = checkin.get("chat_id", 0)
+        target_chat_ids = [chat_id] if chat_id else []
+
+        event = ScheduledEvent(
+            job_name=f"checkin-{checkin['id']}",
+            prompt=prompt,
+            working_directory=self.default_working_directory,
+            target_chat_ids=target_chat_ids,
+            user_id=checkin.get("user_id", 0),
+            session_id=checkin.get("session_id"),
+        )
+
+        logger.info(
+            "Check-in event fired",
+            checkin_id=checkin["id"],
+            event_id=event.id,
+        )
+
+        await self.event_bus.publish(event)
+
+    @staticmethod
+    def _build_checkin_prompt(context: str) -> str:
+        """Build the prompt Claude receives when a check-in fires."""
+        return (
+            "A scheduled check-in has fired.\n\n"
+            f"Context: {context}\n\n"
+            "Before responding:\n"
+            "1. Read profiles/user.md\n"
+            "2. Check active goals: python -m src.goals.cli list\n"
+            "3. Check recent outcomes: python -m src.goals.cli history --days 3\n\n"
+            "Then deliver the check-in based on the context above. "
+            "Keep it concise and Telegram-friendly. "
+            "At the end, schedule the next appropriate check-in."
+        )

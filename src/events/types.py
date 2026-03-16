@@ -40,6 +40,8 @@ class ScheduledEvent(Event):
     target_chat_ids: List[int] = field(default_factory=list)
     skill_name: Optional[str] = None
     source: str = "scheduler"
+    user_id: int = 0
+    session_id: Optional[str] = None
 
 
 @dataclass

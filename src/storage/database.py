@@ -194,13 +194,11 @@ class DatabaseManager:
 
     async def _get_schema_version(self, conn: aiosqlite.Connection) -> int:
         """Get current schema version."""
-        await conn.execute(
-            """
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
             )
-        """
-        )
+        """)
 
         cursor = await conn.execute("SELECT MAX(version) FROM schema_version")
         row = await cursor.fetchone()
@@ -308,6 +306,64 @@ class DatabaseManager:
                     ON project_threads(chat_id, is_active);
                 CREATE INDEX IF NOT EXISTS idx_project_threads_slug
                     ON project_threads(project_slug);
+                """,
+            ),
+            (
+                5,
+                """
+                -- Goal tracking tables
+                CREATE TABLE IF NOT EXISTS goals (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    why TEXT,
+                    timeframe TEXT NOT NULL,
+                    parent_goal_id TEXT,
+                    period TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (parent_goal_id) REFERENCES goals(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS goal_outcomes (
+                    id TEXT PRIMARY KEY,
+                    goal_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    reason TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (goal_id) REFERENCES goals(id),
+                    UNIQUE(goal_id, date)
+                );
+
+                CREATE TABLE IF NOT EXISTS scheduled_checkins (
+                    id TEXT PRIMARY KEY,
+                    fire_at TIMESTAMP NOT NULL,
+                    context TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    session_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    job_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fired_at TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_goals_status
+                    ON goals(status);
+                CREATE INDEX IF NOT EXISTS idx_goals_timeframe_period
+                    ON goals(timeframe, period);
+                CREATE INDEX IF NOT EXISTS idx_goal_outcomes_goal_date
+                    ON goal_outcomes(goal_id, date);
+                CREATE INDEX IF NOT EXISTS idx_goal_outcomes_date
+                    ON goal_outcomes(date);
+                CREATE INDEX IF NOT EXISTS idx_scheduled_checkins_status
+                    ON scheduled_checkins(status);
+                CREATE INDEX IF NOT EXISTS idx_scheduled_checkins_fire_at
+                    ON scheduled_checkins(fire_at);
                 """,
             ),
         ]

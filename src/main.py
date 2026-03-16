@@ -316,6 +316,35 @@ async def run_application(app: Dict[str, Any]) -> None:
             await scheduler.start()
             logger.info("Job scheduler enabled")
 
+            # Seed weekly review cron if not already present
+            existing_jobs = await scheduler.list_jobs()
+            has_weekly_review = any(
+                j["job_name"] == "Weekly Review" for j in existing_jobs
+            )
+            if not has_weekly_review:
+                await scheduler.add_job(
+                    job_name="Weekly Review",
+                    cron_expression="0 18 * * 0",
+                    prompt=(
+                        "It's time for the weekly review.\n\n"
+                        "1. Read profiles/user.md\n"
+                        "2. Run: python -m src.goals.cli summary "
+                        "--period <this-week>\n"
+                        "3. Run: python -m src.goals.cli history --days 7\n"
+                        "4. Analyze completion patterns by goal, day of "
+                        "week, and skip reasons\n"
+                        "5. Update all 3 profile sections based on "
+                        "evidence\n"
+                        "6. Send a concise 5-8 line weekly summary to "
+                        "the user\n"
+                        "7. Ask for adjustments before finalizing"
+                    ),
+                    target_chat_ids=config.notification_chat_ids or [],
+                    working_directory=config.approved_directory,
+                    created_by=(config.allowed_users[0] if config.allowed_users else 0),
+                )
+                logger.info("Weekly review cron job seeded")
+
         # Shutdown task
         shutdown_task = asyncio.create_task(shutdown_event.wait())
         tasks.append(shutdown_task)
