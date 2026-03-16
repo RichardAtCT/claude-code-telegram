@@ -360,13 +360,13 @@ async def handle_text_message(
 
         # Enhanced stream updates handler with progress tracking
         async def stream_handler(update_obj):
-            # Intercept send_image_to_user MCP tool calls.
+            # Intercept send_file_to_user / send_image_to_user MCP tool calls.
             # The SDK namespaces MCP tools as "mcp__<server>__<tool>".
             if update_obj.tool_calls:
                 for tc in update_obj.tool_calls:
                     tc_name = tc.get("name", "")
-                    if tc_name == "send_image_to_user" or tc_name.endswith(
-                        "__send_image_to_user"
+                    if tc_name in ("send_file_to_user", "send_image_to_user") or tc_name.endswith(
+                        ("__send_file_to_user", "__send_image_to_user")
                     ):
                         tc_input = tc.get("input", {})
                         file_path = tc_input.get("file_path", "")
@@ -439,7 +439,7 @@ async def handle_text_message(
         # Delete progress message
         await progress_msg.delete()
 
-        # Use MCP-collected images (from send_image_to_user tool calls)
+        # Use MCP-collected files (from send_file_to_user tool calls)
         images: list[ImageAttachment] = mcp_images
 
         # Try to combine text + images when response fits in a caption

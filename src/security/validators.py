@@ -240,6 +240,10 @@ class SecurityValidator:
                 )
                 return False, "Invalid filename: contains forbidden pattern"
 
+        # Skip remaining checks if security patterns disabled
+        if self.disable_security_patterns:
+            return True, None
+
         # Check for forbidden filenames
         if filename.lower() in {name.lower() for name in self.FORBIDDEN_FILENAMES}:
             logger.warning("Forbidden filename", filename=filename)
@@ -253,15 +257,16 @@ class SecurityValidator:
                 )
                 return False, f"File type not allowed: {filename}"
 
-        # Check extension
-        path_obj = Path(filename)
-        ext = path_obj.suffix.lower()
+        # Check extension (skip if security patterns disabled)
+        if not self.disable_security_patterns:
+            path_obj = Path(filename)
+            ext = path_obj.suffix.lower()
 
-        if ext and ext not in self.ALLOWED_EXTENSIONS:
-            logger.warning(
-                "File extension not allowed", filename=filename, extension=ext
-            )
-            return False, f"File type not allowed: {ext}"
+            if ext and ext not in self.ALLOWED_EXTENSIONS:
+                logger.warning(
+                    "File extension not allowed", filename=filename, extension=ext
+                )
+                return False, f"File type not allowed: {ext}"
 
         # Check for hidden files (starting with .)
         if filename.startswith(".") and filename not in {".gitignore", ".gitkeep"}:

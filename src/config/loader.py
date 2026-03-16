@@ -30,8 +30,8 @@ def load_config(
     Raises:
         ConfigurationError: If configuration is invalid
     """
-    # Load .env file explicitly
-    env_file = config_file or Path(".env")
+    # Load .env file explicitly (respect ENV_FILE env var for multi-instance setups)
+    env_file = config_file or Path(os.environ.get("ENV_FILE", ".env"))
     if env_file.exists():
         logger.info("Loading .env file", path=str(env_file))
         load_dotenv(env_file)

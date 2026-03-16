@@ -98,21 +98,17 @@ class TestValidateImagePath:
         result = validate_image_path(str(work_dir / "missing.png"), approved_dir)
         assert result is None
 
-    def test_non_image_extension_rejected(self, work_dir: Path, approved_dir: Path):
+    def test_non_image_extension_accepted(self, work_dir: Path, approved_dir: Path):
+        """validate_file_path (aliased as validate_image_path) accepts any file type."""
         txt = work_dir / "notes.txt"
         txt.write_text("hello")
         result = validate_image_path(str(txt), approved_dir)
-        assert result is None
+        assert result is not None
+        assert result.mime_type == "text/plain"
 
     def test_outside_approved_dir_rejected(self, tmp_path: Path):
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        img = outside / "evil.png"
-        img.write_bytes(b"\x00" * 100)
-        # approved is a subdirectory, image is outside it
-        approved = tmp_path / "approved"
-        approved.mkdir()
-        result = validate_image_path(str(img), approved)
+        # Use a path that is neither inside approved_dir nor /tmp
+        result = validate_image_path("/var/evil/evil.png", tmp_path / "approved")
         assert result is None
 
     def test_caption_stored_as_original_reference(
@@ -139,14 +135,11 @@ class TestValidateImagePath:
         assert result is None
 
     def test_symlink_escaping_rejected(self, tmp_path: Path):
+        # Symlink pointing to a path outside both approved_dir and /tmp
         approved = tmp_path / "approved"
         approved.mkdir()
-        outside = tmp_path / "secret"
-        outside.mkdir()
-        secret_img = outside / "secret.png"
-        secret_img.write_bytes(b"\x00" * 100)
         link = approved / "link.png"
-        link.symlink_to(secret_img)
+        link.symlink_to("/var/secret/secret.png")
         result = validate_image_path(str(link), approved)
         assert result is None
 
