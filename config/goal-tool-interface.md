@@ -1,127 +1,188 @@
-# Goal Tracking Tool — Interface Definition
+# Goal Tracking CLI — Interface Definition
 
 ## Overview
 
-A structured data store for goal definitions and completion records. Claude reads from it to make informed recommendations and writes to it to record outcomes. This is a factual ledger — not a context management system.
+A synchronous CLI at `src/goals/cli.py` that Claude Code invokes via its Bash tool. It talks directly to the SQLite database (`data/bot.db`) using plain `sqlite3`. All commands output JSON to stdout. Errors go to stderr with exit code 1.
 
-## Operations
+Single user — no user_id anywhere.
 
-### 1. `set_goal`
+## Commands
 
-Create or update a goal definition.
+### `set-goal` — Create a new goal
 
-**Input:**
-- `title` (string) — short name
-- `description` (string) — what this goal means, in the user's words
-- `why` (string) — why this matters, articulated reasoning
-- `timeframe` (enum: `yearly` | `monthly` | `weekly`)
-- `parent_goal_id` (optional string) — links a monthly goal to its yearly parent
-- `period` (string) — e.g. "2026", "2026-03", "2026-W11"
+```bash
+python -m src.goals.cli set-goal \
+  --title "Ship v1 of Overachiever" \
+  --why "Prove the concept works for personal use" \
+  --timeframe monthly \
+  --period 2026-03 \
+  --parent-goal-id <uuid>       # optional
+  --description "..."           # optional
+```
 
-**Behavior:** Creates new or updates existing. A goal can be marked `active`, `completed`, `dropped`.
+Output: `{"id": "uuid", "title": "...", "status": "active", "created": true}`
 
----
+### `update-goal` — Change status or fields
 
-### 2. `record_outcome`
+```bash
+python -m src.goals.cli update-goal \
+  --goal-id <uuid> \
+  --status completed             # active / completed / dropped
+  --title "new title"            # optional
+```
 
-Record what happened with a daily priority.
+### `record` — Record a daily outcome
 
-**Input:**
-- `date` (string) — ISO date, e.g. "2026-03-15"
-- `goal_id` (string) — which goal this relates to
-- `status` (enum: `completed` | `partial` | `skipped` | `missed`)
-- `reason` (string) — why it succeeded or failed, in the user's words or agent-summarized
-- `notes` (optional string) — any additional context
+```bash
+python -m src.goals.cli record \
+  --goal-id <uuid> \
+  --status completed \
+  --reason "Finished the chapter" \
+  --date 2026-03-16              # optional, defaults to today
+  --notes "Took longer than expected"  # optional
+```
 
-**Behavior:** One record per goal per day. Can be updated if the user revises.
+Uses `INSERT ... ON CONFLICT(goal_id, date) DO UPDATE` — re-recording the same day updates the existing row.
 
----
+Output: `{"id": "uuid", "goal_id": "...", "date": "2026-03-16", "status": "completed", "updated": false}`
 
-### 3. `get_goals`
+### `list` — List goals
 
-Retrieve active goal definitions.
+```bash
+python -m src.goals.cli list                          # all active goals
+python -m src.goals.cli list --timeframe monthly      # monthly goals only
+python -m src.goals.cli list --period 2026-03          # goals for March 2026
+python -m src.goals.cli list --status all              # include completed/dropped
+```
 
-**Input:**
-- `timeframe` (optional enum: `yearly` | `monthly` | `weekly`) — filter by type
-- `period` (optional string) — filter by period
-- `include_dropped` (optional bool, default false)
+Output: JSON array of goal objects with id, title, description, why, timeframe, period, parent_goal_id, status.
 
-**Returns:** List of goals with their definitions, why, status, and parent linkage.
+### `history` — Get outcome records
 
----
+```bash
+python -m src.goals.cli history                        # last 30 days
+python -m src.goals.cli history --goal-id <uuid>       # specific goal
+python -m src.goals.cli history --days 7               # last 7 days
+python -m src.goals.cli history --status skipped       # filter by outcome
+```
 
-### 4. `get_history`
+Output: JSON array of outcome objects, each with the goal title joined in.
 
-Retrieve completion records for analysis.
+### `summary` — Aggregated stats for a period
 
-**Input:**
-- `goal_id` (optional string) — filter to specific goal
-- `date_from` (optional string) — start date
-- `date_to` (optional string) — end date
-- `status` (optional enum) — filter by outcome
+```bash
+python -m src.goals.cli summary --period 2026-03       # month summary
+python -m src.goals.cli summary --period 2026-W11      # week summary
+```
 
-**Returns:** List of outcome records with dates, statuses, and reasons.
+Output:
+```json
+{
+  "period": "2026-03",
+  "total_outcomes": 45,
+  "completed": 30,
+  "partial": 8,
+  "skipped": 5,
+  "missed": 2,
+  "completion_rate": 0.67,
+  "by_goal": [
+    {"goal_id": "...", "title": "...", "completed": 10, "total": 15, "rate": 0.67,
+     "top_skip_reasons": ["meetings ran long", "low energy"]}
+  ],
+  "current_streak": 3,
+  "longest_streak": 7
+}
+```
 
----
+### `schedule-checkin` — Schedule a proactive check-in
 
-### 5. `get_summary`
+```bash
+python -m src.goals.cli schedule-checkin \
+  --time "14:00" \
+  --context "Check on system design progress"
+```
 
-Aggregated view for periodic reviews.
+Writes to `scheduled_checkins` table. The bot's JobScheduler polls for new rows every 30s, creates a DateTrigger APScheduler job, and fires it through the existing EventBus → AgentHandler → NotificationService pipeline.
 
-**Input:**
-- `period` (string) — e.g. "2026-03" for March, "2026-W11" for a week
-- `goal_id` (optional string) — specific goal or all
+### `list-checkins` — List pending check-ins
 
-**Returns:**
-- Total days with goals set
-- Completion rate (completed / total)
-- Most common skip/failure reasons
-- Streak information (consecutive completions)
+```bash
+python -m src.goals.cli list-checkins
+```
 
----
+### `cancel-checkin` — Cancel a pending check-in
+
+```bash
+python -m src.goals.cli cancel-checkin --id <uuid>
+```
 
 ## Data Model (SQLite)
 
 ### `goals` table
+
 | Column | Type | Description |
 |---|---|---|
 | id | TEXT PK | UUID |
-| user_id | INTEGER | Telegram user ID |
-| title | TEXT | Short name |
+| title | TEXT NOT NULL | Short name |
 | description | TEXT | What this goal means |
 | why | TEXT | Why it matters |
-| timeframe | TEXT | yearly / monthly / weekly |
+| timeframe | TEXT NOT NULL | yearly / monthly / weekly |
 | parent_goal_id | TEXT FK | Links to parent goal |
-| period | TEXT | "2026", "2026-03", etc. |
-| status | TEXT | active / completed / dropped |
+| period | TEXT NOT NULL | "2026", "2026-03", "2026-W11" |
+| status | TEXT NOT NULL | active / completed / dropped (default: active) |
 | created_at | TIMESTAMP | |
 | updated_at | TIMESTAMP | |
 
 ### `goal_outcomes` table
+
 | Column | Type | Description |
 |---|---|---|
 | id | TEXT PK | UUID |
-| user_id | INTEGER | Telegram user ID |
-| goal_id | TEXT FK | References goals.id |
-| date | TEXT | ISO date |
-| status | TEXT | completed / partial / skipped / missed |
+| goal_id | TEXT FK NOT NULL | References goals.id |
+| date | TEXT NOT NULL | ISO date |
+| status | TEXT NOT NULL | completed / partial / skipped / missed |
 | reason | TEXT | Why it succeeded or failed |
 | notes | TEXT | Additional context |
 | created_at | TIMESTAMP | |
 | updated_at | TIMESTAMP | |
 
-**Unique constraint:** One outcome per (user_id, goal_id, date).
+**Unique constraint:** One outcome per (goal_id, date).
 
-## Implementation Options
+### `scheduled_checkins` table
 
-**Option A: MCP Server**
-- Standalone MCP server that the bot connects to via existing MCP support
-- Claude calls it like any other tool
-- Clean separation, no changes to bot core code
+| Column | Type | Description |
+|---|---|---|
+| id | TEXT PK | UUID |
+| fire_at | TIMESTAMP NOT NULL | When to fire (UTC) |
+| context | TEXT NOT NULL | Free-text context for the prompt |
+| user_id | INTEGER NOT NULL | Telegram user ID (from ALLOWED_USERS) |
+| chat_id | INTEGER NOT NULL | Telegram chat ID (from NOTIFICATION_CHAT_IDS) |
+| session_id | TEXT | Claude session ID to resume (optional) |
+| status | TEXT | pending / fired / cancelled (default: pending) |
+| job_id | TEXT | APScheduler job ID (set by scheduler when picked up) |
+| created_at | TIMESTAMP | |
+| fired_at | TIMESTAMP | |
 
-**Option B: Built-in tool via SDK**
-- Add tables to existing SQLite database
-- Expose as tools via the SDK's tool system
-- Tighter integration, simpler deployment
+## Implementation
 
-Both use the same interface above. The choice is architectural.
+### File Structure
+
+```
+src/goals/
+    __init__.py          # empty
+    __main__.py          # enables python -m src.goals.cli
+    db.py                # sync SQLite wrapper (~150 lines)
+    cli.py               # argparse CLI, JSON output (~200 lines)
+```
+
+### Database Path
+
+Reads `DATABASE_URL` env var (default `sqlite:///data/bot.db`), same as the bot. Strips the `sqlite:///` prefix. Tables created both by bot migration (migration 5) and by CLI's `CREATE TABLE IF NOT EXISTS` for standalone use.
+
+### No Over-Engineering
+
+- No async code. Synchronous `sqlite3`.
+- No models/dataclasses. Dicts from `sqlite3.Row`.
+- No repository classes. Raw SQL in `db.py`.
+- No MCP server or tool registration.
+- No user_id columns (single user).
