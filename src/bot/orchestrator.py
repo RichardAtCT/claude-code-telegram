@@ -840,8 +840,11 @@ class MessageOrchestrator:
         """
         message_text = update.message.text
         # Convert "/some_cmd args" -> "Run /some-cmd args" for Claude
-        cmd_text = message_text.replace("_", "-")
-        prompt = f"Run {cmd_text}"
+        # Only replace underscores in the command token, not in arguments
+        parts = message_text.split(maxsplit=1)
+        cmd = parts[0].replace("_", "-")
+        args = parts[1] if len(parts) > 1 else ""
+        prompt = f"Run {cmd} {args}".strip()
         # Note: Message objects are frozen in python-telegram-bot v20+,
         # so we pass the transformed text via override_text parameter
         # instead of mutating update.message.text directly.
