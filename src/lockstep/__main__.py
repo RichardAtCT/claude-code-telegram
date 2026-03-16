@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from src.goals.cli import main
+from src.lockstep.cli import main
 
 main()

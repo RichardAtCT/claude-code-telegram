@@ -1,4 +1,4 @@
-# Overachiever — Architecture
+# Lockstep — Architecture
 
 ## What It Is
 
@@ -36,7 +36,7 @@ Claude Code (agent runtime, via claude-agent-sdk)
     │
     ├── Agent Personality (config/agent.claude.md — static system prompt)
     ├── User Profile (profiles/user.md — agent-owned markdown)
-    ├── Goal Tracking (SQLite via CLI — python -m src.goals.cli)
+    ├── Goal Tracking (SQLite via CLI — python -m src.lockstep.cli)
     └── Check-in Scheduler (SQLite + APScheduler polling)
 ```
 
@@ -98,18 +98,18 @@ A single markdown file the agent reads at session start and updates through conv
 
 **Bootstrap:** After onboarding, Soul & Motivation and Decision Framework are populated from conversation. Patterns starts empty — it fills from actual data over the first 1-2 weeks. Stated preferences ("I'm a morning person") go in Decision Framework; whether that's true goes in Patterns after evidence confirms it.
 
-### 4. Goal Tracking CLI (`src/goals/cli.py`)
+### 4. Goal Tracking CLI (`src/lockstep/cli.py`)
 
 Structured data store for goals and daily outcomes. SQLite database, accessed via a synchronous CLI that Claude Code calls through its Bash tool. No MCP.
 
 ```bash
 # Claude Code calls these via Bash tool:
-python -m src.goals.cli set-goal --title "..." --why "..." --timeframe monthly --period 2026-03
-python -m src.goals.cli list --timeframe monthly
-python -m src.goals.cli record --goal-id <uuid> --status completed --reason "..."
-python -m src.goals.cli history --days 7
-python -m src.goals.cli summary --period 2026-W11
-python -m src.goals.cli update-goal --goal-id <uuid> --status dropped
+python -m src.lockstep.cli set-goal --title "..." --why "..." --timeframe monthly --period 2026-03
+python -m src.lockstep.cli list --timeframe monthly
+python -m src.lockstep.cli record --goal-id <uuid> --status completed --reason "..."
+python -m src.lockstep.cli history --days 7
+python -m src.lockstep.cli summary --period 2026-W11
+python -m src.lockstep.cli update-goal --goal-id <uuid> --status dropped
 ```
 
 All commands output JSON to stdout. Errors go to stderr with exit code 1.
@@ -124,7 +124,7 @@ All commands output JSON to stdout. Errors go to stderr with exit code 1.
 - id (UUID), goal_id (FK), date, status (completed/partial/skipped/missed), reason, notes, timestamps
 - Unique constraint on (goal_id, date); re-recording updates via upsert
 
-**Implementation:** `src/goals/cli.py` (~200 lines), `src/goals/db.py` (~150 lines synchronous sqlite3 wrapper), `src/goals/__main__.py` (entry point). Tables created both by bot migration (migration 5 in `database.py`) and by CLI's own `CREATE TABLE IF NOT EXISTS` for standalone use.
+**Implementation:** `src/lockstep/cli.py` (~200 lines), `src/lockstep/db.py` (~150 lines synchronous sqlite3 wrapper), `src/lockstep/__main__.py` (entry point). Tables created both by bot migration (migration 5 in `database.py`) and by CLI's own `CREATE TABLE IF NOT EXISTS` for standalone use.
 
 ### 5. Check-in Scheduler
 
@@ -134,9 +134,9 @@ The agent controls when it next reaches out. At the end of conversations, it cal
 
 ```bash
 # Agent calls via Bash:
-python -m src.goals.cli schedule-checkin --time "14:00" --context "Check on system design progress"
-python -m src.goals.cli list-checkins
-python -m src.goals.cli cancel-checkin --id <uuid>
+python -m src.lockstep.cli schedule-checkin --time "14:00" --context "Check on system design progress"
+python -m src.lockstep.cli list-checkins
+python -m src.lockstep.cli cancel-checkin --id <uuid>
 ```
 
 1. CLI writes a row to `scheduled_checkins` table (status=pending, job_id=NULL)
@@ -158,8 +158,8 @@ python -m src.goals.cli cancel-checkin --id <uuid>
 Scheduler fires morning check-in
   → Claude Code starts with check-in prompt + context
   → Reads profiles/user.md (soul, framework, patterns)
-  → Runs: python -m src.goals.cli list --timeframe monthly
-  → Runs: python -m src.goals.cli history --days 3
+  → Runs: python -m src.lockstep.cli list --timeframe monthly
+  → Runs: python -m src.lockstep.cli history --days 3
   → Reasons about today's priority using profile + recent data
   → Sends 1-2 priorities with reasoning + what to skip
   → Schedules midday check-in via schedule-checkin CLI
@@ -180,7 +180,7 @@ Scheduler fires midday check-in
 Scheduler fires evening check-in
   → Claude asks what happened: done / partial / skipped?
   → User responds with outcome + reason
-  → Agent runs: python -m src.goals.cli record --goal-id <id> --status completed --reason "..."
+  → Agent runs: python -m src.lockstep.cli record --goal-id <id> --status completed --reason "..."
   → Agent checks if outcome reveals new pattern
   → If yes: reads profiles/user.md, edits Patterns section
   → Optionally previews tomorrow
@@ -191,8 +191,8 @@ Scheduler fires evening check-in
 ```
 Cron fires weekly review job
   → Claude Code reads profiles/user.md
-  → Runs: python -m src.goals.cli summary --period 2026-W11
-  → Runs: python -m src.goals.cli history --days 7
+  → Runs: python -m src.lockstep.cli summary --period 2026-W11
+  → Runs: python -m src.lockstep.cli history --days 7
   → Analyzes: completion rates, day-of-week patterns, recurring skip reasons
   → Updates all 3 profile sections based on evidence
   → Sends concise summary: wins, drops, next week's plan
@@ -252,7 +252,7 @@ Takes 10-15 minutes of texting. Can split across 2-3 sessions if interrupted. Af
 | Scheduler infrastructure | APScheduler + EventBus pipeline (existing) |
 | Agent personality | `config/agent.claude.md` (**new** — static file) |
 | User values & patterns | `profiles/user.md` (**new** — agent-owned markdown) |
-| Goal definitions & outcomes | `src/goals/cli.py` (**new** — CLI + SQLite) |
+| Goal definitions & outcomes | `src/lockstep/cli.py` (**new** — CLI + SQLite) |
 | Check-in scheduling | `schedule-checkin` CLI + scheduler polling (**new**) |
 | Weekly review cron | Seeded at startup (**new** — uses existing cron infra) |
 
@@ -260,10 +260,10 @@ Takes 10-15 minutes of texting. Can split across 2-3 sessions if interrupted. Af
 
 | File | Purpose | ~Lines |
 |---|---|---|
-| `src/goals/__init__.py` | Package init | 0 |
-| `src/goals/__main__.py` | `python -m` entry point | 3 |
-| `src/goals/db.py` | Sync SQLite wrapper | 150 |
-| `src/goals/cli.py` | Argparse CLI, JSON output | 200 |
+| `src/lockstep/__init__.py` | Package init | 0 |
+| `src/lockstep/__main__.py` | `python -m` entry point | 3 |
+| `src/lockstep/db.py` | Sync SQLite wrapper | 150 |
+| `src/lockstep/cli.py` | Argparse CLI, JSON output | 200 |
 | `profiles/` | Directory for user profile | — |
 
 ## Files to Modify
@@ -280,7 +280,7 @@ Takes 10-15 minutes of texting. Can split across 2-3 sessions if interrupted. Af
 
 ```env
 TELEGRAM_BOT_TOKEN=xxx
-TELEGRAM_BOT_USERNAME=overachiever_bot
+TELEGRAM_BOT_USERNAME=lockstep_bot
 APPROVED_DIRECTORY=/path/to/workdir
 AGENT_CLAUDE_MD_PATH=config/agent.claude.md
 LOAD_PROJECT_CLAUDE_MD=false

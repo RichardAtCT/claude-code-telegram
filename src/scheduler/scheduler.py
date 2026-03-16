@@ -262,7 +262,7 @@ class JobScheduler:
     async def _poll_new_checkins(self) -> None:
         """Poll for pending check-ins without a job_id and schedule them."""
         try:
-            from src.goals.db import (
+            from src.lockstep.db import (
                 get_db,
                 get_pending_checkins_without_job,
                 mark_checkin_fired,
@@ -323,7 +323,7 @@ class JobScheduler:
     async def _fire_checkin_callback(self, checkin: Dict[str, Any]) -> None:
         """APScheduler callback when a check-in fires."""
         try:
-            from src.goals.db import get_db, mark_checkin_fired
+            from src.lockstep.db import get_db, mark_checkin_fired
 
             conn = get_db()
             mark_checkin_fired(conn, checkin["id"])
@@ -368,8 +368,8 @@ class JobScheduler:
             f"Context: {context}\n\n"
             "Before responding:\n"
             "1. Read profiles/user.md\n"
-            "2. Check active goals: python -m src.goals.cli list\n"
-            "3. Check recent outcomes: python -m src.goals.cli history --days 3\n\n"
+            "2. Check active goals: python -m src.lockstep.cli list\n"
+            "3. Check recent outcomes: python -m src.lockstep.cli history --days 3\n\n"
             "Then deliver the check-in based on the context above. "
             "Keep it concise and Telegram-friendly. "
             "At the end, schedule the next appropriate check-in."

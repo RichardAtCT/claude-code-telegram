@@ -2,7 +2,7 @@
 
 ## Overview
 
-A synchronous CLI at `src/goals/cli.py` that Claude Code invokes via its Bash tool. It talks directly to the SQLite database (`data/bot.db`) using plain `sqlite3`. All commands output JSON to stdout. Errors go to stderr with exit code 1.
+A synchronous CLI at `src/lockstep/cli.py` that Claude Code invokes via its Bash tool. It talks directly to the SQLite database (`data/bot.db`) using plain `sqlite3`. All commands output JSON to stdout. Errors go to stderr with exit code 1.
 
 Single user — no user_id anywhere.
 
@@ -11,8 +11,8 @@ Single user — no user_id anywhere.
 ### `set-goal` — Create a new goal
 
 ```bash
-python -m src.goals.cli set-goal \
-  --title "Ship v1 of Overachiever" \
+python -m src.lockstep.cli set-goal \
+  --title "Ship v1 of Lockstep" \
   --why "Prove the concept works for personal use" \
   --timeframe monthly \
   --period 2026-03 \
@@ -25,7 +25,7 @@ Output: `{"id": "uuid", "title": "...", "status": "active", "created": true}`
 ### `update-goal` — Change status or fields
 
 ```bash
-python -m src.goals.cli update-goal \
+python -m src.lockstep.cli update-goal \
   --goal-id <uuid> \
   --status completed             # active / completed / dropped
   --title "new title"            # optional
@@ -34,7 +34,7 @@ python -m src.goals.cli update-goal \
 ### `record` — Record a daily outcome
 
 ```bash
-python -m src.goals.cli record \
+python -m src.lockstep.cli record \
   --goal-id <uuid> \
   --status completed \
   --reason "Finished the chapter" \
@@ -49,10 +49,10 @@ Output: `{"id": "uuid", "goal_id": "...", "date": "2026-03-16", "status": "compl
 ### `list` — List goals
 
 ```bash
-python -m src.goals.cli list                          # all active goals
-python -m src.goals.cli list --timeframe monthly      # monthly goals only
-python -m src.goals.cli list --period 2026-03          # goals for March 2026
-python -m src.goals.cli list --status all              # include completed/dropped
+python -m src.lockstep.cli list                          # all active goals
+python -m src.lockstep.cli list --timeframe monthly      # monthly goals only
+python -m src.lockstep.cli list --period 2026-03          # goals for March 2026
+python -m src.lockstep.cli list --status all              # include completed/dropped
 ```
 
 Output: JSON array of goal objects with id, title, description, why, timeframe, period, parent_goal_id, status.
@@ -60,10 +60,10 @@ Output: JSON array of goal objects with id, title, description, why, timeframe, 
 ### `history` — Get outcome records
 
 ```bash
-python -m src.goals.cli history                        # last 30 days
-python -m src.goals.cli history --goal-id <uuid>       # specific goal
-python -m src.goals.cli history --days 7               # last 7 days
-python -m src.goals.cli history --status skipped       # filter by outcome
+python -m src.lockstep.cli history                        # last 30 days
+python -m src.lockstep.cli history --goal-id <uuid>       # specific goal
+python -m src.lockstep.cli history --days 7               # last 7 days
+python -m src.lockstep.cli history --status skipped       # filter by outcome
 ```
 
 Output: JSON array of outcome objects, each with the goal title joined in.
@@ -71,8 +71,8 @@ Output: JSON array of outcome objects, each with the goal title joined in.
 ### `summary` — Aggregated stats for a period
 
 ```bash
-python -m src.goals.cli summary --period 2026-03       # month summary
-python -m src.goals.cli summary --period 2026-W11      # week summary
+python -m src.lockstep.cli summary --period 2026-03       # month summary
+python -m src.lockstep.cli summary --period 2026-W11      # week summary
 ```
 
 Output:
@@ -97,7 +97,7 @@ Output:
 ### `schedule-checkin` — Schedule a proactive check-in
 
 ```bash
-python -m src.goals.cli schedule-checkin \
+python -m src.lockstep.cli schedule-checkin \
   --time "14:00" \
   --context "Check on system design progress"
 ```
@@ -107,13 +107,13 @@ Writes to `scheduled_checkins` table. The bot's JobScheduler polls for new rows 
 ### `list-checkins` — List pending check-ins
 
 ```bash
-python -m src.goals.cli list-checkins
+python -m src.lockstep.cli list-checkins
 ```
 
 ### `cancel-checkin` — Cancel a pending check-in
 
 ```bash
-python -m src.goals.cli cancel-checkin --id <uuid>
+python -m src.lockstep.cli cancel-checkin --id <uuid>
 ```
 
 ## Data Model (SQLite)
@@ -168,9 +168,9 @@ python -m src.goals.cli cancel-checkin --id <uuid>
 ### File Structure
 
 ```
-src/goals/
+src/lockstep/
     __init__.py          # empty
-    __main__.py          # enables python -m src.goals.cli
+    __main__.py          # enables python -m src.lockstep.cli
     db.py                # sync SQLite wrapper (~150 lines)
     cli.py               # argparse CLI, JSON output (~200 lines)
 ```

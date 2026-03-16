@@ -5,7 +5,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
-from src.goals.db import (
+from src.lockstep.db import (
     cancel_checkin,
     create_goal,
     ensure_tables,
@@ -23,8 +23,8 @@ from src.goals.db import (
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with all subcommands."""
     parser = argparse.ArgumentParser(
-        prog="goals",
-        description="Goal Tracking CLI for the Overachiever system",
+        prog="lockstep",
+        description="Goal Tracking CLI for the Lockstep system",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

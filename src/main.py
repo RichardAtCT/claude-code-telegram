@@ -328,9 +328,9 @@ async def run_application(app: Dict[str, Any]) -> None:
                     prompt=(
                         "It's time for the weekly review.\n\n"
                         "1. Read profiles/user.md\n"
-                        "2. Run: python -m src.goals.cli summary "
+                        "2. Run: python -m src.lockstep.cli summary "
                         "--period <this-week>\n"
-                        "3. Run: python -m src.goals.cli history --days 7\n"
+                        "3. Run: python -m src.lockstep.cli history --days 7\n"
                         "4. Analyze completion patterns by goal, day of "
                         "week, and skip reasons\n"
                         "5. Update all 3 profile sections based on "
