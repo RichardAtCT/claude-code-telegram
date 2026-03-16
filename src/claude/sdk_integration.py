@@ -286,8 +286,11 @@ class ClaudeSDKManager:
                 )
                 content = content.strip()
             else:
+                # Use only the LAST AssistantMessage's text content.
+                # Earlier assistant messages contain intermediate reasoning
+                # that was already shown to the user via 💬 messages.
                 content_parts = []
-                for msg in messages:
+                for msg in reversed(messages):
                     if isinstance(msg, AssistantMessage):
                         msg_content = getattr(msg, "content", [])
                         if msg_content and isinstance(msg_content, list):
@@ -296,6 +299,8 @@ class ClaudeSDKManager:
                                     content_parts.append(block.text)
                         elif msg_content:
                             content_parts.append(str(msg_content))
+                        if content_parts:
+                            break  # Stop at the last assistant message with text
                 content = "\n".join(content_parts)
 
             return ClaudeResponse(

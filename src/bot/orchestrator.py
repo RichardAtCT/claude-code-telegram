@@ -845,6 +845,35 @@ class MessageOrchestrator:
             # Send per-event messages for tool calls
             if update_obj.tool_calls:
                 has_used_tools[0] = True
+            # Extended thinking (ThinkingBlocks — Claude's internal reasoning)
+            if update_obj.type == "thinking" and update_obj.content:
+                thinking = update_obj.content.strip()
+                if thinking and verbose_level >= 1:
+                    # Show first line of thinking as a 🧠 message
+                    first_line = thinking.split("\n", 1)[0].strip()[:200]
+                    if first_line:
+                        await _send_tool_msg(f"🧠 {first_line}")
+                        tool_log.append({"kind": "text", "detail": f"🧠 {first_line}"})
+
+            # Assistant text (visible reasoning / commentary)
+            # Process BEFORE tool calls so 💬 appears before 💻/✏️
+            # Only show 💬 when tools have been used (intermediate thinking).
+            # For pure text responses, skip — the final formatted message
+            # will show the same text.
+            if update_obj.type == "assistant" and update_obj.content:
+                text = update_obj.content.strip()
+                if text and "[ThinkingBlock(" in text:
+                    text = ""
+                if text and verbose_level >= 1 and has_used_tools[0]:
+                    first_line = text.split("\n", 1)[0].strip()[:200]
+                    if first_line:
+                        await _send_tool_msg(f"💬 {first_line}")
+                        tool_log.append({"kind": "text", "detail": first_line})
+                        # Reset draft so it only shows NEW text going forward
+                        if draft_streamer:
+                            draft_streamer.reset_text()
+
+            # Tool calls — send after assistant text so 💬 appears first
             if update_obj.tool_calls and verbose_level >= 1:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
@@ -867,42 +896,12 @@ class MessageOrchestrator:
                     # Also log for reference
                     tool_log.append({"kind": "tool", "name": name, "detail": detail})
 
-                    # Don't duplicate tool lines in the draft — they're already
-                    # sent as individual messages above.
-
             # Tool results — edit the last tool message to append result
             if verbose_level >= 3 and update_obj.type == "tool_result":
                 result_text = _clean_result(str(getattr(update_obj, "content", "") or ""))
                 if result_text and last_tool_msg_id[0]:
                     # Read current message and append result
                     tool_log.append({"kind": "result", "detail": result_text})
-
-            # Extended thinking (ThinkingBlocks — Claude's internal reasoning)
-            if update_obj.type == "thinking" and update_obj.content:
-                thinking = update_obj.content.strip()
-                if thinking and verbose_level >= 1:
-                    # Show first line of thinking as a 🧠 message
-                    first_line = thinking.split("\n", 1)[0].strip()[:200]
-                    if first_line:
-                        await _send_tool_msg(f"🧠 {first_line}")
-                        tool_log.append({"kind": "text", "detail": f"🧠 {first_line}"})
-
-            # Assistant text (visible reasoning / commentary)
-            # Only show 💬 when tools have been used (intermediate thinking).
-            # For pure text responses, skip — the final formatted message
-            # will show the same text.
-            if update_obj.type == "assistant" and update_obj.content:
-                text = update_obj.content.strip()
-                if text and "[ThinkingBlock(" in text:
-                    text = ""
-                if text and verbose_level >= 1 and has_used_tools[0]:
-                    first_line = text.split("\n", 1)[0].strip()[:200]
-                    if first_line:
-                        await _send_tool_msg(f"💬 {first_line}")
-                        tool_log.append({"kind": "text", "detail": first_line})
-                        # Reset draft so it only shows NEW text going forward
-                        if draft_streamer:
-                            draft_streamer.reset_text()
 
             # Stream response text to user via draft (live typing preview).
             # The draft is temporary (vanishes when next real message arrives)
@@ -1260,14 +1259,7 @@ class MessageOrchestrator:
                 except Exception as img_err:
                     logger.warning("Image+caption send failed", error=str(img_err))
 
-        # Clear the draft streamer before sending final response
-        if draft_streamer:
-            try:
-                await draft_streamer.clear()
-            except Exception:
-                pass
-
-        # Send response FIRST (so it appears before draft disappears)
+        # Send response (draft bubble disappears naturally when real message arrives)
         if not caption_sent:
             for i, message in enumerate(formatted_messages):
                 if not message.text or not message.text.strip():
@@ -1470,13 +1462,6 @@ class MessageOrchestrator:
                 await progress_msg.delete()
             except Exception:
                 logger.debug("Failed to delete progress message, ignoring")
-
-            # Clear draft streamer before final response
-            if draft_streamer_doc:
-                try:
-                    await draft_streamer_doc.clear()
-                except Exception:
-                    pass
 
             # Use MCP-collected files (from send_file_to_user tool calls)
             images: List[ImageAttachment] = mcp_images_doc
@@ -1714,13 +1699,6 @@ class MessageOrchestrator:
 
         # Keep progress messages visible (don't delete)
         pass
-
-        # Clear draft streamer before final response
-        if draft_streamer_media:
-            try:
-                await draft_streamer_media.clear()
-            except Exception:
-                pass
 
         # Use MCP-collected files (from send_file_to_user tool calls).
         images: List[ImageAttachment] = mcp_images_media
