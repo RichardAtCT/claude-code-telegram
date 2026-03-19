@@ -1,0 +1,82 @@
+services:
+  bot:
+    build:
+      context: .
+      args:
+        # Uncomment to install optional dependencies
+        # INSTALL_POSTGRES: "true"
+        # INSTALL_CACHE: "true"
+    container_name: claude-telegram-bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${API_SERVER_PORT:-8080}:8080"
+    volumes:
+      # Persist SQLite database
+      - bot-data:/app/data
+      # Mount project directory for Claude Code access (read-write)
+      - ${APPROVED_DIRECTORY:?Set APPROVED_DIRECTORY in .env}:/projects
+      # Grafana dashboard JSON (mount to host for Grafana provisioning)
+      - ./docs/grafana:/app/docs/grafana:ro
+    environment:
+      # Override approved directory to match container mount
+      - APPROVED_DIRECTORY=/projects
+      # Claude auth: pass API key or mount CLI config
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      ## --- Optional features (uncomment to enable) ---
+      ## API server / dashboard
+      # - ENABLE_API_SERVER=true
+      # - API_SERVER_PORT=8080
+      ## Metrics & monitoring
+      # - ENABLE_METRICS=true
+      # - METRICS_EXPORT_INTERVAL=60
+      ## PostgreSQL storage (requires postgres service below)
+      # - DATABASE_URL=postgresql+asyncpg://bot:bot@postgres:5432/claude_bot
+      ## Redis cache (requires redis service below)
+      # - REDIS_URL=redis://redis:6379/0
+      # - CACHE_TTL=3600
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  ## --- Optional services (uncomment to enable) ---
+
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: claude-bot-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: claude-bot-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: bot
+  #     POSTGRES_PASSWORD: bot
+  #     POSTGRES_DB: claude_bot
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U bot"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+
+volumes:
+  bot-data:
+  # redis-data:
+  # postgres-data:

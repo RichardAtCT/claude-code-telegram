@@ -216,16 +216,17 @@ class ConfirmationManager:
         return confirmation_id
 
     def handle_response(
-        self, confirmation_id: str, approved: bool
+        self, confirmation_id: str, user_id: int, approved: bool
     ) -> Optional[PendingAction]:
         """Process a user's approve/deny response.
 
+        Only the user who initiated the action can approve/deny it.
         Returns the PendingAction if found (and removes it), or None if
-        expired / not found.
+        expired / not found / wrong user.
         """
         self.cleanup_expired()
 
-        pending = self.pending.pop(confirmation_id, None)
+        pending = self.pending.get(confirmation_id)
         if pending is None:
             logger.warning(
                 "Confirmation not found or expired",
@@ -233,9 +234,23 @@ class ConfirmationManager:
             )
             return None
 
+        # Verify the responder is the same user who triggered the action
+        if pending.user_id != user_id:
+            logger.warning(
+                "Confirmation response from wrong user",
+                confirmation_id=confirmation_id,
+                expected_user_id=pending.user_id,
+                actual_user_id=user_id,
+            )
+            return None
+
+        # Remove from pending now that ownership is verified
+        self.pending.pop(confirmation_id, None)
+
         logger.info(
             "Confirmation response",
             confirmation_id=confirmation_id,
+            user_id=user_id,
             approved=approved,
             tool=pending.tool_name,
         )

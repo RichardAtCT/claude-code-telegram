@@ -341,6 +341,7 @@ let msgChart = null, costChart = null;
 function fmt$(v){return '$' + (v||0).toFixed(4)}
 function fmtTime(s){if(!s)return'-';const d=new Date(s);return d.toLocaleString()}
 function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return 'Uptime: '+h+'h '+m+'m'}
+function esc(s){if(s===null||s===undefined)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
 
 async function fetchJSON(path){
   const r = await fetch(BASE + path);
@@ -405,11 +406,11 @@ async function loadSessions(){
     const s = await fetchJSON('/api/sessions');
     const tbody = document.getElementById('t-sessions');
     tbody.innerHTML = (s.sessions||[]).slice(0,15).map(r=>`<tr>
-      <td>${r.telegram_username||r.user_id}</td>
-      <td>${(r.project_path||'').split('/').pop()||r.project_path}</td>
-      <td>${fmtTime(r.created_at)}</td>
-      <td>${r.message_count||0}</td>
-      <td>${fmt$(r.total_cost)}</td>
+      <td>${esc(r.telegram_username||r.user_id)}</td>
+      <td>${esc((r.project_path||'').split('/').pop()||r.project_path)}</td>
+      <td>${esc(fmtTime(r.created_at))}</td>
+      <td>${esc(r.message_count||0)}</td>
+      <td>${esc(fmt$(r.total_cost))}</td>
       <td><span class="badge ${r.is_active?'badge-active':'badge-inactive'}">${r.is_active?'Active':'Inactive'}</span></td>
     </tr>`).join('');
   }catch(e){console.error('sessions',e)}
@@ -420,11 +421,11 @@ async function loadUsers(){
     const u = await fetchJSON('/api/users');
     const tbody = document.getElementById('t-users');
     tbody.innerHTML = (u.users||[]).slice(0,15).map(r=>`<tr>
-      <td>${r.telegram_username||r.user_id}</td>
-      <td>${r.message_count||0}</td>
-      <td>${r.session_count||0}</td>
-      <td>${fmt$(r.total_cost)}</td>
-      <td>${fmtTime(r.last_active)}</td>
+      <td>${esc(r.telegram_username||r.user_id)}</td>
+      <td>${esc(r.message_count||0)}</td>
+      <td>${esc(r.session_count||0)}</td>
+      <td>${esc(fmt$(r.total_cost))}</td>
+      <td>${esc(fmtTime(r.last_active))}</td>
     </tr>`).join('');
   }catch(e){console.error('users',e)}
 }

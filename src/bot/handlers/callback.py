@@ -1343,20 +1343,14 @@ async def handle_dangerous_confirm_callback(
         )
         return
 
-    pending = confirmation_manager.handle_response(confirmation_id, approved)
+    pending = confirmation_manager.handle_response(
+        confirmation_id, query.from_user.id, approved
+    )
     if not pending:
         await query.edit_message_text(
-            "\u23f0 <b>Confirmation Expired</b>\n\n"
-            "This confirmation has expired or was already processed.",
-            parse_mode="HTML",
-        )
-        return
-
-    # Verify the responding user matches the original requester
-    if pending.user_id != query.from_user.id:
-        await query.edit_message_text(
-            "\u274c <b>Permission Denied</b>\n\n"
-            "Only the original requester can respond to this confirmation.",
+            "\u23f0 <b>Confirmation Expired or Permission Denied</b>\n\n"
+            "This confirmation has expired, was already processed, "
+            "or you are not the original requester.",
             parse_mode="HTML",
         )
         return

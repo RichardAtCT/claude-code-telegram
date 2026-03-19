@@ -212,7 +212,11 @@ class RedisCacheBackend(CacheBackend):
             self._redis_url,
             decode_responses=True,
         )
-        logger.info("Redis cache connected", url=self._redis_url)
+        # Avoid logging credentials in the Redis URL
+        from urllib.parse import urlparse
+        parsed = urlparse(self._redis_url)
+        safe_url = f"{parsed.scheme}://{parsed.hostname}:{parsed.port or 6379}/{parsed.path.lstrip('/')}"
+        logger.info("Redis cache connected", url=safe_url)
 
     async def disconnect(self) -> None:
         """Close the Redis connection pool."""

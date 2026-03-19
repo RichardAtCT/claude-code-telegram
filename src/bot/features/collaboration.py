@@ -47,7 +47,19 @@ class CollaborationManager:
         """Add a user to a team.
 
         The inviter must be an admin or the creator. Returns True on success.
+        Role is restricted: only 'member' or 'admin' are allowed, and
+        only a 'creator' can grant 'admin' role.
         """
+        # Sanitize role — never allow granting 'creator' role via invite
+        if role not in ("member", "admin"):
+            logger.warning(
+                "Invalid role in invite attempt",
+                team_id=team_id,
+                inviter_id=inviter_id,
+                requested_role=role,
+            )
+            return False
+
         # Verify inviter has permission
         members = await self.team_repo.get_team_members(team_id)
         inviter_member = next(
@@ -56,6 +68,15 @@ class CollaborationManager:
         if not inviter_member or inviter_member.role not in ("admin", "creator"):
             logger.warning(
                 "Unauthorized invite attempt",
+                team_id=team_id,
+                inviter_id=inviter_id,
+            )
+            return False
+
+        # Only creators can grant admin role
+        if role == "admin" and inviter_member.role != "creator":
+            logger.warning(
+                "Non-creator tried to grant admin role",
                 team_id=team_id,
                 inviter_id=inviter_id,
             )

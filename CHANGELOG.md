@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-03-19
+
+### Added
+- **Internationalization (i18n)**: Full Chinese/English bilingual support with `DEFAULT_LANGUAGE` and `SUPPORTED_LANGUAGES` settings
+- **Plugin system**: Extensible plugin architecture with configurable plugin directory and per-plugin enable/disable
+- **Cache layer**: Dual-backend caching (in-memory + Redis) with configurable TTL and max size
+- **Graceful degradation**: Circuit breaker, automatic retry with backoff, and request queuing for resilience
+- **Web dashboard**: Real-time monitoring dashboard with basic auth at `/dashboard`
+- **Code review**: `/review` command and automatic PR/MR review via webhooks with GitHub API integration
+- **Interactive confirmation**: User confirmation prompt before executing dangerous operations with configurable timeout
+- **History search**: `/search` command for searching conversation and command history
+- **Multi-user collaboration**: `/team` command for shared project workspaces and collaborative sessions
+- **CI/CD enhancement**: GitLab and Bitbucket webhook support alongside existing GitHub integration
+- **Alert mechanism**: Cost, error-rate, and global threshold alerts with configurable admin notification channels
+- **Prometheus metrics + Grafana template**: `/metrics` endpoint in Prometheus format with bundled Grafana dashboard
+- **PostgreSQL support**: Optional PostgreSQL backend with connection pooling (`asyncpg`)
+- **Token/Audit DB persistence**: Durable token and audit log storage across SQLite and PostgreSQL backends
+- **Progress tracker**: Six-stage progress visualization for long-running Claude operations
+- **Integration tests**: 39 new integration tests covering end-to-end workflows
+
 ## [1.5.0] - 2026-03-04
 
 ### Added

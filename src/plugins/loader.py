@@ -74,8 +74,11 @@ class PluginManager:
             logger.warning("Plugin directory does not exist", path=str(directory))
             return 0
 
+        # Resolve the directory to prevent symlink-based traversal
+        resolved_dir = directory.resolve()
+
         loaded = 0
-        for path in sorted(directory.glob("*.py")):
+        for path in sorted(resolved_dir.glob("*.py")):
             if path.name.startswith("_"):
                 continue
             try:
@@ -105,6 +108,18 @@ class PluginManager:
         Raises:
             PluginLoadError: If import fails or factory returns invalid type.
         """
+        # Security: resolve symlinks and verify path is a .py file
+        resolved = module_path.resolve()
+        if not resolved.suffix == ".py":
+            raise PluginLoadError(
+                f"Plugin path must be a .py file: {module_path}"
+            )
+        # Prevent path traversal: ensure the resolved path matches expectations
+        if ".." in str(module_path):
+            raise PluginLoadError(
+                f"Path traversal detected in plugin path: {module_path}"
+            )
+
         module_name = f"_plugin_{module_path.stem}"
 
         try:

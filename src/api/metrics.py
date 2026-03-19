@@ -67,8 +67,14 @@ class MetricsCollector:
             self._errors_total += 1
 
     def add_cost(self, user_id: int, cost: float) -> None:
-        """Add cost for a specific user."""
+        """Add cost for a specific user.
+
+        Caps the number of tracked users to prevent unbounded memory growth.
+        """
         with self._mu:
+            if user_id not in self._cost_by_user and len(self._cost_by_user) >= 10000:
+                # Safety cap: don't track more than 10k unique users in metrics
+                return
             self._cost_by_user[user_id] += cost
 
     def set_active_sessions(self, count: int) -> None:

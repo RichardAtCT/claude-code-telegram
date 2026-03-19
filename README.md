@@ -45,13 +45,29 @@ Choose your preferred method:
 
 ```bash
 # Using uv (recommended — installs in an isolated environment)
-uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v2.0.0
 
 # Or using pip
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+pip install git+https://github.com/RichardAtCT/claude-code-telegram@v2.0.0
 
 # Track the latest stable release
 pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+```
+
+#### Optional Extras
+
+```bash
+# PostgreSQL support (alternative to SQLite)
+pip install claude-code-telegram[postgres]
+
+# Redis cache layer
+pip install claude-code-telegram[cache]
+
+# Voice message transcription (Mistral Voxtral / OpenAI Whisper)
+pip install claude-code-telegram[voice]
+
+# Multiple extras
+pip install claude-code-telegram[postgres,cache,voice]
 ```
 
 #### Option B: From source (for development)
@@ -98,7 +114,7 @@ The bot supports two interaction modes:
 
 The default conversational mode. Just talk to Claude naturally -- no special commands required.
 
-**Commands:** `/start`, `/new`, `/status`, `/verbose`, `/repo`
+**Commands:** `/start`, `/new`, `/status`, `/verbose`, `/repo`, `/lang`, `/search`, `/team`, `/review`
 If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`
 
 ```
@@ -171,6 +187,41 @@ You: /actions
 Bot: [Run Tests] [Install Deps] [Format Code] [Run Linter]
 ```
 
+## Commands Reference
+
+### Agentic Mode Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Start the bot / show welcome message |
+| `/new` | Start a new conversation session |
+| `/status` | Show current session, usage, and cost stats |
+| `/verbose 0\|1\|2` | Set output verbosity level |
+| `/repo [name]` | List repos or switch to a specific project |
+| `/lang [code]` | Set bot language (`en`, `zh`) |
+| `/search <query>` | Search past conversations by keyword |
+| `/team <action>` | Team collaboration (create, invite, list) |
+| `/review [file]` | Request a code review of changes or a file |
+| `/sync_threads` | Sync project topics (requires `ENABLE_PROJECT_THREADS=true`) |
+
+### Classic Mode Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Start the bot |
+| `/help` | Show available commands |
+| `/new` | Start a new session |
+| `/continue` | Resume a previous session |
+| `/end` | End the current session |
+| `/status` | Show session status |
+| `/cd <dir>` | Change directory |
+| `/ls [dir]` | List directory contents |
+| `/pwd` | Show current directory |
+| `/projects` | List available projects |
+| `/export` | Export session (Markdown/HTML/JSON) |
+| `/actions` | Show quick action buttons |
+| `/git` | Git operations menu |
+
 ## Event-Driven Automation
 
 Beyond direct chat, the bot can respond to external triggers:
@@ -183,7 +234,7 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 
 ## Features
 
-### Working Features
+### Core
 
 - Conversational agentic mode (default) with natural language interaction
 - Classic terminal-like mode with 13 commands and inline keyboards
@@ -198,21 +249,102 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 - Git integration with safe repository operations
 - Quick actions system with context-aware buttons
 - Session export in Markdown, HTML, and JSON formats
-- SQLite persistence with migrations
 - Usage and cost tracking
 - Audit logging and security event tracking
 - Event bus for decoupled message routing
 - Webhook API server (GitHub HMAC-SHA256, generic Bearer token auth)
 - Job scheduler with cron expressions and persistent storage
 - Notification service with per-chat rate limiting
-
 - Tunable verbose output showing Claude's tool usage and reasoning in real-time
 - Persistent typing indicator so users always know the bot is working
 - 16 configurable tools with allowlist/disallowlist control (see [docs/tools.md](docs/tools.md))
 
-### Planned Enhancements
+### New in v2.0.0
 
-- Plugin system for third-party extensions
+#### Multi-language Support (i18n)
+
+Use `/lang` to switch the bot interface between supported languages. Currently supports **English** and **Chinese**. All bot messages, prompts, and responses adapt to the selected language.
+
+#### Plugin System
+
+Extensible architecture with a hook-based plugin system. Third-party plugins can register lifecycle hooks to intercept and extend bot behavior -- message preprocessing, response postprocessing, custom command registration, and more.
+
+#### Cache Layer
+
+In-memory LRU cache with optional **Redis** backend for multi-instance deployments. Reduces redundant Claude API calls by caching frequent lookups, session metadata, and configuration. Install the `cache` extra to enable Redis support.
+
+#### Graceful Degradation
+
+Built-in resilience primitives to keep the bot responsive under pressure:
+
+- **Circuit breaker** -- temporarily stops calling a failing upstream service and auto-recovers
+- **Retry with backoff** -- retries transient failures with exponential backoff
+- **Request queue** -- buffers bursts and processes them at a sustainable rate
+
+#### Web Dashboard
+
+Real-time monitoring dashboard served at `/dashboard` when the API server is enabled. View active sessions, request throughput, error rates, cost breakdown, and system health at a glance.
+
+#### Code Review
+
+Use `/review` to request a structured code review of staged changes or a specific file. When connected to a Git hosting provider, the bot can also **auto-review pull requests** triggered by webhooks.
+
+#### Interactive Confirmation
+
+Safety net for dangerous operations. When Claude is about to execute a destructive command (e.g., `rm -rf`, force push, database migration), the bot pauses and asks for explicit user approval via inline buttons before proceeding.
+
+#### History Search
+
+Use `/search <query>` to search past conversations by keyword. Results are ranked by relevance and grouped by session, making it easy to find previous solutions and discussions.
+
+#### Team Collaboration
+
+Use `/team` commands to manage shared projects across multiple users:
+
+- `/team create <name>` -- create a shared project workspace
+- `/team invite <user_id>` -- invite a team member
+- `/team list` -- list your teams and shared projects
+
+Team members share project context, conversation history, and can hand off sessions.
+
+#### CI/CD Integration
+
+Native webhook receivers for **GitHub**, **GitLab**, and **Bitbucket**. Push events, pull request updates, pipeline failures, and deployment statuses are routed through Claude for automated analysis, summaries, and actionable notifications.
+
+#### Alert System
+
+Configurable alerts for operational events:
+
+- **Cost alerts** -- notify when spending exceeds configured thresholds
+- **Error alerts** -- notify on repeated failures or circuit breaker trips
+- **Security alerts** -- notify on authentication failures, suspicious patterns, or blocked operations
+
+Alerts are delivered to configured Telegram chats via the notification service.
+
+#### Prometheus Metrics
+
+Expose metrics at the `/metrics` endpoint in Prometheus exposition format. Track request latency, token usage, error rates, active sessions, and queue depth. A sample **Grafana dashboard** JSON is included for quick setup.
+
+#### PostgreSQL Support
+
+Optional alternative to SQLite for production deployments. Install the `postgres` extra and set `DATABASE_URL=postgresql://...` to use PostgreSQL. Supports the same migration system and schema as SQLite.
+
+#### Database Persistence
+
+Token usage records, audit logs, and authentication tokens are now persisted in the database. Enables historical usage analysis, compliance auditing, and survives bot restarts without data loss.
+
+#### Progress Tracking
+
+Visual 6-stage progress feedback during long-running Claude operations:
+
+1. Queued
+2. Starting
+3. Reading/Analyzing
+4. Thinking
+5. Writing/Executing
+6. Complete
+
+Each stage updates the Telegram message in-place so users always know exactly where their request stands.
 
 ## Configuration
 
@@ -263,6 +395,59 @@ ENABLE_SCHEDULER=false           # Enable cron job scheduler
 
 # Notifications
 NOTIFICATION_CHAT_IDS=123,456    # Default chat IDs for proactive notifications
+```
+
+### v2.0.0 Features
+
+```bash
+# Internationalization
+BOT_LANGUAGE=en                  # Default language (en, zh)
+
+# Plugin System
+ENABLE_PLUGINS=false             # Enable plugin system
+PLUGINS_DIR=plugins              # Directory for plugin modules
+
+# Cache Layer
+ENABLE_CACHE=false               # Enable caching layer
+CACHE_BACKEND=memory             # memory (LRU) or redis
+CACHE_TTL_SECONDS=300            # Cache entry TTL
+REDIS_URL=redis://localhost:6379 # Redis connection URL (when CACHE_BACKEND=redis)
+
+# Graceful Degradation
+CIRCUIT_BREAKER_THRESHOLD=5      # Failures before circuit opens
+CIRCUIT_BREAKER_TIMEOUT=60       # Seconds before retry after circuit opens
+REQUEST_QUEUE_SIZE=100           # Max queued requests
+RETRY_MAX_ATTEMPTS=3             # Max retry attempts for transient failures
+
+# Web Dashboard
+ENABLE_DASHBOARD=false           # Enable /dashboard web UI
+
+# Code Review
+ENABLE_CODE_REVIEW=false         # Enable /review command and auto PR review
+
+# Interactive Confirmation
+ENABLE_CONFIRMATION=true         # Require approval for dangerous operations
+
+# History Search
+ENABLE_HISTORY_SEARCH=true       # Enable /search command
+
+# Team Collaboration
+ENABLE_TEAMS=false               # Enable /team commands
+
+# CI/CD Integration
+GITLAB_WEBHOOK_SECRET=...        # GitLab webhook secret
+BITBUCKET_WEBHOOK_SECRET=...     # Bitbucket webhook secret
+
+# Alert System
+ENABLE_ALERTS=false              # Enable cost/error/security alerts
+ALERT_COST_THRESHOLDS=5,10,25   # Cost alert thresholds in USD
+ALERT_CHAT_IDS=123,456           # Chat IDs for alert delivery
+
+# Prometheus Metrics
+ENABLE_METRICS=false             # Enable /metrics endpoint
+
+# PostgreSQL (alternative to SQLite)
+DATABASE_URL=postgresql://user:pass@localhost:5432/botdb
 ```
 
 ### Project Threads Mode
@@ -324,6 +509,9 @@ This bot implements defense-in-depth security:
 - **Input Validation** -- Injection and path traversal protection
 - **Webhook Authentication** -- GitHub HMAC-SHA256 and Bearer token verification
 - **Audit Logging** -- Complete tracking of all user actions
+- **Interactive Confirmation** -- Approval required for dangerous operations (v2.0.0)
+- **Security Alerts** -- Real-time notifications on suspicious activity (v2.0.0)
+- **Circuit Breaker** -- Automatic isolation of failing services (v2.0.0)
 
 See [SECURITY.md](SECURITY.md) for details.
 
