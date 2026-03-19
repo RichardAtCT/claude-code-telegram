@@ -8,6 +8,7 @@ Features:
 """
 
 import asyncio
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import structlog
@@ -15,14 +16,18 @@ from telegram import Update
 from telegram.ext import (
     AIORateLimiter,
     Application,
+    CommandHandler,
     ContextTypes,
     Defaults,
     MessageHandler,
     filters,
 )
 
+from ..cache.manager import CacheManager
 from ..config.settings import Settings
 from ..exceptions import ClaudeCodeTelegramError
+from ..plugins.hooks import HookManager
+from ..plugins.loader import PluginManager
 from .features.registry import FeatureRegistry
 from .orchestrator import MessageOrchestrator
 
@@ -40,6 +45,9 @@ class ClaudeCodeBot:
         self.is_running = False
         self.feature_registry: Optional[FeatureRegistry] = None
         self.orchestrator = MessageOrchestrator(settings, dependencies)
+        self.plugin_manager: Optional[PluginManager] = None
+        self.hook_manager: Optional[HookManager] = None
+        self.cache_manager: Optional[CacheManager] = None
 
     async def initialize(self) -> None:
         """Initialize bot application. Idempotent — safe to call multiple times."""
@@ -79,6 +87,9 @@ class ClaudeCodeBot:
         # Set bot commands for menu (requires initialized HTTP client)
         await self._set_bot_commands()
 
+        # Initialize cache layer
+        await self._initialize_cache()
+
         # Register handlers
         self._register_handlers()
 
@@ -87,6 +98,9 @@ class ClaudeCodeBot:
 
         # Set error handler
         self.app.add_error_handler(self._error_handler)
+
+        # Initialize plugin system (after handlers so plugins can add more)
+        await self._initialize_plugins()
 
         logger.info("Bot initialization complete")
 
@@ -99,6 +113,76 @@ class ClaudeCodeBot:
     def _register_handlers(self) -> None:
         """Register handlers via orchestrator (mode-aware)."""
         self.orchestrator.register_handlers(self.app)
+
+    async def _initialize_cache(self) -> None:
+        """Initialize the cache layer if enabled."""
+        self.cache_manager = CacheManager.from_settings(self.settings)
+        await self.cache_manager.initialize()
+        if self.cache_manager.is_enabled:
+            self.deps["cache_manager"] = self.cache_manager
+            logger.info("Cache layer initialized")
+
+    async def _initialize_plugins(self) -> None:
+        """Initialize the plugin system if enabled."""
+        if not self.settings.enable_plugins:
+            return
+
+        from ..events.bus import EventBus
+
+        event_bus = self.deps.get("event_bus")
+        if event_bus is None:
+            event_bus = EventBus()
+            self.deps["event_bus"] = event_bus
+
+        self.hook_manager = HookManager()
+        self.deps["hook_manager"] = self.hook_manager
+
+        self.plugin_manager = PluginManager(
+            event_bus=event_bus,
+            hook_manager=self.hook_manager,
+        )
+
+        if self.settings.enabled_plugins is not None:
+            self.plugin_manager.set_enabled_plugins(self.settings.enabled_plugins)
+
+        # Load plugins from directory
+        plugins_dir = self.settings.plugins_directory
+        if plugins_dir:
+            plugin_path = Path(plugins_dir)
+            if not plugin_path.is_absolute():
+                plugin_path = Path.cwd() / plugin_path
+            self.plugin_manager.load_plugins(plugin_path)
+
+        # Initialize all loaded plugins
+        await self.plugin_manager.initialize_all(
+            bot=self,
+            settings=self.settings,
+            storage=self.deps.get("storage"),
+        )
+
+        # Register plugin commands as bot handlers
+        for plugin_meta in self.plugin_manager.list_plugins():
+            plugin = self.plugin_manager.get_plugin(plugin_meta.name)
+            if plugin is None:
+                continue
+            for cmd_name, cmd_desc, cmd_handler in plugin.get_commands():
+                self.app.add_handler(
+                    CommandHandler(
+                        cmd_name,
+                        self.orchestrator._inject_deps(cmd_handler),
+                    )
+                )
+                logger.info(
+                    "Plugin command registered",
+                    plugin=plugin_meta.name,
+                    command=cmd_name,
+                )
+
+        self.deps["plugin_manager"] = self.plugin_manager
+        logger.info(
+            "Plugin system initialized",
+            plugins_loaded=len(self.plugin_manager.list_plugins()),
+        )
 
     def _add_middleware(self) -> None:
         """Add middleware to application."""
@@ -233,6 +317,14 @@ class ClaudeCodeBot:
 
         try:
             self.is_running = False  # Stop the main loop first
+
+            # Shutdown plugins (reverse dependency order)
+            if self.plugin_manager:
+                await self.plugin_manager.shutdown_all()
+
+            # Shutdown cache
+            if self.cache_manager:
+                await self.cache_manager.shutdown()
 
             # Shutdown feature registry
             if self.feature_registry:

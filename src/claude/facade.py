@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 import structlog
 
 from ..config.settings import Settings
+from .resilience import CircuitBreaker, CircuitState, RetryHandler, is_transient_error
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
@@ -29,6 +30,35 @@ class ClaudeIntegration:
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
 
+        # Resilience components (initialised lazily or externally)
+        self._circuit_breaker: Optional[CircuitBreaker] = None
+        self._retry_handler: Optional[RetryHandler] = None
+        self._request_queue: Optional[Any] = None  # RequestQueue set externally
+
+        if config.enable_graceful_degradation:
+            self._circuit_breaker = CircuitBreaker(
+                threshold=config.circuit_breaker_threshold,
+                cooldown_seconds=config.circuit_breaker_cooldown_seconds,
+            )
+            self._retry_handler = RetryHandler(
+                max_retries=config.retry_max_attempts,
+            )
+            self._circuit_breaker.set_on_state_change(self._on_circuit_state_change)
+
+    def set_request_queue(self, queue: Any) -> None:
+        """Attach a RequestQueue (set after DB is ready)."""
+        self._request_queue = queue
+
+    def _on_circuit_state_change(self, new_state: CircuitState) -> None:
+        """React to circuit breaker state changes."""
+        if new_state == CircuitState.CLOSED and self._request_queue:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._request_queue.start_replay())
+            except RuntimeError:
+                pass
+
     async def run_command(
         self,
         prompt: str,
@@ -37,8 +67,20 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         on_stream: Optional[Callable[[StreamUpdate], None]] = None,
         force_new: bool = False,
+        chat_id: Optional[int] = None,
     ) -> ClaudeResponse:
-        """Run Claude Code command with full integration."""
+        """Run Claude Code command with full integration.
+
+        When graceful degradation is enabled, the call is guarded by a
+        circuit breaker and retried on transient errors.  If the circuit
+        is open the request is queued for later replay.
+        """
+        # Metrics
+        from ..api.metrics import MetricsCollector
+
+        metrics = MetricsCollector()
+        metrics.inc_requests()
+
         logger.info(
             "Running Claude command",
             user_id=user_id,
@@ -47,6 +89,35 @@ class ClaudeIntegration:
             prompt_length=len(prompt),
             force_new=force_new,
         )
+
+        # Circuit breaker check — queue request when circuit is open
+        if self._circuit_breaker and not self._circuit_breaker.can_execute():
+            logger.warning(
+                "Circuit breaker open, queuing request",
+                user_id=user_id,
+                state=self._circuit_breaker.get_state().value,
+            )
+            if self._request_queue:
+                from .resilience import PendingRequest
+
+                queued = await self._request_queue.enqueue(
+                    PendingRequest(
+                        user_id=user_id,
+                        chat_id=chat_id or 0,
+                        prompt=prompt,
+                        working_directory=str(working_directory),
+                    )
+                )
+                if queued:
+                    raise RuntimeError(
+                        "Claude is temporarily unavailable. "
+                        "Your request has been queued and will be "
+                        "processed automatically when service recovers."
+                    )
+            raise RuntimeError(
+                "Claude is temporarily unavailable (circuit breaker open). "
+                "Please try again later."
+            )
 
         # If no session_id provided, try to find an existing session for this
         # user+directory combination (auto-resume).
@@ -70,6 +141,9 @@ class ClaudeIntegration:
         )
 
         # Execute command
+        import time as _time
+
+        start_ts = _time.monotonic()
         try:
             # Continue session if we have an existing session with a real ID
             is_new = getattr(session, "is_new_session", False)
@@ -79,7 +153,7 @@ class ClaudeIntegration:
             claude_session_id = session.session_id if should_continue else None
 
             try:
-                response = await self._execute(
+                response = await self._execute_with_resilience(
                     prompt=prompt,
                     working_directory=working_directory,
                     session_id=claude_session_id,
@@ -103,7 +177,7 @@ class ClaudeIntegration:
                     session = await self.session_manager.get_or_create_session(
                         user_id, working_directory
                     )
-                    response = await self._execute(
+                    response = await self._execute_with_resilience(
                         prompt=prompt,
                         working_directory=working_directory,
                         session_id=None,
@@ -112,6 +186,10 @@ class ClaudeIntegration:
                     )
                 else:
                     raise
+
+            # Record success for circuit breaker
+            if self._circuit_breaker:
+                self._circuit_breaker.record_success()
 
             # Update session (assigns real session_id for new sessions)
             await self.session_manager.update_session(session, response)
@@ -125,6 +203,11 @@ class ClaudeIntegration:
                     user_id=user_id,
                 )
 
+            # Metrics
+            elapsed = _time.monotonic() - start_ts
+            metrics.observe_response_time(elapsed)
+            metrics.add_cost(user_id, response.cost)
+
             logger.info(
                 "Claude command completed",
                 session_id=response.session_id,
@@ -137,6 +220,12 @@ class ClaudeIntegration:
             return response
 
         except Exception as e:
+            # Record failure for circuit breaker
+            if self._circuit_breaker:
+                self._circuit_breaker.record_failure()
+
+            metrics.inc_errors()
+
             logger.error(
                 "Claude command failed",
                 error=str(e),
@@ -144,6 +233,32 @@ class ClaudeIntegration:
                 session_id=session.session_id,
             )
             raise
+
+    async def _execute_with_resilience(
+        self,
+        prompt: str,
+        working_directory: Path,
+        session_id: Optional[str] = None,
+        continue_session: bool = False,
+        stream_callback: Optional[Callable] = None,
+    ) -> ClaudeResponse:
+        """Execute command via SDK, wrapped with RetryHandler if available."""
+        if self._retry_handler:
+            return await self._retry_handler.execute(
+                self._execute,
+                prompt=prompt,
+                working_directory=working_directory,
+                session_id=session_id,
+                continue_session=continue_session,
+                stream_callback=stream_callback,
+            )
+        return await self._execute(
+            prompt=prompt,
+            working_directory=working_directory,
+            session_id=session_id,
+            continue_session=continue_session,
+            stream_callback=stream_callback,
+        )
 
     async def _execute(
         self,

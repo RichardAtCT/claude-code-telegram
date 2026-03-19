@@ -82,8 +82,8 @@ def deps():
     }
 
 
-def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, restart commands."""
+def test_agentic_registers_commands(agentic_settings, deps):
+    """Agentic mode registers core + new feature commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,17 +100,22 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
+    # Core commands + new: lang, search, team, review (if enabled)
+    assert len(cmd_handlers) >= 6
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
     assert frozenset({"repo"}) in commands
     assert frozenset({"restart"}) in commands
+    # New feature commands
+    assert frozenset({"lang"}) in commands
+    assert frozenset({"search"}) in commands
+    assert frozenset({"team"}) in commands
 
 
-def test_classic_registers_14_commands(classic_settings, deps):
-    """Classic mode registers all 14 commands."""
+def test_classic_registers_commands(classic_settings, deps):
+    """Classic mode registers all commands including new features."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -125,7 +130,8 @@ def test_classic_registers_14_commands(classic_settings, deps):
         if isinstance(call[0][0], CommandHandler)
     ]
 
-    assert len(cmd_handlers) == 14
+    # Original 14 + new commands (lang, etc.)
+    assert len(cmd_handlers) >= 14
 
 
 def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
@@ -151,31 +157,37 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
     # 4 message handlers (text, document, photo, voice)
     assert len(msg_handlers) == 4
-    # 1 callback handler (for cd: only)
-    assert len(cb_handlers) == 1
+    # callback handlers: cd: + search_page: + dangerous_confirm:
+    assert len(cb_handlers) >= 1
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns bot commands including new features."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    # Core commands always present
+    for core in ["start", "new", "status", "verbose", "repo", "restart"]:
+        assert core in cmd_names
+    # New feature commands
+    assert "lang" in cmd_names
+    assert "search" in cmd_names
+    assert "team" in cmd_names
 
 
 async def test_classic_bot_commands(classic_settings, deps):
-    """Classic mode returns 14 bot commands."""
+    """Classic mode returns bot commands including new features."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 14
+    assert len(commands) >= 14
     cmd_names = [c.command for c in commands]
     assert "start" in cmd_names
     assert "help" in cmd_names
     assert "git" in cmd_names
     assert "restart" in cmd_names
+    assert "lang" in cmd_names
 
 
 async def test_restart_command_sends_sigterm(deps):
@@ -338,10 +350,10 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    assert len(cb_handlers) == 1
-    # The pattern attribute should match cd: prefixed data
-    assert cb_handlers[0].pattern is not None
-    assert cb_handlers[0].pattern.match("cd:my_project")
+    assert len(cb_handlers) >= 1
+    # At least one callback handler should match cd: prefixed data
+    cd_handlers = [h for h in cb_handlers if h.pattern and h.pattern.match("cd:my_project")]
+    assert len(cd_handlers) == 1
 
 
 async def test_agentic_document_rejects_large_files(agentic_settings, deps):

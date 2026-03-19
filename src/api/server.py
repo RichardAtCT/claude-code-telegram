@@ -9,12 +9,20 @@ from typing import Any, Dict, Optional
 
 import structlog
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 
+from ..claude.facade import ClaudeIntegration
 from ..config.settings import Settings
 from ..events.bus import EventBus
 from ..events.types import WebhookEvent
 from ..storage.database import DatabaseManager
-from .auth import verify_github_signature, verify_shared_secret
+from .auth import (
+    verify_bitbucket_signature,
+    verify_github_signature,
+    verify_gitlab_token,
+    verify_shared_secret,
+)
+from .metrics import MetricsCollector
 
 logger = structlog.get_logger()
 
@@ -23,6 +31,7 @@ def create_api_app(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    claude_integration: Optional[ClaudeIntegration] = None,
 ) -> FastAPI:
     """Create the FastAPI application."""
 
@@ -36,6 +45,13 @@ def create_api_app(
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}
+
+    # Prometheus-compatible metrics endpoint
+    if settings.enable_metrics:
+        @app.get("/metrics", response_class=PlainTextResponse)
+        async def metrics() -> str:
+            collector = MetricsCollector()
+            return collector.render_prometheus()
 
     @app.post("/webhooks/{provider}")
     async def receive_webhook(
@@ -66,6 +82,41 @@ def create_api_app(
 
             event_type_name = x_github_event or "unknown"
             delivery_id = x_github_delivery or str(uuid.uuid4())
+
+        elif provider == "gitlab":
+            secret = settings.gitlab_webhook_secret
+            if not secret:
+                raise HTTPException(
+                    status_code=500,
+                    detail="GitLab webhook secret not configured",
+                )
+            gitlab_token = request.headers.get("X-Gitlab-Token", "")
+            if not verify_gitlab_token(gitlab_token, secret):
+                logger.warning("GitLab webhook token verification failed")
+                raise HTTPException(status_code=401, detail="Invalid token")
+
+            event_type_name = request.headers.get("X-Gitlab-Event", "unknown")
+            delivery_id = request.headers.get(
+                "X-Gitlab-Delivery", str(uuid.uuid4())
+            )
+
+        elif provider == "bitbucket":
+            secret = settings.bitbucket_webhook_secret
+            if not secret:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Bitbucket webhook secret not configured",
+                )
+            hub_signature = request.headers.get("X-Hub-Signature", "")
+            if not verify_bitbucket_signature(body, hub_signature, secret):
+                logger.warning("Bitbucket webhook signature verification failed")
+                raise HTTPException(status_code=401, detail="Invalid signature")
+
+            event_type_name = request.headers.get("X-Event-Key", "unknown")
+            delivery_id = request.headers.get(
+                "X-Request-UUID", str(uuid.uuid4())
+            )
+
         else:
             # Generic provider — require auth (fail-closed)
             secret = settings.webhook_api_secret
@@ -130,6 +181,20 @@ def create_api_app(
 
         return {"status": "accepted", "event_id": event.id}
 
+    # Mount dashboard if enabled
+    if settings.enable_dashboard and db_manager:
+        from .dashboard import create_dashboard_router
+
+        dashboard_router = create_dashboard_router(db_manager, settings)
+        app.include_router(dashboard_router)
+        logger.info("Dashboard mounted at /dashboard")
+
+    # Mount A2A protocol routes if enabled
+    if settings.enable_a2a and claude_integration:
+        from ..a2a.server import setup_a2a_server
+
+        setup_a2a_server(app, claude_integration, settings)
+
     return app
 
 
@@ -176,11 +241,12 @@ async def run_api_server(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    claude_integration: Optional[ClaudeIntegration] = None,
 ) -> None:
     """Run the FastAPI server using uvicorn."""
     import uvicorn
 
-    app = create_api_app(event_bus, settings, db_manager)
+    app = create_api_app(event_bus, settings, db_manager, claude_integration)
 
     config = uvicorn.Config(
         app=app,

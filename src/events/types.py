@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from .bus import Event
 
@@ -52,3 +52,14 @@ class AgentResponseEvent(Event):
     reply_to_message_id: Optional[int] = None
     source: str = "agent"
     originating_event_id: Optional[str] = None
+
+
+@dataclass
+class AlertEvent(Event):
+    """An alert triggered by a threshold breach or security violation."""
+
+    alert_type: str = ""
+    severity: Literal["info", "warning", "critical"] = "info"
+    message: str = ""
+    details: Dict[str, Any] = field(default_factory=dict)
+    source: str = "alert_manager"

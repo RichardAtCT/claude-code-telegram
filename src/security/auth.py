@@ -139,6 +139,111 @@ class InMemoryTokenStorage(TokenStorage):
         self._tokens.pop(user_id, None)
 
 
+class SQLiteTokenStorage(TokenStorage):
+    """SQLite-backed token storage for production use."""
+
+    def __init__(self, db_manager: "DatabaseManager") -> None:
+        from src.storage.database import DatabaseManager as _DM  # noqa: F811
+
+        self.db: _DM = db_manager
+        logger.info("SQLite token storage initialized")
+
+    async def store_token(
+        self, user_id: int, token_hash: str, expires_at: datetime
+    ) -> None:
+        """Store token hash in database.
+
+        Deactivates any existing active tokens for the user before inserting.
+        """
+        try:
+            async with self.db.get_connection() as conn:
+                # Deactivate existing tokens for this user
+                await conn.execute(
+                    "UPDATE user_tokens SET is_active = FALSE WHERE user_id = ?",
+                    (user_id,),
+                )
+                # Insert new token
+                await conn.execute(
+                    """
+                    INSERT INTO user_tokens
+                    (user_id, token_hash, created_at, expires_at, is_active)
+                    VALUES (?, ?, ?, ?, TRUE)
+                    """,
+                    (user_id, token_hash, datetime.now(UTC), expires_at),
+                )
+                await conn.commit()
+
+            logger.info("Token stored in database", user_id=user_id)
+        except Exception as e:
+            logger.error(
+                "Failed to store token",
+                user_id=user_id,
+                error=str(e),
+            )
+            raise
+
+    async def get_user_token(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get active, non-expired token data from database."""
+        try:
+            async with self.db.get_connection() as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT token_hash, created_at, expires_at
+                    FROM user_tokens
+                    WHERE user_id = ? AND is_active = TRUE
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (user_id, datetime.now(UTC)),
+                )
+                row = await cursor.fetchone()
+
+                if not row:
+                    return None
+
+                row_dict = dict(row)
+                # Parse datetime fields that may come back as strings
+                created_at = row_dict["created_at"]
+                if isinstance(created_at, str):
+                    created_at = datetime.fromisoformat(created_at)
+                expires_at = row_dict["expires_at"]
+                if isinstance(expires_at, str):
+                    expires_at = datetime.fromisoformat(expires_at)
+
+                return {
+                    "hash": row_dict["token_hash"],
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                }
+        except Exception as e:
+            logger.error(
+                "Failed to get user token",
+                user_id=user_id,
+                error=str(e),
+            )
+            return None
+
+    async def revoke_token(self, user_id: int) -> None:
+        """Revoke all active tokens for user."""
+        try:
+            async with self.db.get_connection() as conn:
+                await conn.execute(
+                    "UPDATE user_tokens SET is_active = FALSE WHERE user_id = ?",
+                    (user_id,),
+                )
+                await conn.commit()
+
+            logger.info("Token revoked in database", user_id=user_id)
+        except Exception as e:
+            logger.error(
+                "Failed to revoke token",
+                user_id=user_id,
+                error=str(e),
+            )
+            raise
+
+
 class TokenAuthProvider(AuthProvider):
     """Token-based authentication."""
 

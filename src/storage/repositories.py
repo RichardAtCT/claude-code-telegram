@@ -7,8 +7,9 @@ Features:
 """
 
 import json
+import uuid
 from datetime import UTC, datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import structlog
 
@@ -19,6 +20,9 @@ from .models import (
     MessageModel,
     ProjectThreadModel,
     SessionModel,
+    SharedProjectModel,
+    TeamMemberModel,
+    TeamModel,
     ToolUsageModel,
     UserModel,
 )
@@ -829,3 +833,219 @@ class AnalyticsRepository:
                 "tool_stats": tool_stats,
                 "daily_activity": daily_activity,
             }
+
+
+class HistoryRepository:
+    """Search and browse conversation history."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def search_messages(
+        self,
+        user_id: int,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Search messages by prompt/response content using SQL LIKE.
+
+        Returns dicts with: message_id, session_id, timestamp, prompt_snippet,
+        response_snippet, cost.
+        """
+        like_query = f"%{query}%"
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT message_id, session_id, timestamp, prompt, response, cost
+                FROM messages
+                WHERE user_id = ?
+                  AND (prompt LIKE ? OR response LIKE ?)
+                ORDER BY timestamp DESC
+                LIMIT ? OFFSET ?
+            """,
+                (user_id, like_query, like_query, limit, offset),
+            )
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                data = dict(row)
+                # Create snippets
+                prompt_text = data.get("prompt", "") or ""
+                response_text = data.get("response", "") or ""
+                data["prompt_snippet"] = prompt_text[:150]
+                data["response_snippet"] = response_text[:150]
+                results.append(data)
+            return results
+
+    async def count_search_results(self, user_id: int, query: str) -> int:
+        """Count total matching messages for pagination."""
+        like_query = f"%{query}%"
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT COUNT(*) FROM messages
+                WHERE user_id = ?
+                  AND (prompt LIKE ? OR response LIKE ?)
+            """,
+                (user_id, like_query, like_query),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def get_conversation_history(
+        self,
+        user_id: int,
+        session_id: str,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Get full conversation history for a session."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT message_id, session_id, timestamp, prompt, response, cost
+                FROM messages
+                WHERE user_id = ? AND session_id = ?
+                ORDER BY timestamp ASC
+                LIMIT ?
+            """,
+                (user_id, session_id, limit),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+class TeamRepository:
+    """Team and collaboration data access."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def create_team(self, name: str, created_by: int) -> TeamModel:
+        """Create a new team and add creator as 'creator' role."""
+        team_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO teams (team_id, name, created_by, created_at)
+                VALUES (?, ?, ?, ?)
+            """,
+                (team_id, name, created_by, now),
+            )
+            # Add creator as member with 'creator' role
+            await conn.execute(
+                """
+                INSERT INTO team_members (team_id, user_id, role, joined_at)
+                VALUES (?, ?, 'creator', ?)
+            """,
+                (team_id, created_by, now),
+            )
+            await conn.commit()
+
+        logger.info("Team created", team_id=team_id, name=name, created_by=created_by)
+        return TeamModel(
+            team_id=team_id,
+            name=name,
+            created_by=created_by,
+            created_at=now,
+        )
+
+    async def add_member(
+        self, team_id: str, user_id: int, role: str = "member"
+    ) -> None:
+        """Add a member to a team."""
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO team_members (team_id, user_id, role, joined_at)
+                VALUES (?, ?, ?, ?)
+            """,
+                (team_id, user_id, role, datetime.now(UTC)),
+            )
+            await conn.commit()
+
+    async def remove_member(self, team_id: str, user_id: int) -> None:
+        """Remove a member from a team."""
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                DELETE FROM team_members
+                WHERE team_id = ? AND user_id = ? AND role != 'creator'
+            """,
+                (team_id, user_id),
+            )
+            await conn.commit()
+
+    async def get_team_members(self, team_id: str) -> List[TeamMemberModel]:
+        """Get all members of a team."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT team_id, user_id, role, joined_at
+                FROM team_members
+                WHERE team_id = ?
+                ORDER BY joined_at ASC
+            """,
+                (team_id,),
+            )
+            rows = await cursor.fetchall()
+            return [TeamMemberModel.from_row(row) for row in rows]
+
+    async def get_user_teams(self, user_id: int) -> List[TeamModel]:
+        """Get all teams a user belongs to."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT t.team_id, t.name, t.created_by, t.created_at
+                FROM teams t
+                JOIN team_members tm ON t.team_id = tm.team_id
+                WHERE tm.user_id = ?
+                ORDER BY t.created_at DESC
+            """,
+                (user_id,),
+            )
+            rows = await cursor.fetchall()
+            return [TeamModel.from_row(row) for row in rows]
+
+    async def share_project(
+        self, team_id: str, project_path: str
+    ) -> SharedProjectModel:
+        """Share a project with a team. Creates a shared session ID."""
+        shared_session_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO shared_projects (team_id, project_path, shared_session_id, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(team_id, project_path) DO UPDATE SET
+                    shared_session_id = excluded.shared_session_id
+            """,
+                (team_id, project_path, shared_session_id, now),
+            )
+            await conn.commit()
+
+        return SharedProjectModel(
+            team_id=team_id,
+            project_path=project_path,
+            shared_session_id=shared_session_id,
+            created_at=now,
+        )
+
+    async def get_shared_projects(
+        self, team_id: str
+    ) -> List[SharedProjectModel]:
+        """Get all shared projects for a team."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT team_id, project_path, shared_session_id, created_at
+                FROM shared_projects
+                WHERE team_id = ?
+                ORDER BY created_at DESC
+            """,
+                (team_id,),
+            )
+            rows = await cursor.fetchall()
+            return [SharedProjectModel.from_row(row) for row in rows]

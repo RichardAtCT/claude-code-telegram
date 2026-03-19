@@ -311,3 +311,75 @@ class UserTokenModel:
         if not self.expires_at:
             return False
         return datetime.now(UTC) > self.expires_at
+
+
+@dataclass
+class TeamModel:
+    """Team data model for multi-user collaboration."""
+
+    team_id: str
+    name: str
+    created_by: int
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        data = asdict(self)
+        if data["created_at"]:
+            data["created_at"] = data["created_at"].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "TeamModel":
+        """Create from database row."""
+        data = dict(row)
+        data["created_at"] = _parse_datetime(data.get("created_at"))
+        return cls(**data)
+
+
+@dataclass
+class TeamMemberModel:
+    """Team member data model."""
+
+    team_id: str
+    user_id: int
+    role: str = "member"
+    joined_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        data = asdict(self)
+        if data["joined_at"]:
+            data["joined_at"] = data["joined_at"].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "TeamMemberModel":
+        """Create from database row."""
+        data = dict(row)
+        data["joined_at"] = _parse_datetime(data.get("joined_at"))
+        return cls(**data)
+
+
+@dataclass
+class SharedProjectModel:
+    """Shared project data model."""
+
+    team_id: str
+    project_path: str
+    shared_session_id: str
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        data = asdict(self)
+        if data["created_at"]:
+            data["created_at"] = data["created_at"].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "SharedProjectModel":
+        """Create from database row."""
+        data = dict(row)
+        data["created_at"] = _parse_datetime(data.get("created_at"))
+        return cls(**data)

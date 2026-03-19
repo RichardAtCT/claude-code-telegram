@@ -23,13 +23,14 @@ from src.events.bus import EventBus
 from src.events.handlers import AgentHandler
 from src.events.middleware import EventSecurityMiddleware
 from src.exceptions import ConfigurationError
+from src.notifications.alerts import AlertManager
 from src.notifications.service import NotificationService
 from src.projects import ProjectThreadManager, load_project_registry
 from src.scheduler.scheduler import JobScheduler
-from src.security.audit import AuditLogger, InMemoryAuditStorage
+from src.security.audit import AuditLogger, SQLiteAuditStorage
 from src.security.auth import (
     AuthenticationManager,
-    InMemoryTokenStorage,
+    SQLiteTokenStorage,
     TokenAuthProvider,
     WhitelistAuthProvider,
 )
@@ -112,7 +113,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     # Add token provider if enabled
     if config.enable_token_auth:
-        token_storage = InMemoryTokenStorage()  # TODO: Use database storage
+        token_storage = SQLiteTokenStorage(storage.db_manager)
         providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
 
     # Fall back to allowing all users in development mode
@@ -133,7 +134,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     rate_limiter = RateLimiter(config)
 
     # Create audit storage and logger
-    audit_storage = InMemoryAuditStorage()  # TODO: Use database storage in production
+    audit_storage = SQLiteAuditStorage(storage.db_manager)
     audit_logger = AuditLogger(audit_storage)
 
     # Create Claude integration components with persistent storage
@@ -170,6 +171,17 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     agent_handler.register()
 
+    # A2A client components (if enabled)
+    a2a_client_manager = None
+    a2a_registry = None
+    if config.enable_a2a:
+        from src.a2a.client import A2AClientManager
+        from src.a2a.registry import AgentRegistry
+
+        a2a_client_manager = A2AClientManager()
+        a2a_registry = AgentRegistry()
+        logger.info("A2A client components initialized")
+
     # Create bot with all dependencies
     dependencies = {
         "auth_manager": auth_manager,
@@ -181,6 +193,8 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        "a2a_client_manager": a2a_client_manager,
+        "a2a_registry": a2a_registry,
     }
 
     bot = ClaudeCodeBot(config, dependencies)
@@ -201,6 +215,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "agent_handler": agent_handler,
         "auth_manager": auth_manager,
         "security_validator": security_validator,
+        "a2a_client_manager": a2a_client_manager,
     }
 
 
@@ -289,6 +304,22 @@ async def run_application(app: Dict[str, Any]) -> None:
         notification_service.register()
         await notification_service.start()
 
+        # Alert manager
+        alert_manager = AlertManager(
+            bot=telegram_bot,
+            event_bus=event_bus,
+            admin_chat_ids=config.alert_admin_chat_ids or [],
+            cost_threshold_per_user=config.alert_cost_threshold_per_user,
+            cost_threshold_global=config.alert_cost_threshold_global,
+            error_rate_threshold=config.alert_error_rate_threshold,
+            cooldown_seconds=config.alert_cooldown_seconds,
+        )
+        bot.deps["alert_manager"] = alert_manager
+        logger.info(
+            "Alert manager initialized",
+            admin_chat_ids=config.alert_admin_chat_ids,
+        )
+
         # Collect concurrent tasks
         tasks = []
 
@@ -301,10 +332,17 @@ async def run_application(app: Dict[str, Any]) -> None:
             from src.api.server import run_api_server
 
             api_task = asyncio.create_task(
-                run_api_server(event_bus, config, storage.db_manager)
+                run_api_server(
+                    event_bus, config, storage.db_manager, claude_integration
+                )
             )
             tasks.append(api_task)
             logger.info("API server enabled", port=config.api_server_port)
+            if features.a2a_enabled:
+                logger.info(
+                    "A2A protocol enabled",
+                    agent_card_url=f"http://localhost:{config.api_server_port}/.well-known/agent-card.json",
+                )
 
         # Scheduler (if enabled)
         if features.scheduler_enabled:
@@ -358,6 +396,10 @@ async def run_application(app: Dict[str, Any]) -> None:
                 await notification_service.stop()
             await event_bus.stop()
             await bot.stop()
+            # Cleanup A2A client connections
+            a2a_mgr = app.get("a2a_client_manager")
+            if a2a_mgr and hasattr(a2a_mgr, "cleanup"):
+                await a2a_mgr.cleanup()
             await claude_integration.shutdown()
             await storage.close()
         except Exception as e:

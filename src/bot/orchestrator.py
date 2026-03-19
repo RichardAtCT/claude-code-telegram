@@ -30,6 +30,7 @@ from telegram.ext import (
 
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
+from ..i18n import SUPPORTED_LANGUAGES, get_user_lang, LANG_NAMES, t
 from ..projects import PrivateTopicsUnavailableError
 from .utils.draft_streamer import DraftStreamer, generate_draft_id
 from .utils.html_format import escape_html
@@ -38,6 +39,7 @@ from .utils.image_extractor import (
     should_send_as_photo,
     validate_image_path,
 )
+from .utils.progress import ProgressTracker
 
 logger = structlog.get_logger()
 
@@ -307,10 +309,26 @@ class MessageOrchestrator:
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("lang", self.agentic_lang),
             ("restart", command.restart_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
+
+        # Code review command
+        if self.settings.enable_code_review:
+            handlers.append(("review", self.agentic_review))
+
+        # A2A client commands
+        if self.settings.enable_a2a:
+            handlers.append(("agent", self.agentic_agent_call))
+            handlers.append(("agents", self.agentic_agents_manage))
+
+        # History search
+        handlers.append(("search", self.agentic_search))
+
+        # Team collaboration
+        handlers.append(("team", self.agentic_team))
 
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
@@ -352,6 +370,22 @@ class MessageOrchestrator:
             )
         )
 
+        # Dangerous operation confirmation callbacks
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._agentic_dangerous_confirm_callback),
+                pattern=r"^dangerous_confirm:",
+            )
+        )
+
+        # Search pagination callbacks
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._agentic_search_page_callback),
+                pattern=r"^search_page:",
+            )
+        )
+
         logger.info("Agentic handlers registered")
 
     def _register_classic_handlers(self, app: Application) -> None:
@@ -372,6 +406,7 @@ class MessageOrchestrator:
             ("export", command.export_session),
             ("actions", command.quick_actions),
             ("git", command.git_command),
+            ("lang", self.agentic_lang),
             ("restart", command.restart_command),
         ]
         if self.settings.enable_project_threads:
@@ -412,34 +447,38 @@ class MessageOrchestrator:
         if self.settings.agentic_mode:
             commands = [
                 BotCommand("start", "Start the bot"),
-                BotCommand("new", "Start a fresh session"),
-                BotCommand("status", "Show session status"),
-                BotCommand("verbose", "Set output verbosity (0/1/2)"),
-                BotCommand("repo", "List repos / switch workspace"),
-                BotCommand("restart", "Restart the bot"),
+                BotCommand("new", t("cmd.new")),
+                BotCommand("status", t("cmd.status")),
+                BotCommand("verbose", t("cmd.verbose")),
+                BotCommand("repo", t("cmd.repo")),
+                BotCommand("lang", t("cmd.lang")),
+                BotCommand("search", "Search conversation history"),
+                BotCommand("team", "Team collaboration commands"),
+                BotCommand("restart", t("cmd.restart")),
             ]
             if self.settings.enable_project_threads:
-                commands.append(BotCommand("sync_threads", "Sync project topics"))
+                commands.append(BotCommand("sync_threads", t("cmd.sync_threads")))
             return commands
         else:
             commands = [
-                BotCommand("start", "Start bot and show help"),
-                BotCommand("help", "Show available commands"),
-                BotCommand("new", "Clear context and start fresh session"),
-                BotCommand("continue", "Explicitly continue last session"),
-                BotCommand("end", "End current session and clear context"),
-                BotCommand("ls", "List files in current directory"),
-                BotCommand("cd", "Change directory (resumes project session)"),
-                BotCommand("pwd", "Show current directory"),
-                BotCommand("projects", "Show all projects"),
-                BotCommand("status", "Show session status"),
-                BotCommand("export", "Export current session"),
-                BotCommand("actions", "Show quick actions"),
-                BotCommand("git", "Git repository commands"),
-                BotCommand("restart", "Restart the bot"),
+                BotCommand("start", t("cmd.start")),
+                BotCommand("help", t("cmd.help")),
+                BotCommand("new", t("cmd.new")),
+                BotCommand("continue", t("cmd.continue")),
+                BotCommand("end", t("cmd.end")),
+                BotCommand("ls", t("cmd.ls")),
+                BotCommand("cd", t("cmd.cd")),
+                BotCommand("pwd", t("cmd.pwd")),
+                BotCommand("projects", t("cmd.projects")),
+                BotCommand("status", t("cmd.status")),
+                BotCommand("export", t("cmd.export")),
+                BotCommand("actions", t("cmd.actions")),
+                BotCommand("git", t("cmd.git")),
+                BotCommand("lang", t("cmd.lang")),
+                BotCommand("restart", t("cmd.restart")),
             ]
             if self.settings.enable_project_threads:
-                commands.append(BotCommand("sync_threads", "Sync project topics"))
+                commands.append(BotCommand("sync_threads", t("cmd.sync_threads")))
             return commands
 
     # --- Agentic handlers ---
@@ -449,6 +488,7 @@ class MessageOrchestrator:
     ) -> None:
         """Brief welcome, no buttons."""
         user = update.effective_user
+        lang = get_user_lang(context)
         sync_line = ""
         if (
             self.settings.enable_project_threads
@@ -459,8 +499,7 @@ class MessageOrchestrator:
                 or getattr(update.effective_chat, "type", "") != "private"
             ):
                 await update.message.reply_text(
-                    "🚫 <b>Private Topics Mode</b>\n\n"
-                    "Use this bot in a private chat and run <code>/start</code> there.",
+                    t("start.private_topics_mode", lang),
                     parse_mode="HTML",
                 )
                 return
@@ -471,9 +510,9 @@ class MessageOrchestrator:
                         context.bot,
                         chat_id=update.effective_chat.id,
                     )
-                    sync_line = (
-                        "\n\n🧵 Topics synced"
-                        f" (created {result.created}, reused {result.reused})."
+                    sync_line = t(
+                        "start.topics_synced", lang,
+                        created=result.created, reused=result.reused,
                     )
                 except PrivateTopicsUnavailableError:
                     await update.message.reply_text(
@@ -482,7 +521,7 @@ class MessageOrchestrator:
                     )
                     return
                 except Exception:
-                    sync_line = "\n\n🧵 Topic sync failed. Run /sync_threads to retry."
+                    sync_line = t("start.topic_sync_failed", lang)
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
@@ -490,11 +529,8 @@ class MessageOrchestrator:
 
         safe_name = escape_html(user.first_name)
         await update.message.reply_text(
-            f"Hi {safe_name}! I'm your AI coding assistant.\n"
-            f"Just tell me what you need — I can read, write, and run code.\n\n"
-            f"Working in: {dir_display}\n"
-            f"Commands: /new (reset) · /status"
-            f"{sync_line}",
+            t("start.welcome", lang, name=safe_name, dir_display=dir_display)
+            + sync_line,
             parse_mode="HTML",
         )
 
@@ -506,12 +542,14 @@ class MessageOrchestrator:
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
 
-        await update.message.reply_text("Session reset. What's next?")
+        lang = get_user_lang(context)
+        await update.message.reply_text(t("new.reset", lang))
 
     async def agentic_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Compact one-line status, no buttons."""
+        lang = get_user_lang(context)
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
@@ -528,13 +566,73 @@ class MessageOrchestrator:
                 user_status = rate_limiter.get_user_status(update.effective_user.id)
                 cost_usage = user_status.get("cost_usage", {})
                 current_cost = cost_usage.get("current", 0.0)
-                cost_str = f" · Cost: ${current_cost:.2f}"
+                cost_str = f" \u00b7 Cost: ${current_cost:.2f}"
             except Exception:
                 pass
 
         await update.message.reply_text(
-            f"📂 {dir_display} · Session: {session_status}{cost_str}"
+            t("status.line", lang,
+              dir_display=dir_display, session_status=session_status,
+              cost_str=cost_str)
         )
+
+    async def agentic_review(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Manually trigger a code review: /review <pr_url>."""
+        args = update.message.text.split()[1:] if update.message.text else []
+        if not args:
+            await update.message.reply_text(
+                "Usage: <code>/review &lt;pr_url&gt;</code>\n\n"
+                "Supports GitHub, GitLab, and Bitbucket PR/MR URLs.",
+                parse_mode="HTML",
+            )
+            return
+
+        pr_url = args[0]
+        await update.message.reply_text("Reviewing PR... this may take a moment.")
+
+        try:
+            from .features.code_review import CodeReviewManager
+
+            claude_integration = context.bot_data.get("claude_integration")
+            if not claude_integration:
+                await update.message.reply_text("Claude integration not available.")
+                return
+
+            current_dir = context.user_data.get(
+                "current_directory", self.settings.approved_directory
+            )
+
+            manager = CodeReviewManager(claude_integration)
+
+            # Build a prompt that asks Claude to fetch and review the PR
+            review_prompt = (
+                f"Please review the pull request at: {pr_url}\n\n"
+                "Fetch the diff if possible, then analyze the changes. "
+                "Provide a structured code review with:\n"
+                "1. A summary of the changes\n"
+                "2. Any issues found (with file, line, severity)\n"
+                "3. Suggestions for improvement\n"
+                "4. An approval recommendation (approve/request_changes/comment)"
+            )
+
+            result = await manager.review_pr(
+                repo_path=current_dir,
+                pr_diff=None,
+                pr_title=f"PR from {pr_url}",
+                pr_description=review_prompt,
+            )
+
+            formatted = result.format_telegram_message()
+            await update.message.reply_text(formatted, parse_mode="HTML")
+
+        except Exception as e:
+            logger.exception("Code review failed", pr_url=pr_url)
+            await update.message.reply_text(
+                f"Code review failed: {escape_html(str(e))}",
+                parse_mode="HTML",
+            )
 
     def _get_verbose_level(self, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Return effective verbose level: per-user override or global default."""
@@ -547,16 +645,14 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Set output verbosity: /verbose [0|1|2]."""
+        lang = get_user_lang(context)
         args = update.message.text.split()[1:] if update.message.text else []
         if not args:
             current = self._get_verbose_level(context)
-            labels = {0: "quiet", 1: "normal", 2: "detailed"}
+            label_keys = {0: "verbose.quiet", 1: "verbose.normal", 2: "verbose.detailed"}
+            label = t(label_keys.get(current, "verbose.normal"), lang)
             await update.message.reply_text(
-                f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
-                "Usage: <code>/verbose 0|1|2</code>\n"
-                "  0 = quiet (final response only)\n"
-                "  1 = normal (tools + reasoning)\n"
-                "  2 = detailed (tools with inputs + reasoning)",
+                t("verbose.current", lang, level=current, label=label),
                 parse_mode="HTML",
             )
             return
@@ -566,15 +662,46 @@ class MessageOrchestrator:
             if level not in (0, 1, 2):
                 raise ValueError
         except ValueError:
-            await update.message.reply_text(
-                "Please use: /verbose 0, /verbose 1, or /verbose 2"
-            )
+            await update.message.reply_text(t("verbose.invalid", lang))
             return
 
         context.user_data["verbose_level"] = level
-        labels = {0: "quiet", 1: "normal", 2: "detailed"}
+        label_keys = {0: "verbose.quiet", 1: "verbose.normal", 2: "verbose.detailed"}
+        label = t(label_keys[level], lang)
         await update.message.reply_text(
-            f"Verbosity set to <b>{level}</b> ({labels[level]})",
+            t("verbose.set", lang, level=level, label=label),
+            parse_mode="HTML",
+        )
+
+    async def agentic_lang(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Set user language preference: /lang [en|zh]."""
+        lang = get_user_lang(context)
+        args = update.message.text.split()[1:] if update.message.text else []
+
+        if not args:
+            lang_name = LANG_NAMES.get(lang, lang)
+            await update.message.reply_text(
+                t("lang.current", lang, lang_name=lang_name),
+                parse_mode="HTML",
+            )
+            return
+
+        new_lang = args[0].lower().strip()
+        if new_lang not in SUPPORTED_LANGUAGES:
+            supported = ", ".join(SUPPORTED_LANGUAGES)
+            await update.message.reply_text(
+                t("lang.invalid", lang, lang=escape_html(new_lang),
+                  supported=supported),
+                parse_mode="HTML",
+            )
+            return
+
+        context.user_data["language"] = new_lang
+        lang_name = LANG_NAMES.get(new_lang, new_lang)
+        await update.message.reply_text(
+            t("lang.set", new_lang, lang_name=lang_name),
             parse_mode="HTML",
         )
 
@@ -583,13 +710,22 @@ class MessageOrchestrator:
         activity_log: List[Dict[str, Any]],
         verbose_level: int,
         start_time: float,
+        progress_tracker: Optional[ProgressTracker] = None,
     ) -> str:
         """Build the progress message text based on activity so far."""
         if not activity_log:
             return "Working..."
 
         elapsed = time.time() - start_time
-        lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
+
+        # Use ProgressTracker stage header when available
+        if progress_tracker:
+            progress_tracker.check_review_transition()
+            header = progress_tracker.format_progress()
+        else:
+            header = f"Working... ({elapsed:.0f}s)"
+
+        lines: List[str] = [header + "\n"]
 
         for entry in activity_log[-15:]:  # Show last 15 entries max
             kind = entry.get("kind", "tool")
@@ -699,6 +835,7 @@ class MessageOrchestrator:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
+        tracker = ProgressTracker(start_time=start_time)
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
             # Intercept send_image_to_user MCP tool calls.
@@ -719,11 +856,14 @@ class MessageOrchestrator:
                         if img:
                             mcp_images.append(img)
 
-            # Capture tool calls
+            # Capture tool calls and update progress stage
             if update_obj.tool_calls:
                 for tc in update_obj.tool_calls:
                     name = tc.get("name", "unknown")
-                    detail = self._summarize_tool_input(name, tc.get("input", {}))
+                    tc_input = tc.get("input", {})
+                    detail = self._summarize_tool_input(name, tc_input)
+                    # Update progress tracker with each tool call
+                    tracker.update_stage(name, tc_input)
                     if verbose_level >= 1:
                         tool_log.append(
                             {"kind": "tool", "name": name, "detail": detail}
@@ -762,7 +902,8 @@ class MessageOrchestrator:
                 if (now - last_edit_time[0]) >= 2.0 and tool_log:
                     last_edit_time[0] = now
                     new_text = self._format_verbose_progress(
-                        tool_log, verbose_level, start_time
+                        tool_log, verbose_level, start_time,
+                        progress_tracker=tracker,
                     )
                     try:
                         await progress_msg.edit_text(new_text)
@@ -866,6 +1007,7 @@ class MessageOrchestrator:
         """Direct Claude passthrough. Simple progress. No suggestions."""
         user_id = update.effective_user.id
         message_text = update.message.text
+        lang = get_user_lang(context)
 
         logger.info(
             "Agentic text message",
@@ -878,20 +1020,20 @@ class MessageOrchestrator:
         if rate_limiter:
             allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.001)
             if not allowed:
-                await update.message.reply_text(f"⏱️ {limit_message}")
+                await update.message.reply_text(
+                    t("error.rate_limited", lang, message=limit_message)
+                )
                 return
 
         chat = update.message.chat
         await chat.send_action("typing")
 
         verbose_level = self._get_verbose_level(context)
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text(t("progress.working", lang))
 
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
-            )
+            await progress_msg.edit_text(t("error.claude_unavailable", lang))
             return
 
         current_dir = context.user_data.get(
@@ -1086,6 +1228,7 @@ class MessageOrchestrator:
         """Process file upload -> Claude, minimal chrome."""
         user_id = update.effective_user.id
         document = update.message.document
+        lang = get_user_lang(context)
 
         logger.info(
             "Agentic document upload",
@@ -1098,20 +1241,23 @@ class MessageOrchestrator:
         if security_validator:
             valid, error = security_validator.validate_filename(document.file_name)
             if not valid:
-                await update.message.reply_text(f"File rejected: {error}")
+                await update.message.reply_text(
+                    t("error.file_rejected", lang, error=error)
+                )
                 return
 
         # Size check
         max_size = 10 * 1024 * 1024
         if document.file_size > max_size:
             await update.message.reply_text(
-                f"File too large ({document.file_size / 1024 / 1024:.1f}MB). Max: 10MB."
+                t("error.file_too_large", lang,
+                  size=f"{document.file_size / 1024 / 1024:.1f}")
             )
             return
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text(t("progress.working", lang))
 
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
@@ -1142,17 +1288,13 @@ class MessageOrchestrator:
                     f"```\n{content}\n```"
                 )
             except UnicodeDecodeError:
-                await progress_msg.edit_text(
-                    "Unsupported file format. Must be text-based (UTF-8)."
-                )
+                await progress_msg.edit_text(t("error.unsupported_format", lang))
                 return
 
         # Process with Claude
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
-            )
+            await progress_msg.edit_text(t("error.claude_unavailable", lang))
             return
 
         current_dir = context.user_data.get(
@@ -1264,17 +1406,18 @@ class MessageOrchestrator:
     ) -> None:
         """Process photo -> Claude, minimal chrome."""
         user_id = update.effective_user.id
+        lang = get_user_lang(context)
 
         features = context.bot_data.get("features")
         image_handler = features.get_image_handler() if features else None
 
         if not image_handler:
-            await update.message.reply_text("Photo processing is not available.")
+            await update.message.reply_text(t("error.photo_unavailable", lang))
             return
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Working...")
+        progress_msg = await update.message.reply_text(t("progress.working", lang))
 
         try:
             photo = update.message.photo[-1]
@@ -1303,17 +1446,18 @@ class MessageOrchestrator:
     ) -> None:
         """Transcribe voice message -> Claude, minimal chrome."""
         user_id = update.effective_user.id
+        lang = get_user_lang(context)
 
         features = context.bot_data.get("features")
         voice_handler = features.get_voice_handler() if features else None
 
         if not voice_handler:
-            await update.message.reply_text(self._voice_unavailable_message())
+            await update.message.reply_text(self._voice_unavailable_message(lang))
             return
 
         chat = update.message.chat
         await chat.send_action("typing")
-        progress_msg = await update.message.reply_text("Transcribing...")
+        progress_msg = await update.message.reply_text(t("progress.transcribing", lang))
 
         try:
             voice = update.message.voice
@@ -1321,7 +1465,7 @@ class MessageOrchestrator:
                 voice, update.message.caption
             )
 
-            await progress_msg.edit_text("Working...")
+            await progress_msg.edit_text(t("progress.working", lang))
             await self._handle_agentic_media_message(
                 update=update,
                 context=context,
@@ -1350,11 +1494,10 @@ class MessageOrchestrator:
         chat: Any,
     ) -> None:
         """Run a media-derived prompt through Claude and send responses."""
+        lang = get_user_lang(context)
         claude_integration = context.bot_data.get("claude_integration")
         if not claude_integration:
-            await progress_msg.edit_text(
-                "Claude integration not available. Check configuration."
-            )
+            await progress_msg.edit_text(t("error.claude_unavailable", lang))
             return
 
         current_dir = context.user_data.get(
@@ -1450,13 +1593,12 @@ class MessageOrchestrator:
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
 
-    def _voice_unavailable_message(self) -> str:
+    def _voice_unavailable_message(self, lang: str = "en") -> str:
         """Return provider-aware guidance when voice feature is unavailable."""
-        return (
-            "Voice processing is not available. "
-            f"Set {self.settings.voice_provider_api_key_env} "
-            f"for {self.settings.voice_provider_display_name} and install "
-            'voice extras with: pip install "claude-code-telegram[voice]"'
+        return t(
+            "voice.unavailable", lang,
+            api_key_env=self.settings.voice_provider_api_key_env,
+            provider_name=self.settings.voice_provider_display_name,
         )
 
     async def agentic_repo(
@@ -1467,6 +1609,7 @@ class MessageOrchestrator:
         /repo          — list subdirectories with git indicators
         /repo <name>   — switch to that directory, resume session if available
         """
+        lang = get_user_lang(context)
         args = update.message.text.split()[1:] if update.message.text else []
         base = self.settings.approved_directory
         current_dir = context.user_data.get("current_directory", base)
@@ -1477,7 +1620,8 @@ class MessageOrchestrator:
             target_path = base / target_name
             if not target_path.is_dir():
                 await update.message.reply_text(
-                    f"Directory not found: <code>{escape_html(target_name)}</code>",
+                    t("error.dir_not_found", lang,
+                      name=escape_html(target_name)),
                     parse_mode="HTML",
                 )
                 return
@@ -1496,12 +1640,13 @@ class MessageOrchestrator:
             context.user_data["claude_session_id"] = session_id
 
             is_git = (target_path / ".git").is_dir()
-            git_badge = " (git)" if is_git else ""
-            session_badge = " · session resumed" if session_id else ""
+            git_badge = t("repo.git_badge", lang) if is_git else ""
+            session_badge = t("repo.session_resumed", lang) if session_id else ""
 
             await update.message.reply_text(
-                f"Switched to <code>{escape_html(target_name)}/</code>"
-                f"{git_badge}{session_badge}",
+                t("repo.switched", lang,
+                  name=escape_html(target_name),
+                  git_badge=git_badge, session_badge=session_badge),
                 parse_mode="HTML",
             )
             return
@@ -1517,13 +1662,15 @@ class MessageOrchestrator:
                 key=lambda d: d.name,
             )
         except OSError as e:
-            await update.message.reply_text(f"Error reading workspace: {e}")
+            await update.message.reply_text(
+                t("error.workspace_read", lang, error=str(e))
+            )
             return
 
         if not entries:
             await update.message.reply_text(
-                f"No repos in <code>{escape_html(str(base))}</code>.\n"
-                'Clone one by telling me, e.g. <i>"clone org/repo"</i>.',
+                t("repo.no_repos", lang,
+                  path=escape_html(str(base))),
                 parse_mode="HTML",
             )
             return
@@ -1550,7 +1697,7 @@ class MessageOrchestrator:
         reply_markup = InlineKeyboardMarkup(keyboard_rows)
 
         await update.message.reply_text(
-            "<b>Repos</b>\n\n" + "\n".join(lines),
+            t("repo.title", lang) + "\n\n" + "\n".join(lines),
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
@@ -1559,6 +1706,7 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Handle cd: callbacks — switch directory and resume session if available."""
+        lang = get_user_lang(context)
         query = update.callback_query
         await query.answer()
 
@@ -1570,7 +1718,8 @@ class MessageOrchestrator:
 
         if not new_path.is_dir():
             await query.edit_message_text(
-                f"Directory not found: <code>{escape_html(project_name)}</code>",
+                t("error.dir_not_found", lang,
+                  name=escape_html(project_name)),
                 parse_mode="HTML",
             )
             return
@@ -1589,12 +1738,13 @@ class MessageOrchestrator:
         context.user_data["claude_session_id"] = session_id
 
         is_git = (new_path / ".git").is_dir()
-        git_badge = " (git)" if is_git else ""
-        session_badge = " · session resumed" if session_id else ""
+        git_badge = t("repo.git_badge", lang) if is_git else ""
+        session_badge = t("repo.session_resumed", lang) if session_id else ""
 
         await query.edit_message_text(
-            f"Switched to <code>{escape_html(project_name)}/</code>"
-            f"{git_badge}{session_badge}",
+            t("repo.switched", lang,
+              name=escape_html(project_name),
+              git_badge=git_badge, session_badge=session_badge),
             parse_mode="HTML",
         )
 
@@ -1607,3 +1757,480 @@ class MessageOrchestrator:
                 args=[project_name],
                 success=True,
             )
+
+    # ---- A2A client handlers ----
+
+    async def agentic_agent_call(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Call a registered remote A2A agent.
+
+        Usage: /agent <alias> <message>
+        """
+        if not update.message or not update.message.text:
+            return
+
+        lang = get_user_lang(context)
+        parts = update.message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            await update.message.reply_text(
+                t("a2a.agent_usage", lang),
+                parse_mode="HTML",
+            )
+            return
+
+        alias = parts[1]
+        message_text = parts[2]
+
+        registry = context.bot_data.get("a2a_registry")
+        client_manager = context.bot_data.get("a2a_client_manager")
+        if not registry or not client_manager:
+            await update.message.reply_text(t("error.a2a_not_enabled", lang))
+            return
+
+        user_id = update.effective_user.id
+        agent = registry.get(user_id, alias)
+        if not agent:
+            await update.message.reply_text(
+                t("a2a.agent_not_found", lang,
+                  alias=escape_html(alias)),
+                parse_mode="HTML",
+            )
+            return
+
+        await update.effective_chat.send_action("typing")
+
+        try:
+            response_text = await client_manager.send_message(
+                agent.url, message_text
+            )
+            if len(response_text) > 4000:
+                response_text = response_text[:4000] + "\n\n... (truncated)"
+
+            header = f"\U0001f916 <b>{escape_html(agent.name or alias)}</b>:\n\n"
+            await update.message.reply_text(
+                header + escape_html(response_text),
+                parse_mode="HTML",
+            )
+        except ValueError as e:
+            await update.message.reply_text(
+                f"\u274c {escape_html(str(e))}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error("A2A agent call failed", alias=alias, error=str(e))
+            await update.message.reply_text(
+                t("a2a.call_failed", lang,
+                  alias=escape_html(alias),
+                  error=escape_html(str(e)[:500])),
+                parse_mode="HTML",
+            )
+
+    async def agentic_agents_manage(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Manage registered A2A agents.
+
+        /agents              -- list registered agents
+        /agents add <alias> <url>  -- register a new agent
+        /agents remove <alias>     -- remove an agent
+        """
+        if not update.message or not update.message.text:
+            return
+
+        lang = get_user_lang(context)
+        registry = context.bot_data.get("a2a_registry")
+        client_manager = context.bot_data.get("a2a_client_manager")
+        if not registry or not client_manager:
+            await update.message.reply_text(t("error.a2a_not_enabled", lang))
+            return
+
+        user_id = update.effective_user.id
+        parts = update.message.text.split()
+
+        # /agents (list)
+        if len(parts) == 1:
+            agents = registry.list_agents(user_id)
+            if not agents:
+                await update.message.reply_text(
+                    t("a2a.no_agents", lang),
+                    parse_mode="HTML",
+                )
+                return
+
+            lines = [t("a2a.agents_title", lang)]
+            for a in agents:
+                name_str = f" ({escape_html(a.name)})" if a.name else ""
+                lines.append(
+                    f"\u2022 <code>{escape_html(a.alias)}</code>{name_str}\n"
+                    f"  {escape_html(a.url)}"
+                )
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML"
+            )
+            return
+
+        action = parts[1].lower()
+
+        # /agents add <alias> <url>
+        if action == "add" and len(parts) >= 4:
+            alias = parts[2]
+            url = parts[3]
+
+            await update.effective_chat.send_action("typing")
+
+            try:
+                # URL validation happens inside resolve_agent (SSRF protection)
+                card = await client_manager.resolve_agent(url)
+                agent = await registry.register(
+                    user_id=user_id,
+                    alias=alias,
+                    url=url,
+                    name=card.name,
+                    description=card.description,
+                )
+                await update.message.reply_text(
+                    t("a2a.agent_registered", lang,
+                      alias=escape_html(alias),
+                      name=escape_html(agent.name or "N/A"),
+                      url=escape_html(url)),
+                    parse_mode="HTML",
+                )
+            except ValueError as e:
+                await update.message.reply_text(
+                    f"\u274c {escape_html(str(e))}",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to resolve A2A agent card",
+                    url=url,
+                    error=str(e),
+                )
+                await update.message.reply_text(
+                    t("a2a.resolve_failed", lang,
+                      error=escape_html(str(e)[:500])),
+                    parse_mode="HTML",
+                )
+            return
+
+        # /agents remove <alias>
+        if action == "remove" and len(parts) >= 3:
+            alias = parts[2]
+            if await registry.unregister(user_id, alias):
+                await client_manager.clear_cache()
+                await update.message.reply_text(
+                    t("a2a.agent_removed", lang,
+                      alias=escape_html(alias)),
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(
+                    t("a2a.agent_not_exists", lang,
+                      alias=escape_html(alias)),
+                    parse_mode="HTML",
+                )
+            return
+
+        # Unknown sub-command
+        await update.message.reply_text(
+            t("a2a.agents_usage", lang),
+            parse_mode="HTML",
+        )
+
+    # ---- Search handler ----
+
+    async def agentic_search(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Search conversation history.
+
+        /search <query> — search past conversations
+        """
+        if not update.message or not update.message.text:
+            return
+
+        parts = update.message.text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            await update.message.reply_text(
+                "<b>Usage:</b> <code>/search &lt;query&gt;</code>\n\n"
+                "Search your past conversations by keyword.",
+                parse_mode="HTML",
+            )
+            return
+
+        search_query = parts[1].strip()
+        user_id = update.effective_user.id
+        page_size = 5
+
+        db_manager = context.bot_data.get("db_manager")
+        if not db_manager:
+            await update.message.reply_text(
+                "Database is not available for search."
+            )
+            return
+
+        from ..storage.repositories import HistoryRepository
+
+        history_repo = HistoryRepository(db_manager)
+
+        total_count = await history_repo.count_search_results(user_id, search_query)
+        if total_count == 0:
+            await update.message.reply_text(
+                f"\U0001f50d No results found for "
+                f"<code>{escape_html(search_query)}</code>.",
+                parse_mode="HTML",
+            )
+            return
+
+        results = await history_repo.search_messages(
+            user_id, search_query, limit=page_size, offset=0
+        )
+
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+
+        # Format results
+        lines = [
+            f"\U0001f50d <b>Search:</b> <code>{escape_html(search_query)}</code>"
+            f" (page 1/{total_pages}, {total_count} results)\n"
+        ]
+        for r in results:
+            ts = r.get("timestamp", "")
+            if hasattr(ts, "strftime"):
+                ts = ts.strftime("%Y-%m-%d %H:%M")
+            prompt_snippet = escape_html(r.get("prompt_snippet", "")[:80])
+            lines.append(f"\u2022 <i>{ts}</i>\n  {prompt_snippet}")
+
+        # Pagination keyboard (only if more than one page)
+        reply_markup = None
+        if total_pages > 1:
+            buttons = [
+                InlineKeyboardButton(
+                    "1/" + str(total_pages),
+                    callback_data=f"search_page:{search_query}:0",
+                ),
+                InlineKeyboardButton(
+                    "\u27a1\ufe0f Next",
+                    callback_data=f"search_page:{search_query}:1",
+                ),
+            ]
+            reply_markup = InlineKeyboardMarkup([buttons])
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+
+    # ---- Team collaboration handlers ----
+
+    async def agentic_team(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Team collaboration commands.
+
+        /team create <name>          — create a team
+        /team invite <user_id>       — invite a member
+        /team list                   — list your teams
+        /team projects               — list shared projects
+        /team share <project_path>   — share a project with team
+        """
+        if not update.message or not update.message.text:
+            return
+
+        parts = update.message.text.split()
+        user_id = update.effective_user.id
+
+        if len(parts) < 2:
+            await update.message.reply_text(
+                "\U0001f465 <b>Team Commands</b>\n\n"
+                "<code>/team create &lt;name&gt;</code> — create a team\n"
+                "<code>/team invite &lt;user_id&gt;</code> — invite a member\n"
+                "<code>/team list</code> — list your teams\n"
+                "<code>/team projects</code> — list shared projects\n"
+                "<code>/team share &lt;project_path&gt;</code> — share a project",
+                parse_mode="HTML",
+            )
+            return
+
+        collaboration_manager = context.bot_data.get("collaboration_manager")
+        if not collaboration_manager:
+            await update.message.reply_text(
+                "Team collaboration is not configured. "
+                "Ensure database is available."
+            )
+            return
+
+        action = parts[1].lower()
+
+        if action == "create":
+            if len(parts) < 3:
+                await update.message.reply_text(
+                    "<b>Usage:</b> <code>/team create &lt;name&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+            team_name = " ".join(parts[2:])
+            team_id = await collaboration_manager.create_team(team_name, user_id)
+            await update.message.reply_text(
+                f"\u2705 Team <b>{escape_html(team_name)}</b> created.\n"
+                f"ID: <code>{escape_html(team_id[:12])}...</code>\n\n"
+                f"Invite members with:\n"
+                f"<code>/team invite &lt;user_id&gt;</code>",
+                parse_mode="HTML",
+            )
+
+        elif action == "invite":
+            if len(parts) < 3:
+                await update.message.reply_text(
+                    "<b>Usage:</b> <code>/team invite &lt;user_id&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                target_user_id = int(parts[2])
+            except ValueError:
+                await update.message.reply_text(
+                    "Invalid user ID. Must be a number.",
+                )
+                return
+
+            # Find user's teams — use the first one they created
+            teams = await collaboration_manager.get_user_teams(user_id)
+            if not teams:
+                await update.message.reply_text(
+                    "You don't belong to any teams. "
+                    "Create one first with <code>/team create &lt;name&gt;</code>.",
+                    parse_mode="HTML",
+                )
+                return
+
+            team = teams[0]  # Use the most recent team
+            success = await collaboration_manager.invite_member(
+                team.team_id, target_user_id, user_id
+            )
+            if success:
+                await update.message.reply_text(
+                    f"\u2705 User <code>{target_user_id}</code> added to "
+                    f"team <b>{escape_html(team.name)}</b>.",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(
+                    "Failed to add member. You may not have permission, "
+                    "or the user is already a member.",
+                )
+
+        elif action == "list":
+            teams = await collaboration_manager.get_user_teams(user_id)
+            if not teams:
+                await update.message.reply_text(
+                    "\U0001f465 You don't belong to any teams.\n"
+                    "Create one: <code>/team create &lt;name&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+            lines = ["\U0001f465 <b>Your Teams</b>\n"]
+            for t in teams:
+                members = await collaboration_manager.get_team_members(t.team_id)
+                lines.append(
+                    f"\u2022 <b>{escape_html(t.name)}</b> "
+                    f"({len(members)} members)\n"
+                    f"  ID: <code>{escape_html(t.team_id[:12])}...</code>"
+                )
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML"
+            )
+
+        elif action == "projects":
+            teams = await collaboration_manager.get_user_teams(user_id)
+            if not teams:
+                await update.message.reply_text(
+                    "You don't belong to any teams.",
+                )
+                return
+
+            lines = ["\U0001f4c2 <b>Shared Projects</b>\n"]
+            found = False
+            for t in teams:
+                projects = await collaboration_manager.get_shared_projects(t.team_id)
+                if projects:
+                    found = True
+                    lines.append(f"\n<b>{escape_html(t.name)}</b>:")
+                    for p in projects:
+                        lines.append(
+                            f"  \u2022 <code>{escape_html(p.project_path)}</code>"
+                        )
+            if not found:
+                lines.append("<i>No shared projects yet.</i>")
+
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML"
+            )
+
+        elif action == "share":
+            if len(parts) < 3:
+                await update.message.reply_text(
+                    "<b>Usage:</b> <code>/team share &lt;project_path&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+            project_path = parts[2]
+            teams = await collaboration_manager.get_user_teams(user_id)
+            if not teams:
+                await update.message.reply_text(
+                    "You don't belong to any teams.",
+                )
+                return
+
+            team = teams[0]
+            shared = await collaboration_manager.share_project(
+                team.team_id, project_path, user_id
+            )
+            if shared:
+                await update.message.reply_text(
+                    f"\u2705 Project <code>{escape_html(project_path)}</code> "
+                    f"shared with team <b>{escape_html(team.name)}</b>.\n"
+                    f"Shared session: <code>{escape_html(shared.shared_session_id[:12])}...</code>",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(
+                    "Failed to share project. Check your team membership.",
+                )
+
+        else:
+            await update.message.reply_text(
+                "\U0001f465 <b>Unknown team action.</b>\n\n"
+                "Available: create, invite, list, projects, share",
+                parse_mode="HTML",
+            )
+
+    # ---- Confirmation & search callbacks for agentic mode ----
+
+    async def _agentic_dangerous_confirm_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle dangerous_confirm: callbacks in agentic mode."""
+        from .handlers.callback import handle_dangerous_confirm_callback
+
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        # Strip the "dangerous_confirm:" prefix
+        _, param = data.split(":", 1)
+        await handle_dangerous_confirm_callback(query, param, context)
+
+    async def _agentic_search_page_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle search_page: callbacks in agentic mode."""
+        from .handlers.callback import handle_search_page_callback
+
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        _, param = data.split(":", 1)
+        await handle_search_page_callback(query, param, context)

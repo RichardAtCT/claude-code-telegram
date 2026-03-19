@@ -61,11 +61,13 @@ async def handle_callback_query(
             "cd": handle_cd_callback,
             "action": handle_action_callback,
             "confirm": handle_confirm_callback,
+            "dangerous_confirm": handle_dangerous_confirm_callback,
             "quick": handle_quick_action_callback,
             "followup": handle_followup_callback,
             "conversation": handle_conversation_callback,
             "git": handle_git_callback,
             "export": handle_export_callback,
+            "search_page": handle_search_page_callback,
         }
 
         handler = handlers.get(action)
@@ -1314,3 +1316,180 @@ def _escape_markdown(text: str) -> str:
     Legacy name kept for compatibility with callers; actually escapes HTML.
     """
     return escape_html(text)
+
+
+async def handle_dangerous_confirm_callback(
+    query, param: str, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle confirmation responses for dangerous operations.
+
+    callback_data format: dangerous_confirm:<confirmation_id>:<yes|no>
+    """
+    if not param or ":" not in param:
+        await query.edit_message_text(
+            "\u274c <b>Invalid confirmation data.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    confirmation_id, response = param.rsplit(":", 1)
+    approved = response == "yes"
+
+    confirmation_manager = context.bot_data.get("confirmation_manager")
+    if not confirmation_manager:
+        await query.edit_message_text(
+            "\u274c <b>Confirmation system unavailable.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    pending = confirmation_manager.handle_response(confirmation_id, approved)
+    if not pending:
+        await query.edit_message_text(
+            "\u23f0 <b>Confirmation Expired</b>\n\n"
+            "This confirmation has expired or was already processed.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Verify the responding user matches the original requester
+    if pending.user_id != query.from_user.id:
+        await query.edit_message_text(
+            "\u274c <b>Permission Denied</b>\n\n"
+            "Only the original requester can respond to this confirmation.",
+            parse_mode="HTML",
+        )
+        return
+
+    if approved:
+        await query.edit_message_text(
+            "\u2705 <b>Approved</b>\n\n"
+            f"Action <code>{escape_html(pending.tool_name)}</code> has been approved.\n"
+            "The operation will proceed.",
+            parse_mode="HTML",
+        )
+    else:
+        await query.edit_message_text(
+            "\u274c <b>Denied</b>\n\n"
+            f"Action <code>{escape_html(pending.tool_name)}</code> was denied.\n"
+            "The operation has been cancelled.",
+            parse_mode="HTML",
+        )
+
+    logger.info(
+        "Dangerous operation confirmation",
+        confirmation_id=confirmation_id,
+        approved=approved,
+        user_id=query.from_user.id,
+        tool=pending.tool_name,
+    )
+
+
+async def handle_search_page_callback(
+    query, param: str, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle search result pagination.
+
+    callback_data format: search_page:<query>:<page_num>
+    """
+    if not param or ":" not in param:
+        await query.edit_message_text(
+            "\u274c <b>Invalid search pagination data.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Split on last colon to get page number
+    search_query, page_str = param.rsplit(":", 1)
+    try:
+        page = int(page_str)
+    except ValueError:
+        await query.edit_message_text(
+            "\u274c <b>Invalid page number.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    user_id = query.from_user.id
+    page_size = 5
+    offset = page * page_size
+
+    storage = context.bot_data.get("storage")
+    if not storage:
+        await query.edit_message_text(
+            "\u274c <b>Storage unavailable.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Import here to avoid circular dependency
+    from ...storage.repositories import HistoryRepository
+
+    db_manager = context.bot_data.get("db_manager")
+    if not db_manager:
+        await query.edit_message_text(
+            "\u274c <b>Database unavailable.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    history_repo = HistoryRepository(db_manager)
+
+    total_count = await history_repo.count_search_results(user_id, search_query)
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+
+    results = await history_repo.search_messages(
+        user_id, search_query, limit=page_size, offset=page * page_size
+    )
+
+    if not results:
+        await query.edit_message_text(
+            "\U0001f50d <b>No results found.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    # Format results
+    lines = [
+        f"\U0001f50d <b>Search: </b><code>{escape_html(search_query)}</code>"
+        f" (page {page + 1}/{total_pages}, {total_count} results)\n"
+    ]
+
+    for r in results:
+        ts = r.get("timestamp", "")
+        if hasattr(ts, "strftime"):
+            ts = ts.strftime("%Y-%m-%d %H:%M")
+        prompt_snippet = escape_html(r.get("prompt_snippet", "")[:80])
+        lines.append(f"\u2022 <i>{ts}</i>\n  {prompt_snippet}")
+
+    # Pagination keyboard
+    buttons = []
+    if page > 0:
+        buttons.append(
+            InlineKeyboardButton(
+                "\u2b05\ufe0f Prev",
+                callback_data=f"search_page:{search_query}:{page - 1}",
+            )
+        )
+    buttons.append(
+        InlineKeyboardButton(
+            f"{page + 1}/{total_pages}",
+            callback_data=f"search_page:{search_query}:{page}",
+        )
+    )
+    if page < total_pages - 1:
+        buttons.append(
+            InlineKeyboardButton(
+                "\u27a1\ufe0f Next",
+                callback_data=f"search_page:{search_query}:{page + 1}",
+            )
+        )
+
+    keyboard = InlineKeyboardMarkup([buttons])
+
+    await query.edit_message_text(
+        "\n".join(lines),
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )

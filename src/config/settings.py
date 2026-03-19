@@ -158,6 +158,12 @@ class Settings(BaseSettings):
     max_sessions_per_user: int = Field(
         DEFAULT_MAX_SESSIONS_PER_USER, description="Max concurrent sessions"
     )
+    db_pool_min_size: int = Field(
+        2, description="PostgreSQL connection pool minimum size"
+    )
+    db_pool_max_size: int = Field(
+        10, description="PostgreSQL connection pool maximum size"
+    )
 
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
@@ -201,6 +207,32 @@ class Settings(BaseSettings):
         description="Conversational agentic mode (default) vs classic command mode",
     )
 
+    # Internationalization
+    default_language: str = Field(
+        "en",
+        description="Default language for user-facing messages (en, zh)",
+    )
+    supported_languages: list = Field(
+        default=["en", "zh"],
+        description="List of supported language codes",
+    )
+
+    # Dangerous operation confirmation
+    enable_confirmations: bool = Field(
+        True,
+        description="Prompt user before executing dangerous operations",
+    )
+    confirmation_timeout_seconds: int = Field(
+        60,
+        description="Seconds before a confirmation request expires",
+        ge=10,
+        le=300,
+    )
+    dangerous_patterns: Optional[List[str]] = Field(
+        None,
+        description="Additional regex patterns to flag as dangerous (bash commands)",
+    )
+
     # Reply quoting
     reply_quote: bool = Field(
         True,
@@ -234,10 +266,45 @@ class Settings(BaseSettings):
         le=5.0,
     )
 
+    # Dashboard
+    enable_dashboard: bool = Field(False, description="Enable web dashboard at /dashboard")
+    dashboard_username: Optional[str] = Field(
+        None, description="Dashboard basic auth username"
+    )
+    dashboard_password: Optional[str] = Field(
+        None, description="Dashboard basic auth password"
+    )
+
     # Monitoring
     log_level: str = Field("INFO", description="Logging level")
     enable_telemetry: bool = Field(False, description="Enable anonymous telemetry")
     sentry_dsn: Optional[str] = Field(None, description="Sentry DSN for error tracking")
+
+    # Metrics
+    enable_metrics: bool = Field(
+        False, description="Enable /metrics endpoint (Prometheus format)"
+    )
+    log_format: Literal["console", "json"] = Field(
+        "json",
+        description="Log output format: 'console' (human-readable) or 'json'",
+    )
+
+    # Graceful degradation / resilience
+    enable_graceful_degradation: bool = Field(
+        True, description="Enable circuit breaker and request queuing"
+    )
+    circuit_breaker_threshold: int = Field(
+        5, description="Consecutive failures before circuit opens"
+    )
+    circuit_breaker_cooldown_seconds: int = Field(
+        60, description="Seconds before circuit transitions from open to half-open"
+    )
+    max_queued_requests: int = Field(
+        100, description="Max pending requests when circuit is open"
+    )
+    retry_max_attempts: int = Field(
+        3, description="Max retry attempts for transient errors"
+    )
 
     # Development
     debug: bool = Field(False, description="Enable debug mode")
@@ -248,6 +315,48 @@ class Settings(BaseSettings):
     webhook_port: int = Field(8443, description="Webhook port")
     webhook_path: str = Field("/webhook", description="Webhook path")
 
+    # A2A (Agent-to-Agent) protocol settings
+    enable_a2a: bool = Field(False, description="Enable A2A protocol server and client")
+    a2a_agent_name: str = Field(
+        "claude-code-telegram", description="A2A agent display name"
+    )
+    a2a_agent_description: str = Field(
+        "Claude Code agent accessible via Telegram",
+        description="A2A agent card description",
+    )
+    a2a_agent_url: Optional[str] = Field(
+        None, description="Public URL for this A2A agent (for agent card discovery)"
+    )
+    a2a_api_token: Optional[str] = Field(
+        None,
+        description="Bearer token for A2A endpoint authentication (strongly recommended)",
+    )
+
+    # Plugin system
+    enable_plugins: bool = Field(False, description="Enable the plugin system")
+    plugins_directory: Optional[str] = Field(
+        None, description="Directory to scan for plugin modules"
+    )
+    enabled_plugins: Optional[List[str]] = Field(
+        None, description="List of plugin names to enable (None = all)"
+    )
+
+    # Cache layer
+    enable_cache: bool = Field(False, description="Enable the cache layer")
+    cache_backend: str = Field(
+        "memory",
+        description="Cache backend: 'memory' or 'redis'",
+    )
+    redis_url: Optional[str] = Field(
+        None, description="Redis URL for cache backend (e.g. redis://localhost:6379)"
+    )
+    cache_default_ttl: int = Field(
+        300, description="Default cache TTL in seconds"
+    )
+    cache_max_size: int = Field(
+        1000, description="Maximum number of entries for in-memory cache"
+    )
+
     # Agentic platform settings
     enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
     api_server_port: int = Field(8080, description="Webhook API server port")
@@ -255,11 +364,28 @@ class Settings(BaseSettings):
     github_webhook_secret: Optional[str] = Field(
         None, description="GitHub webhook HMAC secret"
     )
+    gitlab_webhook_secret: Optional[str] = Field(
+        None, description="GitLab webhook secret token"
+    )
+    bitbucket_webhook_secret: Optional[str] = Field(
+        None, description="Bitbucket webhook HMAC secret"
+    )
     webhook_api_secret: Optional[str] = Field(
         None, description="Shared secret for generic webhook providers"
     )
     notification_chat_ids: Optional[List[int]] = Field(
         None, description="Default Telegram chat IDs for proactive notifications"
+    )
+
+    # Code review
+    enable_code_review: bool = Field(
+        False, description="Enable automated code review feature"
+    )
+    code_review_auto: bool = Field(
+        False, description="Automatically review PRs/MRs from webhooks"
+    )
+    github_api_token: Optional[str] = Field(
+        None, description="GitHub API token for fetching PR diffs"
     )
     enable_project_threads: bool = Field(
         False,
@@ -283,11 +409,28 @@ class Settings(BaseSettings):
         ge=0.0,
     )
 
+    # Alert settings
+    alert_cost_threshold_per_user: float = Field(
+        10.0, description="Cost threshold per user before alert fires"
+    )
+    alert_cost_threshold_global: float = Field(
+        100.0, description="Global aggregate cost threshold before alert fires"
+    )
+    alert_error_rate_threshold: int = Field(
+        10, description="Number of errors in 5 minutes to trigger an alert"
+    )
+    alert_admin_chat_ids: Optional[List[int]] = Field(
+        None, description="Telegram chat IDs to receive alert notifications"
+    )
+    alert_cooldown_seconds: int = Field(
+        3600, description="Minimum seconds between repeated alerts of the same type"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", "notification_chat_ids", mode="before")
+    @field_validator("allowed_users", "notification_chat_ids", "alert_admin_chat_ids", mode="before")
     @classmethod
     def parse_int_list(cls, v: Any) -> Optional[List[int]]:
         """Parse comma-separated integer lists."""
@@ -301,10 +444,10 @@ class Settings(BaseSettings):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
-    @field_validator("claude_allowed_tools", mode="before")
+    @field_validator("claude_allowed_tools", "enabled_plugins", mode="before")
     @classmethod
     def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
-        """Parse comma-separated tool names."""
+        """Parse comma-separated string lists."""
         if v is None:
             return None
         if isinstance(v, str):

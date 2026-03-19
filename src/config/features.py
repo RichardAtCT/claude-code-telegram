@@ -85,6 +85,11 @@ class FeatureFlags:
         """Check if streaming drafts via sendMessageDraft is enabled."""
         return self.settings.enable_stream_drafts
 
+    @property
+    def a2a_enabled(self) -> bool:
+        """Check if A2A protocol is enabled (requires API server)."""
+        return self.settings.enable_a2a and self.settings.enable_api_server
+
     def is_feature_enabled(self, feature_name: str) -> bool:
         """Generic feature check by name."""
         feature_map = {
@@ -101,6 +106,7 @@ class FeatureFlags:
             "agentic_mode": self.agentic_mode_enabled,
             "voice_messages": self.voice_messages_enabled,
             "stream_drafts": self.stream_drafts_enabled,
+            "a2a": self.a2a_enabled,
         }
         return feature_map.get(feature_name, False)
 
@@ -131,4 +137,6 @@ class FeatureFlags:
             features.append("voice_messages")
         if self.stream_drafts_enabled:
             features.append("stream_drafts")
+        if self.a2a_enabled:
+            features.append("a2a")
         return features

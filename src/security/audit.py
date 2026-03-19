@@ -130,6 +130,177 @@ class InMemoryAuditStorage(AuditStorage):
         )
 
 
+class SQLiteAuditStorage(AuditStorage):
+    """SQLite-backed audit storage for production use."""
+
+    def __init__(self, db_manager: "DatabaseManager") -> None:
+        from src.storage.database import DatabaseManager as _DM  # noqa: F811
+
+        self.db: _DM = db_manager
+        logger.info("SQLite audit storage initialized")
+
+    async def store_event(self, event: AuditEvent) -> None:
+        """Store audit event in database."""
+        # Log high-risk events immediately regardless of DB outcome
+        if event.risk_level in ["high", "critical"]:
+            logger.warning(
+                "High-risk security event",
+                event_type=event.event_type,
+                user_id=event.user_id,
+                risk_level=event.risk_level,
+                details=event.details,
+            )
+
+        try:
+            # Pack extra fields (risk_level, session_id) into event_data
+            event_data = dict(event.details) if event.details else {}
+            event_data["risk_level"] = event.risk_level
+            if event.session_id:
+                event_data["session_id"] = event.session_id
+
+            async with self.db.get_connection() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO audit_log
+                    (user_id, event_type, event_data, success, timestamp, ip_address)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.user_id,
+                        event.event_type,
+                        json.dumps(event_data, default=str),
+                        event.success,
+                        event.timestamp,
+                        event.ip_address,
+                    ),
+                )
+                await conn.commit()
+        except Exception as e:
+            logger.error(
+                "Failed to store audit event",
+                event_type=event.event_type,
+                user_id=event.user_id,
+                error=str(e),
+            )
+
+    async def get_events(
+        self,
+        user_id: Optional[int] = None,
+        event_type: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> List[AuditEvent]:
+        """Retrieve audit events with filters from database."""
+        try:
+            conditions: List[str] = []
+            params: List[Any] = []
+
+            if user_id is not None:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+            if event_type is not None:
+                conditions.append("event_type = ?")
+                params.append(event_type)
+            if start_time is not None:
+                conditions.append("timestamp >= ?")
+                params.append(start_time)
+            if end_time is not None:
+                conditions.append("timestamp <= ?")
+                params.append(end_time)
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            query = f"""
+                SELECT * FROM audit_log
+                {where_clause}
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """
+            params.append(limit)
+
+            async with self.db.get_connection() as conn:
+                cursor = await conn.execute(query, params)
+                rows = await cursor.fetchall()
+
+            return [self._row_to_audit_event(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to get audit events", error=str(e))
+            return []
+
+    async def get_security_violations(
+        self, user_id: Optional[int] = None, limit: int = 100
+    ) -> List[AuditEvent]:
+        """Get security violation events from database."""
+        security_types = (
+            "security_violation",
+            "rate_limit_exceeded",
+        )
+        try:
+            conditions = [
+                "event_type IN ({})".format(",".join("?" for _ in security_types))
+            ]
+            params: List[Any] = list(security_types)
+
+            if user_id is not None:
+                conditions.append("user_id = ?")
+                params.append(user_id)
+
+            where_clause = "WHERE " + " AND ".join(conditions)
+            query = f"""
+                SELECT * FROM audit_log
+                {where_clause}
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """
+            params.append(limit)
+
+            async with self.db.get_connection() as conn:
+                cursor = await conn.execute(query, params)
+                rows = await cursor.fetchall()
+
+            return [self._row_to_audit_event(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to get security violations", error=str(e))
+            return []
+
+    @staticmethod
+    def _row_to_audit_event(row: Any) -> AuditEvent:
+        """Convert a database row to an AuditEvent."""
+        row_dict = dict(row)
+
+        # Parse event_data JSON
+        event_data: Dict[str, Any] = {}
+        raw = row_dict.get("event_data")
+        if raw:
+            try:
+                event_data = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                event_data = {}
+
+        # Extract risk_level and session_id from event_data (packed there on store)
+        risk_level = event_data.pop("risk_level", "low")
+        session_id = event_data.pop("session_id", None)
+
+        # Parse timestamp
+        ts = row_dict.get("timestamp")
+        if isinstance(ts, str):
+            ts = datetime.fromisoformat(ts)
+
+        return AuditEvent(
+            timestamp=ts,
+            user_id=row_dict["user_id"],
+            event_type=row_dict["event_type"],
+            success=bool(row_dict.get("success", True)),
+            details=event_data,
+            ip_address=row_dict.get("ip_address"),
+            session_id=session_id,
+            risk_level=risk_level,
+        )
+
+
 class AuditLogger:
     """Security audit logger."""
 

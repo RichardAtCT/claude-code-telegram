@@ -5,15 +5,85 @@ NotificationHandler: subscribes to AgentResponseEvent and delivers to Telegram.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
 
 from ..claude.facade import ClaudeIntegration
+from ..config.settings import Settings
 from .bus import Event, EventBus
 from .types import AgentResponseEvent, ScheduledEvent, WebhookEvent
 
 logger = structlog.get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Prompt templates for GitLab events
+# ---------------------------------------------------------------------------
+
+_GITLAB_TEMPLATES: Dict[str, str] = {
+    "Merge Request Hook": (
+        "A GitLab merge request event occurred.\n"
+        "Action: {action}\n"
+        "Title: {title}\n"
+        "Author: {author}\n"
+        "Source branch: {source_branch} -> Target branch: {target_branch}\n"
+        "URL: {url}\n\n"
+        "Description:\n{description}\n\n"
+        "Analyze this merge request and provide a concise summary. "
+        "Highlight anything that needs attention."
+    ),
+    "Push Hook": (
+        "A GitLab push event occurred.\n"
+        "Ref: {ref}\n"
+        "User: {user_name}\n"
+        "Commits: {commit_count}\n"
+        "Project: {project_name}\n\n"
+        "Recent commits:\n{commits_summary}\n\n"
+        "Summarize the changes pushed."
+    ),
+    "Pipeline Hook": (
+        "A GitLab pipeline event occurred.\n"
+        "Status: {status}\n"
+        "Ref: {ref}\n"
+        "Project: {project_name}\n"
+        "Pipeline ID: {pipeline_id}\n"
+        "URL: {pipeline_url}\n\n"
+        "Stages:\n{stages_summary}\n\n"
+        "Analyze this pipeline result. If it failed, highlight the failure details."
+    ),
+}
+
+# ---------------------------------------------------------------------------
+# Prompt templates for Bitbucket events
+# ---------------------------------------------------------------------------
+
+_BITBUCKET_TEMPLATES: Dict[str, str] = {
+    "pullrequest:created": (
+        "A Bitbucket pull request was created.\n"
+        "Title: {title}\n"
+        "Author: {author}\n"
+        "Source: {source_branch} -> Destination: {dest_branch}\n"
+        "URL: {url}\n\n"
+        "Description:\n{description}\n\n"
+        "Analyze this pull request and provide a concise summary."
+    ),
+    "pullrequest:updated": (
+        "A Bitbucket pull request was updated.\n"
+        "Title: {title}\n"
+        "Author: {author}\n"
+        "Source: {source_branch} -> Destination: {dest_branch}\n"
+        "URL: {url}\n\n"
+        "Analyze the update and highlight any notable changes."
+    ),
+    "repo:push": (
+        "A Bitbucket push event occurred.\n"
+        "Repository: {repo_name}\n"
+        "Actor: {actor}\n"
+        "Changes:\n{changes_summary}\n\n"
+        "Summarize the changes pushed."
+    ),
+}
 
 
 class AgentHandler:
@@ -30,11 +100,14 @@ class AgentHandler:
         claude_integration: ClaudeIntegration,
         default_working_directory: Path,
         default_user_id: int = 0,
+        settings: Optional[Settings] = None,
     ) -> None:
         self.event_bus = event_bus
         self.claude = claude_integration
         self.default_working_directory = default_working_directory
         self.default_user_id = default_user_id
+        self.settings = settings
+        self._code_review_manager: Optional[Any] = None
 
     def register(self) -> None:
         """Subscribe to events that need agent processing."""
@@ -52,6 +125,10 @@ class AgentHandler:
             event_type=event.event_type_name,
             delivery_id=event.delivery_id,
         )
+
+        # Check if this is a PR/MR event eligible for auto code review
+        if await self._try_auto_code_review(event):
+            return
 
         prompt = self._build_webhook_prompt(event)
 
@@ -80,6 +157,90 @@ class AgentHandler:
                 provider=event.provider,
                 event_id=event.id,
             )
+
+    async def _try_auto_code_review(self, event: WebhookEvent) -> bool:
+        """Attempt auto code review for PR/MR webhook events.
+
+        Returns True if auto-review was triggered (caller should skip
+        normal prompt handling), False otherwise.
+        """
+        if not self.settings:
+            return False
+        if not (self.settings.enable_code_review and self.settings.code_review_auto):
+            return False
+
+        # Detect PR/MR events across providers
+        is_pr_event = False
+        pr_diff: Optional[str] = None
+        pr_title = ""
+        pr_description = ""
+
+        if event.provider == "github" and event.event_type_name == "pull_request":
+            action = event.payload.get("action", "")
+            if action in ("opened", "synchronize"):
+                is_pr_event = True
+                pr = event.payload.get("pull_request", {})
+                pr_title = pr.get("title", "")
+                pr_description = pr.get("body", "") or ""
+
+        elif event.provider == "gitlab" and event.event_type_name in (
+            "Merge Request Hook",
+            "merge_request",
+        ):
+            attrs = event.payload.get("object_attributes", {})
+            action = attrs.get("action", "")
+            if action in ("open", "update"):
+                is_pr_event = True
+                pr_title = attrs.get("title", "")
+                pr_description = attrs.get("description", "") or ""
+
+        elif event.provider == "bitbucket" and event.event_type_name in (
+            "pullrequest:created",
+            "pullrequest:updated",
+        ):
+            is_pr_event = True
+            pr = event.payload.get("pullrequest", {})
+            pr_title = pr.get("title", "")
+            pr_description = pr.get("description", "") or ""
+
+        if not is_pr_event:
+            return False
+
+        logger.info(
+            "Auto code review triggered for PR/MR webhook",
+            provider=event.provider,
+            pr_title=pr_title,
+        )
+
+        try:
+            from ..bot.features.code_review import CodeReviewManager
+
+            if self._code_review_manager is None:
+                self._code_review_manager = CodeReviewManager(self.claude)
+
+            result = await self._code_review_manager.review_pr(
+                repo_path=self.default_working_directory,
+                pr_diff=pr_diff,
+                pr_title=pr_title,
+                pr_description=pr_description,
+            )
+
+            formatted = result.format_telegram_message()
+            await self.event_bus.publish(
+                AgentResponseEvent(
+                    chat_id=0,
+                    text=formatted,
+                    originating_event_id=event.id,
+                )
+            )
+            return True
+
+        except Exception:
+            logger.exception(
+                "Auto code review failed, falling back to normal handling",
+                provider=event.provider,
+            )
+            return False
 
     async def handle_scheduled(self, event: Event) -> None:
         """Process a scheduled event through Claude."""
@@ -135,6 +296,18 @@ class AgentHandler:
 
     def _build_webhook_prompt(self, event: WebhookEvent) -> str:
         """Build a Claude prompt from a webhook event."""
+        # Try provider-specific templates first
+        if event.provider == "gitlab":
+            prompt = self._build_gitlab_prompt(event)
+            if prompt:
+                return prompt
+
+        if event.provider == "bitbucket":
+            prompt = self._build_bitbucket_prompt(event)
+            if prompt:
+                return prompt
+
+        # Fallback to generic prompt
         payload_summary = self._summarize_payload(event.payload)
 
         return (
@@ -144,6 +317,92 @@ class AgentHandler:
             f"Analyze this event and provide a concise summary. "
             f"Highlight anything that needs my attention."
         )
+
+    def _build_gitlab_prompt(self, event: WebhookEvent) -> Optional[str]:
+        """Build a prompt from a GitLab webhook event."""
+        template = _GITLAB_TEMPLATES.get(event.event_type_name)
+        if not template:
+            return None
+
+        payload = event.payload
+        if event.event_type_name == "Merge Request Hook":
+            attrs = payload.get("object_attributes", {})
+            return template.format(
+                action=attrs.get("action", "unknown"),
+                title=attrs.get("title", ""),
+                author=payload.get("user", {}).get("name", "unknown"),
+                source_branch=attrs.get("source_branch", ""),
+                target_branch=attrs.get("target_branch", ""),
+                url=attrs.get("url", ""),
+                description=attrs.get("description", "") or "(none)",
+            )
+        elif event.event_type_name == "Push Hook":
+            commits = payload.get("commits", [])
+            commits_summary = "\n".join(
+                f"  - {c.get('message', '').splitlines()[0]}"
+                for c in commits[:5]
+            ) or "(no commits)"
+            return template.format(
+                ref=payload.get("ref", ""),
+                user_name=payload.get("user_name", "unknown"),
+                commit_count=payload.get("total_commits_count", len(commits)),
+                project_name=payload.get("project", {}).get("name", ""),
+                commits_summary=commits_summary,
+            )
+        elif event.event_type_name == "Pipeline Hook":
+            attrs = payload.get("object_attributes", {})
+            builds = payload.get("builds", [])
+            stages_summary = "\n".join(
+                f"  - {b.get('stage', '?')}: {b.get('status', '?')}"
+                for b in builds[:10]
+            ) or "(no stage details)"
+            return template.format(
+                status=attrs.get("status", "unknown"),
+                ref=attrs.get("ref", ""),
+                project_name=payload.get("project", {}).get("name", ""),
+                pipeline_id=attrs.get("id", ""),
+                pipeline_url=attrs.get("url", ""),
+                stages_summary=stages_summary,
+            )
+        return None
+
+    def _build_bitbucket_prompt(self, event: WebhookEvent) -> Optional[str]:
+        """Build a prompt from a Bitbucket webhook event."""
+        template = _BITBUCKET_TEMPLATES.get(event.event_type_name)
+        if not template:
+            return None
+
+        payload = event.payload
+        if event.event_type_name in (
+            "pullrequest:created",
+            "pullrequest:updated",
+        ):
+            pr = payload.get("pullrequest", {})
+            return template.format(
+                title=pr.get("title", ""),
+                author=pr.get("author", {}).get("display_name", "unknown"),
+                source_branch=pr.get("source", {})
+                .get("branch", {})
+                .get("name", ""),
+                dest_branch=pr.get("destination", {})
+                .get("branch", {})
+                .get("name", ""),
+                url=pr.get("links", {}).get("html", {}).get("href", ""),
+                description=pr.get("description", "") or "(none)",
+            )
+        elif event.event_type_name == "repo:push":
+            changes = payload.get("push", {}).get("changes", [])
+            changes_summary = "\n".join(
+                f"  - {c.get('new', {}).get('name', '?')}: "
+                f"{c.get('new', {}).get('type', '?')}"
+                for c in changes[:5]
+            ) or "(no change details)"
+            return template.format(
+                repo_name=payload.get("repository", {}).get("full_name", ""),
+                actor=payload.get("actor", {}).get("display_name", "unknown"),
+                changes_summary=changes_summary,
+            )
+        return None
 
     def _summarize_payload(self, payload: Dict[str, Any], max_depth: int = 2) -> str:
         """Create a readable summary of a webhook payload."""
