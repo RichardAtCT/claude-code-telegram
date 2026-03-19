@@ -848,6 +848,13 @@ class UserProfileRepository:
             row = await cursor.fetchone()
             return UserProfileModel.from_row(row) if row else None
 
+    async def list_all_profiles(self) -> list[UserProfileModel]:
+        """Return all user profiles."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute("SELECT * FROM user_profiles")
+            rows = await cursor.fetchall()
+            return [UserProfileModel.from_row(row) for row in rows]
+
     async def upsert_profile(self, profile: UserProfileModel) -> None:
         async with self.db.get_connection() as conn:
             await conn.execute(

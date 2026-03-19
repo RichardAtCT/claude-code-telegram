@@ -11,6 +11,10 @@ from typing import Any, Dict, Optional
 import structlog
 
 from src import __version__
+from src.assistant.briefing import BriefingAssembler
+from src.assistant.briefing_scheduler import BriefingScheduler
+from src.assistant.proactive_checkin import ProactiveCheckinScheduler
+from src.assistant.task_reminders import TaskReminderScheduler
 from src.bot.core import ClaudeCodeBot
 from src.claude import (
     ClaudeIntegration,
@@ -35,8 +39,6 @@ from src.security.auth import (
 )
 from src.security.rate_limiter import RateLimiter
 from src.security.validators import SecurityValidator
-from src.assistant.briefing import BriefingAssembler
-from src.assistant.briefing_scheduler import BriefingScheduler
 from src.storage.facade import Storage
 from src.storage.session_storage import SQLiteSessionStorage
 
@@ -164,17 +166,18 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     event_security.register()
 
+    # Create assistant components
+    briefing_assembler = BriefingAssembler(storage)
+
     # Agent handler — translates events into Claude executions
     agent_handler = AgentHandler(
         event_bus=event_bus,
         claude_integration=claude_integration,
         default_working_directory=config.approved_directory,
         default_user_id=config.allowed_users[0] if config.allowed_users else 0,
+        briefing_assembler=briefing_assembler,
     )
     agent_handler.register()
-
-    # Create assistant components
-    briefing_assembler = BriefingAssembler(storage)
 
     # Create bot with all dependencies
     dependencies = {
@@ -221,6 +224,7 @@ async def run_application(app: Dict[str, Any]) -> None:
     config: Settings = app["config"]
     features: FeatureFlags = app["features"]
     event_bus: EventBus = app["event_bus"]
+    agent_handler: AgentHandler = app["agent_handler"]
 
     notification_service: Optional[NotificationService] = None
     scheduler: Optional[JobScheduler] = None
@@ -323,6 +327,23 @@ async def run_application(app: Dict[str, Any]) -> None:
             )
             await scheduler.start()
             bot.deps["briefing_scheduler"] = BriefingScheduler(scheduler, storage)
+
+            # Task reminders
+            task_reminder = TaskReminderScheduler(
+                scheduler=scheduler,
+                storage=storage,
+                event_bus=event_bus,
+                notification_chat_ids=config.notification_chat_ids or [],
+            )
+            await task_reminder.start()
+            agent_handler.task_reminder = task_reminder
+
+            # Proactive check-ins (Garmin congrats, home alerts, etc.)
+            proactive_checkin = ProactiveCheckinScheduler(
+                scheduler=scheduler,
+                notification_chat_ids=config.notification_chat_ids or [],
+            )
+            await proactive_checkin.start()
             logger.info("Job scheduler enabled")
 
         # Shutdown task

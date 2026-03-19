@@ -5,15 +5,22 @@ NotificationHandler: subscribes to AgentResponseEvent and delivers to Telegram.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import structlog
 
+from ..assistant.task_reminders import _REMINDER_PROMPT_PREFIX
 from ..claude.facade import ClaudeIntegration
 from .bus import Event, EventBus
 from .types import AgentResponseEvent, ScheduledEvent, WebhookEvent
 
+if TYPE_CHECKING:
+    from ..assistant.briefing import BriefingAssembler
+    from ..assistant.task_reminders import TaskReminderScheduler
+
 logger = structlog.get_logger()
+
+_BRIEFING_PREFIX = "__BRIEFING__:"
 
 
 class AgentHandler:
@@ -30,11 +37,14 @@ class AgentHandler:
         claude_integration: ClaudeIntegration,
         default_working_directory: Path,
         default_user_id: int = 0,
+        briefing_assembler: Optional["BriefingAssembler"] = None,
     ) -> None:
         self.event_bus = event_bus
         self.claude = claude_integration
         self.default_working_directory = default_working_directory
         self.default_user_id = default_user_id
+        self.briefing_assembler = briefing_assembler
+        self.task_reminder: Optional["TaskReminderScheduler"] = None
 
     def register(self) -> None:
         """Subscribe to events that need agent processing."""
@@ -93,6 +103,26 @@ class AgentHandler:
         )
 
         prompt = event.prompt
+
+        # Intercept task reminder events — handle directly without Claude
+        if prompt == _REMINDER_PROMPT_PREFIX and self.task_reminder:
+            try:
+                await self.task_reminder.check_and_notify()
+            except Exception:
+                logger.exception("Task reminder check failed")
+            return
+
+        # Intercept briefing events — build a rich prompt for Claude
+        if prompt.startswith(_BRIEFING_PREFIX) and self.briefing_assembler:
+            user_id_str = prompt[len(_BRIEFING_PREFIX) :]
+            try:
+                user_id = int(user_id_str)
+                prompt = await self.briefing_assembler.build_prompt(user_id)
+                logger.info("Built briefing prompt for user", user_id=user_id)
+            except (ValueError, Exception):
+                logger.exception("Failed to build briefing prompt, using fallback")
+                # Fall through with original prompt
+
         if event.skill_name:
             prompt = (
                 f"/{event.skill_name}\n\n{prompt}" if prompt else f"/{event.skill_name}"
@@ -107,7 +137,8 @@ class AgentHandler:
                 user_id=self.default_user_id,
             )
 
-            if response.content:
+            # Skip delivery if Claude indicates nothing noteworthy
+            if response.content and "NOTHING_NOTABLE" not in response.content:
                 for chat_id in event.target_chat_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(

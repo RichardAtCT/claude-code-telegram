@@ -457,7 +457,7 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         opts = captured_options[0]
         assert str(tmp_path) in opts.system_prompt
-        assert "relative paths" in opts.system_prompt.lower()
+        assert "file" in opts.system_prompt.lower()
 
     async def test_disallowed_tools_passed_to_options(self, tmp_path):
         """Test that disallowed_tools from config are passed to ClaudeAgentOptions."""
@@ -1081,7 +1081,7 @@ class TestClaudeMdLoading:
             await sdk_manager.execute_command(prompt="test", working_directory=tmp_path)
 
         opts = captured[0]
-        assert "Use relative paths." in opts.system_prompt
+        assert "personal day-to-day assistant" in opts.system_prompt.lower()
         assert "# Project Rules" not in opts.system_prompt
 
     async def test_setting_sources_includes_project(self, sdk_manager, tmp_path):
