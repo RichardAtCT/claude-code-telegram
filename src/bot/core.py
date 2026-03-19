@@ -54,6 +54,10 @@ class ClaudeCodeBot:
         builder.defaults(Defaults(do_quote=self.settings.reply_quote))
         builder.rate_limiter(AIORateLimiter(max_retries=1))
 
+        from .update_processor import StopAwareUpdateProcessor
+
+        builder.concurrent_updates(StopAwareUpdateProcessor())
+
         # Configure connection settings
         builder.connect_timeout(30)
         builder.read_timeout(30)

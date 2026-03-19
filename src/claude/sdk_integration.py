@@ -53,6 +53,7 @@ class ClaudeResponse:
     is_error: bool = False
     error_type: Optional[str] = None
     tools_used: List[Dict[str, Any]] = field(default_factory=list)
+    interrupted: bool = False
 
 
 @dataclass
@@ -153,6 +154,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        interrupt_event: Optional[asyncio.Event] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -240,24 +242,14 @@ class ClaudeSDKManager:
 
             # Collect messages via ClaudeSDKClient
             messages: List[Message] = []
+            interrupted = False
 
             async def _run_client() -> None:
-                # Use connect(None) + query(prompt) pattern because
-                # can_use_tool requires the prompt as AsyncIterable, not
-                # a plain string. connect(None) uses an empty async
-                # iterable internally, satisfying the requirement.
                 client = ClaudeSDKClient(options)
                 try:
                     await client.connect()
                     await client.query(prompt)
 
-                    # Iterate over raw messages and parse them ourselves
-                    # so that MessageParseError (e.g. from rate_limit_event)
-                    # doesn't kill the underlying async generator. When
-                    # parse_message raises inside the SDK's receive_messages()
-                    # generator, Python terminates that generator permanently,
-                    # causing us to lose all subsequent messages including
-                    # the ResultMessage.
                     async for raw_data in client._query.receive_messages():
                         try:
                             message = parse_message(raw_data)
@@ -288,11 +280,43 @@ class ClaudeSDKManager:
                 finally:
                     await client.disconnect()
 
-            # Execute with timeout
-            await asyncio.wait_for(
-                _run_client(),
-                timeout=self.config.claude_timeout_seconds,
-            )
+            # Execute: race client against timeout and optional interrupt
+            run_task = asyncio.create_task(_run_client())
+
+            interrupt_watcher: Optional["asyncio.Task[None]"] = None
+            if interrupt_event is not None:
+
+                async def _cancel_on_interrupt() -> None:
+                    nonlocal interrupted
+                    await interrupt_event.wait()
+                    interrupted = True
+                    run_task.cancel()
+
+                interrupt_watcher = asyncio.create_task(_cancel_on_interrupt())
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(run_task),
+                    timeout=self.config.claude_timeout_seconds,
+                )
+            except asyncio.CancelledError:
+                if not interrupted:
+                    raise
+                # Interrupt cancelled the task — wait for cleanup
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.TimeoutError:
+                run_task.cancel()
+                try:
+                    await run_task
+                except asyncio.CancelledError:
+                    pass
+                raise
+            finally:
+                if interrupt_watcher is not None:
+                    interrupt_watcher.cancel()
 
             # Extract cost, tools, and session_id from result message
             cost = 0.0
@@ -377,6 +401,7 @@ class ClaudeSDKManager:
                     ]
                 ),
                 tools_used=tools_used,
+                interrupted=interrupted,
             )
 
         except asyncio.TimeoutError:
