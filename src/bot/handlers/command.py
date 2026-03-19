@@ -1275,3 +1275,335 @@ def _escape_markdown(text: str) -> str:
     Legacy name kept for compatibility with callers; actually escapes HTML.
     """
     return escape_html(text)
+
+
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /profile -- show or update personal profile.
+
+    Usage:
+      /profile                   -- show current profile
+      /profile name Paulius      -- set name
+      /profile timezone Europe/Vilnius
+      /profile style concise|detailed|friendly|formal
+    """
+    from ...storage.models import UserProfileModel
+
+    user = update.effective_user
+    storage = context.bot_data.get("storage")
+    if not storage:
+        await update.message.reply_text("Storage unavailable.")
+        return
+
+    args = context.args or []
+
+    if not args:
+        profile = await storage.profiles.get_profile(user.id)
+        if not profile:
+            await update.message.reply_text(
+                "<b>Your profile is not set yet.</b>\n\n"
+                "Use:\n"
+                "  <code>/profile name Your Name</code>\n"
+                "  <code>/profile timezone Europe/Vilnius</code>\n"
+                "  <code>/profile style concise|detailed|friendly|formal</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        await update.message.reply_text(
+            f"<b>Your Profile</b>\n\n"
+            f"Name: {profile.name or '\u2014'}\n"
+            f"Timezone: {profile.timezone}\n"
+            f"Style: {profile.communication_style}\n"
+            f"Wake time: {profile.wake_time}\n"
+            f"Daily briefing: {'on ' + profile.briefing_cron if profile.briefing_enabled else 'off'}",
+            parse_mode="HTML",
+        )
+        return
+
+    field = args[0].lower()
+    value = " ".join(args[1:]) if len(args) > 1 else ""
+
+    if not value:
+        await update.message.reply_text("Please provide a value.")
+        return
+
+    profile = await storage.profiles.get_profile(user.id)
+    if not profile:
+        profile = UserProfileModel(user_id=user.id)
+
+    field_map = {
+        "name": "name",
+        "timezone": "timezone",
+        "tz": "timezone",
+        "style": "communication_style",
+        "wake": "wake_time",
+    }
+
+    attr = field_map.get(field)
+    if not attr:
+        await update.message.reply_text(
+            f"Unknown field '{escape_html(field)}'. Valid: name, timezone, style, wake",
+            parse_mode="HTML",
+        )
+        return
+
+    updated_profile = UserProfileModel(
+        user_id=profile.user_id,
+        name=value if attr == "name" else profile.name,
+        timezone=value if attr == "timezone" else profile.timezone,
+        wake_time=value if attr == "wake_time" else profile.wake_time,
+        communication_style=value if attr == "communication_style" else profile.communication_style,
+        briefing_enabled=profile.briefing_enabled,
+        briefing_cron=profile.briefing_cron,
+        briefing_chat_id=profile.briefing_chat_id,
+    )
+    await storage.profiles.upsert_profile(updated_profile)
+    await update.message.reply_text(
+        f"Profile updated: <b>{escape_html(field)}</b> = {escape_html(value)}",
+        parse_mode="HTML",
+    )
+
+
+async def remember_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /remember <key> <value> — store a persistent fact.
+
+    Example: /remember hobby orienteering
+    """
+    user = update.effective_user
+    storage = context.bot_data.get("storage")
+    args = context.args or []
+
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Usage: <code>/remember &lt;key&gt; &lt;value&gt;</code>\n"
+            "Example: <code>/remember hobby orienteering</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    key = args[0].rstrip(":")
+    value = " ".join(args[1:])
+    await storage.memories.set_memory(user.id, key, value)
+    await update.message.reply_text(
+        f"Remembered: <b>{escape_html(key)}</b> = {escape_html(value)}",
+        parse_mode="HTML",
+    )
+
+
+async def memories_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /memories — list all stored facts."""
+    user = update.effective_user
+    storage = context.bot_data.get("storage")
+    memories = await storage.memories.list_memories(user.id)
+
+    if not memories:
+        await update.message.reply_text("No memories stored yet. Use /remember to add some.")
+        return
+
+    lines = ["<b>Your Memories</b>\n"]
+    for mem in memories:
+        lines.append(f"[{mem.id}] <b>{escape_html(mem.key)}</b>: {escape_html(mem.value)}")
+
+    lines.append("\nUse <code>/forget &lt;id&gt;</code> to remove one.")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def forget_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /forget <id> — remove a stored memory by ID."""
+    user = update.effective_user
+    storage = context.bot_data.get("storage")
+    args = context.args or []
+
+    if not args or not args[0].isdigit():
+        await update.message.reply_text(
+            "Usage: <code>/forget &lt;id&gt;</code> — get the ID from /memories",
+            parse_mode="HTML",
+        )
+        return
+
+    memory_id = int(args[0])
+    deleted = await storage.memories.delete_memory(user.id, memory_id)
+
+    if deleted:
+        await update.message.reply_text(f"Memory [{memory_id}] deleted.")
+    else:
+        await update.message.reply_text(f"Memory [{memory_id}] not found.")
+
+
+async def task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /task — manage personal tasks.
+
+    Usage:
+      /task list               — list open tasks
+      /task add <title>        — add a new task
+      /task done <id>          — mark task as done
+      /task delete <id>        — delete a task
+      /task all                — list all tasks including done
+    """
+    from ...storage.models import TaskModel as _TaskModel
+
+    user = update.effective_user
+    storage = context.bot_data.get("storage")
+    args = context.args or []
+
+    subcommand = args[0].lower() if args else ""
+
+    if subcommand == "add":
+        title = " ".join(args[1:])
+        if not title:
+            await update.message.reply_text(
+                "Usage: <code>/task add &lt;title&gt;</code>", parse_mode="HTML"
+            )
+            return
+        task = await storage.tasks.create_task(
+            _TaskModel(user_id=user.id, title=title)
+        )
+        await update.message.reply_text(f"Task [{task.id}] added: {escape_html(title)}")
+
+    elif subcommand == "list":
+        tasks = await storage.tasks.list_tasks(user.id, status="open")
+        if not tasks:
+            await update.message.reply_text(
+                "No open tasks. Add one with <code>/task add &lt;title&gt;</code>.",
+                parse_mode="HTML",
+            )
+            return
+        lines = ["<b>Open Tasks</b>\n"]
+        for t in tasks:
+            due = f"  <i>due {t.due_date}</i>" if t.due_date else ""
+            lines.append(f"[{t.id}] {escape_html(t.title)}{due}")
+        lines.append("\n<code>/task done &lt;id&gt;</code> to complete")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    elif subcommand == "all":
+        tasks = await storage.tasks.list_tasks(user.id)
+        if not tasks:
+            await update.message.reply_text("No tasks found.")
+            return
+        lines = ["<b>All Tasks</b>\n"]
+        for t in tasks:
+            icon = "done" if t.status == "done" else "open"
+            lines.append(f"[{icon}] [{t.id}] {escape_html(t.title)}")
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    elif subcommand == "done":
+        if len(args) < 2 or not args[1].isdigit():
+            await update.message.reply_text(
+                "Usage: <code>/task done &lt;id&gt;</code>", parse_mode="HTML"
+            )
+            return
+        task_id = int(args[1])
+        updated = await storage.tasks.update_task_status(task_id, "done")
+        if updated:
+            await update.message.reply_text(f"Task [{task_id}] marked as done.")
+        else:
+            await update.message.reply_text(f"Task [{task_id}] not found.")
+
+    elif subcommand == "delete":
+        if len(args) < 2 or not args[1].isdigit():
+            await update.message.reply_text(
+                "Usage: <code>/task delete &lt;id&gt;</code>", parse_mode="HTML"
+            )
+            return
+        task_id = int(args[1])
+        deleted = await storage.tasks.delete_task(user.id, task_id)
+        if deleted:
+            await update.message.reply_text(f"Task [{task_id}] deleted.")
+        else:
+            await update.message.reply_text(f"Task [{task_id}] not found.")
+
+    else:
+        await update.message.reply_text(
+            "<b>Task Commands</b>\n\n"
+            "<code>/task add &lt;title&gt;</code> — add task\n"
+            "<code>/task list</code> — list open tasks\n"
+            "<code>/task done &lt;id&gt;</code> — mark done\n"
+            "<code>/task delete &lt;id&gt;</code> — delete\n"
+            "<code>/task all</code> — all tasks",
+            parse_mode="HTML",
+        )
+
+
+async def briefing_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /briefing — manage daily briefing.
+
+    Usage:
+      /briefing          — show current status
+      /briefing now      — send briefing immediately
+      /briefing on       — enable daily briefing at stored time
+      /briefing on 09:00 — enable at specific time (HH:MM)
+      /briefing off      — disable daily briefing
+    """
+    from ...storage.models import UserProfileModel
+
+    user = update.effective_user
+    storage = context.bot_data.get("storage")
+    assembler = context.bot_data.get("briefing_assembler")
+    briefing_scheduler = context.bot_data.get("briefing_scheduler")
+    args = context.args or []
+    subcommand = args[0].lower() if args else ""
+
+    if subcommand == "now":
+        if not assembler:
+            await update.message.reply_text("Briefing unavailable.")
+            return
+        text = await assembler.build(user_id=user.id)
+        await update.message.reply_text(text, parse_mode="HTML")
+        return
+
+    if subcommand == "off":
+        profile = await storage.profiles.get_profile(user.id)
+        if profile:
+            updated = UserProfileModel(
+                user_id=profile.user_id,
+                name=profile.name,
+                timezone=profile.timezone,
+                wake_time=profile.wake_time,
+                communication_style=profile.communication_style,
+                briefing_enabled=False,
+                briefing_cron=profile.briefing_cron,
+                briefing_chat_id=profile.briefing_chat_id,
+            )
+            await storage.profiles.upsert_profile(updated)
+        if briefing_scheduler:
+            await briefing_scheduler.disable(user.id)
+        await update.message.reply_text("Daily briefing disabled.")
+        return
+
+    if subcommand == "on":
+        time_arg = args[1] if len(args) > 1 else "08:00"
+        try:
+            hour, minute = (int(x) for x in time_arg.split(":"))
+            cron = f"{minute} {hour} * * *"
+        except (ValueError, AttributeError):
+            await update.message.reply_text("Invalid time. Use HH:MM format, e.g. 09:00")
+            return
+        chat_id = update.message.chat_id
+        if briefing_scheduler:
+            await briefing_scheduler.enable(user.id, chat_id=chat_id, cron=cron)
+        await update.message.reply_text(
+            f"Daily briefing enabled at {escape_html(time_arg)}.\n"
+            f"Use <code>/briefing now</code> to preview it.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Default: show status
+    profile = await storage.profiles.get_profile(user.id)
+    if profile and profile.briefing_enabled:
+        await update.message.reply_text(
+            f"<b>Daily Briefing</b>\n\n"
+            f"Status: Enabled\n"
+            f"Schedule: <code>{profile.briefing_cron}</code>\n\n"
+            f"<code>/briefing now</code> — preview\n"
+            f"<code>/briefing off</code> — disable",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text(
+            "<b>Daily Briefing</b>\n\n"
+            "Status: Disabled\n\n"
+            "<code>/briefing on 09:00</code> — enable at 9 AM\n"
+            "<code>/briefing now</code> — send right now",
+            parse_mode="HTML",
+        )

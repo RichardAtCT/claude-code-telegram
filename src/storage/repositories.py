@@ -19,8 +19,11 @@ from .models import (
     MessageModel,
     ProjectThreadModel,
     SessionModel,
+    TaskModel,
     ToolUsageModel,
+    UserMemoryModel,
     UserModel,
+    UserProfileModel,
 )
 
 logger = structlog.get_logger()
@@ -829,3 +832,159 @@ class AnalyticsRepository:
                 "tool_stats": tool_stats,
                 "daily_activity": daily_activity,
             }
+
+
+class UserProfileRepository:
+    """User profile data access."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def get_profile(self, user_id: int) -> Optional[UserProfileModel]:
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM user_profiles WHERE user_id = ?", (user_id,)
+            )
+            row = await cursor.fetchone()
+            return UserProfileModel.from_row(row) if row else None
+
+    async def upsert_profile(self, profile: UserProfileModel) -> None:
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_profiles
+                    (user_id, name, timezone, wake_time, communication_style,
+                     briefing_enabled, briefing_cron, briefing_chat_id, extra_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    name = excluded.name,
+                    timezone = excluded.timezone,
+                    wake_time = excluded.wake_time,
+                    communication_style = excluded.communication_style,
+                    briefing_enabled = excluded.briefing_enabled,
+                    briefing_cron = excluded.briefing_cron,
+                    briefing_chat_id = excluded.briefing_chat_id,
+                    extra_json = excluded.extra_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    profile.user_id,
+                    profile.name,
+                    profile.timezone,
+                    profile.wake_time,
+                    profile.communication_style,
+                    profile.briefing_enabled,
+                    profile.briefing_cron,
+                    profile.briefing_chat_id,
+                    profile.extra_json,
+                ),
+            )
+            await conn.commit()
+
+
+class UserMemoryRepository:
+    """User memory (persistent facts) data access."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def set_memory(self, user_id: int, key: str, value: str) -> None:
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                INSERT INTO user_memories (user_id, key, value)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, key, value),
+            )
+            await conn.commit()
+
+    async def list_memories(self, user_id: int) -> List[UserMemoryModel]:
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM user_memories WHERE user_id = ? ORDER BY key",
+                (user_id,),
+            )
+            rows = await cursor.fetchall()
+            return [UserMemoryModel.from_row(r) for r in rows]
+
+    async def delete_memory(self, user_id: int, memory_id: int) -> bool:
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM user_memories WHERE id = ? AND user_id = ?",
+                (memory_id, user_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
+
+class TaskRepository:
+    """Personal task data access."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def create_task(self, task: TaskModel) -> TaskModel:
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO tasks (user_id, title, description, status, priority, due_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    task.user_id,
+                    task.title,
+                    task.description,
+                    task.status,
+                    task.priority,
+                    task.due_date,
+                ),
+            )
+            await conn.commit()
+            return TaskModel(
+                id=cursor.lastrowid,
+                user_id=task.user_id,
+                title=task.title,
+                description=task.description,
+                status=task.status,
+                priority=task.priority,
+                due_date=task.due_date,
+            )
+
+    async def list_tasks(
+        self, user_id: int, status: Optional[str] = None
+    ) -> List[TaskModel]:
+        async with self.db.get_connection() as conn:
+            if status:
+                cursor = await conn.execute(
+                    "SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY created_at",
+                    (user_id, status),
+                )
+            else:
+                cursor = await conn.execute(
+                    "SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at",
+                    (user_id,),
+                )
+            rows = await cursor.fetchall()
+            return [TaskModel.from_row(r) for r in rows]
+
+    async def update_task_status(self, task_id: int, status: str) -> bool:
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, task_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0
+
+    async def delete_task(self, user_id: int, task_id: int) -> bool:
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "DELETE FROM tasks WHERE id = ? AND user_id = ?",
+                (task_id, user_id),
+            )
+            await conn.commit()
+            return cursor.rowcount > 0

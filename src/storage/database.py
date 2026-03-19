@@ -310,6 +310,54 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- Personal assistant tables
+
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    user_id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    timezone TEXT DEFAULT 'UTC',
+                    wake_time TEXT DEFAULT '08:00',
+                    communication_style TEXT DEFAULT 'concise',
+                    briefing_enabled BOOLEAN DEFAULT FALSE,
+                    briefing_cron TEXT DEFAULT '0 8 * * *',
+                    briefing_chat_id INTEGER,
+                    extra_json TEXT DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS user_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories(user_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_user_memories_user_key ON user_memories(user_id, key);
+
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT DEFAULT 'open',
+                    priority TEXT DEFAULT 'normal',
+                    due_date DATE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
+                CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+                """,
+            ),
         ]
 
     async def _init_pool(self):

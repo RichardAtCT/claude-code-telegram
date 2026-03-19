@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 
+from ..assistant.persona import PersonaBuilder
 from ..config.settings import Settings
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
@@ -23,11 +24,13 @@ class ClaudeIntegration:
         config: Settings,
         sdk_manager: Optional[ClaudeSDKManager] = None,
         session_manager: Optional[SessionManager] = None,
+        storage: Optional[Any] = None,
     ):
         """Initialize Claude integration facade."""
         self.config = config
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
+        self._persona_builder = PersonaBuilder(storage) if storage else None
 
     async def run_command(
         self,
@@ -78,6 +81,14 @@ class ClaudeIntegration:
             # For new sessions, don't pass session_id to Claude Code
             claude_session_id = session.session_id if should_continue else None
 
+            # Build persona prefix (if storage is wired up)
+            persona_prefix: Optional[str] = None
+            if self._persona_builder:
+                try:
+                    persona_prefix = await self._persona_builder.build(user_id=user_id)
+                except Exception as e:
+                    logger.warning("Persona build failed, proceeding without it", error=str(e))
+
             try:
                 response = await self._execute(
                     prompt=prompt,
@@ -85,6 +96,7 @@ class ClaudeIntegration:
                     session_id=claude_session_id,
                     continue_session=should_continue,
                     stream_callback=on_stream,
+                    system_prompt_prefix=persona_prefix,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -152,6 +164,7 @@ class ClaudeIntegration:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable] = None,
+        system_prompt_prefix: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -160,6 +173,7 @@ class ClaudeIntegration:
             session_id=session_id,
             continue_session=continue_session,
             stream_callback=stream_callback,
+            system_prompt_prefix=system_prompt_prefix,
         )
 
     async def _find_resumable_session(
