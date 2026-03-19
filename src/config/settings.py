@@ -160,6 +160,11 @@ class Settings(BaseSettings):
     )
 
     # Features
+    soul_file_path: Optional[Path] = Field(
+        None,
+        description="Path to soul.md — global bot personality injected into every prompt",
+    )
+
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")
     mcp_config_path: Optional[Path] = Field(
         None, description="MCP configuration file path"

@@ -97,3 +97,19 @@ class TestDatabaseManager:
             cursor = await conn.execute("SELECT MAX(version) FROM schema_version")
             version = await cursor.fetchone()
             assert version[0] >= 1  # At least initial migration
+
+
+@pytest.mark.asyncio
+async def test_migration_v5_creates_personal_assistant_tables():
+    with tempfile.TemporaryDirectory() as tmp:
+        db = DatabaseManager(f"sqlite:///{tmp}/test.db")
+        await db.initialize()
+        async with db.get_connection() as conn:
+            for table in ("user_profiles", "user_memories", "tasks"):
+                cursor = await conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                )
+                row = await cursor.fetchone()
+                assert row is not None, f"Table {table} not found"
+        await db.close()

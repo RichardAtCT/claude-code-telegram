@@ -153,6 +153,7 @@ class ClaudeSDKManager:
         session_id: Optional[str] = None,
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
+        system_prompt_prefix: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -184,6 +185,19 @@ class ClaudeSDKManager:
                     "Loaded CLAUDE.md into system prompt",
                     path=str(claude_md_path),
                 )
+
+            # Load soul.md — global bot personality file
+            soul_content: Optional[str] = None
+            soul_path = self.config.soul_file_path
+            if soul_path and Path(soul_path).exists():
+                soul_content = Path(soul_path).read_text(encoding="utf-8")
+                logger.info("Loaded soul.md into system prompt", path=str(soul_path))
+
+            if system_prompt_prefix:
+                base_prompt = system_prompt_prefix + "\n\n" + base_prompt
+
+            if soul_content:
+                base_prompt = soul_content + "\n\n" + base_prompt
 
             # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
             # tools so the SDK does not restrict tool usage (e.g. MCP tools).

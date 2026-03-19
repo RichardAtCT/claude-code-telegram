@@ -311,3 +311,90 @@ class UserTokenModel:
         if not self.expires_at:
             return False
         return datetime.now(UTC) > self.expires_at
+
+
+@dataclass
+class UserProfileModel:
+    """User profile for personal assistant features."""
+
+    user_id: int
+    name: Optional[str] = None
+    timezone: str = "UTC"
+    wake_time: str = "08:00"
+    communication_style: str = "concise"
+    briefing_enabled: bool = False
+    briefing_cron: str = "0 8 * * *"
+    briefing_chat_id: Optional[int] = None
+    extra_json: str = "{}"
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        for key in ["created_at", "updated_at"]:
+            if data[key]:
+                data[key] = data[key].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "UserProfileModel":
+        data = dict(row)
+        for field in ["created_at", "updated_at"]:
+            data[field] = _parse_datetime(data.get(field))
+        data["briefing_enabled"] = bool(data.get("briefing_enabled", False))
+        return cls(**data)
+
+
+@dataclass
+class UserMemoryModel:
+    """A single remembered fact about the user."""
+
+    user_id: int
+    key: str
+    value: str
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        for k in ["created_at", "updated_at"]:
+            if data[k]:
+                data[k] = data[k].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "UserMemoryModel":
+        data = dict(row)
+        for field in ["created_at", "updated_at"]:
+            data[field] = _parse_datetime(data.get(field))
+        return cls(**data)
+
+
+@dataclass
+class TaskModel:
+    """A personal task/todo."""
+
+    user_id: int
+    title: str
+    id: Optional[int] = None
+    description: Optional[str] = None
+    status: str = "open"
+    priority: str = "normal"
+    due_date: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        for k in ["created_at", "updated_at"]:
+            if data[k]:
+                data[k] = data[k].isoformat()
+        return data
+
+    @classmethod
+    def from_row(cls, row: aiosqlite.Row) -> "TaskModel":
+        data = dict(row)
+        for field in ["created_at", "updated_at"]:
+            data[field] = _parse_datetime(data.get(field))
+        return cls(**data)

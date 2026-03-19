@@ -35,6 +35,8 @@ from src.security.auth import (
 )
 from src.security.rate_limiter import RateLimiter
 from src.security.validators import SecurityValidator
+from src.assistant.briefing import BriefingAssembler
+from src.assistant.briefing_scheduler import BriefingScheduler
 from src.storage.facade import Storage
 from src.storage.session_storage import SQLiteSessionStorage
 
@@ -148,6 +150,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         config=config,
         sdk_manager=sdk_manager,
         session_manager=session_manager,
+        storage=storage,
     )
 
     # --- Event bus and agentic platform components ---
@@ -170,6 +173,9 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     )
     agent_handler.register()
 
+    # Create assistant components
+    briefing_assembler = BriefingAssembler(storage)
+
     # Create bot with all dependencies
     dependencies = {
         "auth_manager": auth_manager,
@@ -181,6 +187,8 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        "briefing_assembler": briefing_assembler,
+        "briefing_scheduler": None,  # wired after scheduler starts in run_application()
     }
 
     bot = ClaudeCodeBot(config, dependencies)
@@ -314,6 +322,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 default_working_directory=config.approved_directory,
             )
             await scheduler.start()
+            bot.deps["briefing_scheduler"] = BriefingScheduler(scheduler, storage)
             logger.info("Job scheduler enabled")
 
         # Shutdown task

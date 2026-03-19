@@ -308,6 +308,12 @@ class MessageOrchestrator:
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
+            ("profile", command.profile_command),
+            ("remember", command.remember_command),
+            ("memories", command.memories_command),
+            ("forget", command.forget_command),
+            ("task", command.task_command),
+            ("briefing", command.briefing_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
@@ -373,6 +379,12 @@ class MessageOrchestrator:
             ("actions", command.quick_actions),
             ("git", command.git_command),
             ("restart", command.restart_command),
+            ("profile", command.profile_command),
+            ("remember", command.remember_command),
+            ("memories", command.memories_command),
+            ("forget", command.forget_command),
+            ("task", command.task_command),
+            ("briefing", command.briefing_command),
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
