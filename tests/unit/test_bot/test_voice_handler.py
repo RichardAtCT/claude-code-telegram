@@ -1,9 +1,11 @@
 """Tests for voice handler feature."""
 
+import asyncio
 import sys
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -352,3 +354,180 @@ async def test_transcribe_openai_reuses_cached_client(openai_voice_handler):
 
     openai_ctor.assert_called_once_with(api_key="test-openai-key")
     assert mock_transcriptions.create.await_count == 2
+
+
+# --- Local whisper.cpp provider tests ---
+
+
+@pytest.fixture
+def local_config():
+    """Create a mock config with local whisper.cpp settings."""
+    cfg = MagicMock()
+    cfg.voice_provider = "local"
+    cfg.resolved_whisper_cpp_binary = "whisper-cpp"
+    cfg.resolved_whisper_cpp_model_path = "/tmp/models/ggml-base.bin"
+    cfg.voice_max_file_size_mb = 20
+    cfg.voice_max_file_size_bytes = 20 * 1024 * 1024
+    return cfg
+
+
+@pytest.fixture
+def local_voice_handler(local_config):
+    """Create a VoiceHandler instance with local config."""
+    return VoiceHandler(config=local_config)
+
+
+async def test_process_voice_message_local_dispatches(local_voice_handler):
+    """process_voice_message routes to _transcribe_local for local provider."""
+    voice = _mock_voice(duration=5)
+    local_voice_handler._transcribe_local = AsyncMock(
+        return_value="Local transcription"
+    )
+
+    result = await local_voice_handler.process_voice_message(voice)
+
+    assert isinstance(result, ProcessedVoice)
+    assert result.transcription == "Local transcription"
+    assert result.duration == 5
+    local_voice_handler._transcribe_local.assert_awaited_once()
+
+
+async def test_transcribe_local_runs_ffmpeg_and_whisper(local_voice_handler):
+    """Local transcription converts OGG->WAV then calls whisper.cpp binary."""
+    mock_ffmpeg = AsyncMock()
+    mock_ffmpeg.communicate = AsyncMock(return_value=(b"", b""))
+    mock_ffmpeg.returncode = 0
+
+    mock_whisper = AsyncMock()
+    mock_whisper.communicate = AsyncMock(return_value=(b"Hello world", b""))
+    mock_whisper.returncode = 0
+
+    call_count = 0
+
+    async def fake_subprocess(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_ffmpeg
+        return mock_whisper
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        result = await local_voice_handler._transcribe_local(b"fake-ogg-bytes")
+
+    assert result == "Hello world"
+    assert call_count == 2
+
+
+async def test_transcribe_local_ffmpeg_not_found(local_voice_handler):
+    """Missing ffmpeg gives a clear install hint."""
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=FileNotFoundError,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="ffmpeg is required"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+async def test_transcribe_local_model_not_found(local_voice_handler):
+    """Missing model file raises a clear error with download hint."""
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=False,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="model not found"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+async def test_transcribe_local_whisper_binary_not_found(local_voice_handler):
+    """Missing whisper.cpp binary raises a clear error."""
+    with patch("shutil.which", return_value=None):
+        with pytest.raises(RuntimeError, match="not found on PATH"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+async def test_transcribe_local_empty_response(local_voice_handler):
+    """Empty whisper.cpp output raises ValueError."""
+    mock_ffmpeg = AsyncMock()
+    mock_ffmpeg.communicate = AsyncMock(return_value=(b"", b""))
+    mock_ffmpeg.returncode = 0
+
+    mock_whisper = AsyncMock()
+    mock_whisper.communicate = AsyncMock(return_value=(b"   ", b""))
+    mock_whisper.returncode = 0
+
+    call_count = 0
+
+    async def fake_subprocess(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_ffmpeg
+        return mock_whisper
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        with pytest.raises(ValueError, match="empty response"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+async def test_transcribe_local_whisper_nonzero_exit(local_voice_handler):
+    """Non-zero whisper.cpp exit code raises RuntimeError."""
+    mock_ffmpeg = AsyncMock()
+    mock_ffmpeg.communicate = AsyncMock(return_value=(b"", b""))
+    mock_ffmpeg.returncode = 0
+
+    mock_whisper = AsyncMock()
+    mock_whisper.communicate = AsyncMock(return_value=(b"", b"model load fail"))
+    mock_whisper.returncode = 1
+
+    call_count = 0
+
+    async def fake_subprocess(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_ffmpeg
+        return mock_whisper
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="transcription failed"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")

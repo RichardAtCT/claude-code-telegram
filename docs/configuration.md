@@ -135,11 +135,15 @@ ENABLE_QUICK_ACTIONS=true
 
 # Enable voice message transcription
 ENABLE_VOICE_MESSAGES=true
-VOICE_PROVIDER=mistral              # 'mistral' (default) or 'openai'
+VOICE_PROVIDER=mistral              # 'mistral', 'openai', or 'local'
 MISTRAL_API_KEY=                     # Required when VOICE_PROVIDER=mistral
 OPENAI_API_KEY=                      # Required when VOICE_PROVIDER=openai
 VOICE_TRANSCRIPTION_MODEL=           # Default: voxtral-mini-latest (Mistral) or whisper-1 (OpenAI)
 VOICE_MAX_FILE_SIZE_MB=20            # Max Telegram voice file size to download (1-200MB)
+
+# Local whisper.cpp settings (only used when VOICE_PROVIDER=local)
+WHISPER_CPP_BINARY_PATH=             # Path to whisper.cpp binary (auto-detected from PATH if unset)
+WHISPER_CPP_MODEL_PATH=base          # Path to GGML model file or model name (base, small, medium, large)
 ```
 
 #### Agentic Platform
