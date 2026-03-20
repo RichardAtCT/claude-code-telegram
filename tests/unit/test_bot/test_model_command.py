@@ -206,10 +206,18 @@ async def test_model_switch_clears_stale_effort(callback_query, context):
 # ---------------------------------------------------------------------------
 
 
-def test_label_default():
+def test_label_default_no_settings():
     ctx = MagicMock()
     ctx.user_data = {}
-    assert _current_model_label(ctx) == "Default"
+    ctx.bot_data = {}
+    assert _current_model_label(ctx) == "Default (CLI default)"
+
+
+def test_label_default_with_server_model():
+    ctx = MagicMock()
+    ctx.user_data = {}
+    ctx.bot_data = {"settings": MagicMock(claude_model="claude-sonnet-4-6")}
+    assert _current_model_label(ctx) == "Default (claude-sonnet-4-6)"
 
 
 def test_label_with_model_and_effort():
