@@ -174,7 +174,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/status</code> - Show session and usage status\n"
         "• <code>/export</code> - Export session history\n"
         "• <code>/actions</code> - Show context-aware quick actions\n"
-        "• <code>/git</code> - Git repository information\n\n"
+        "• <code>/git</code> - Git repository information\n"
+        "• <code>/model [name]</code> - View or switch Claude model\n\n"
         "<b>Session Behavior:</b>\n"
         "• Sessions are automatically maintained per project directory\n"
         "• Switching directories with <code>/cd</code> resumes the session for that project\n"
@@ -1230,6 +1231,165 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception as e:
         await update.message.reply_text(f"❌ <b>Git Error</b>\n\n{str(e)}")
         logger.error("Error in git_command", error=str(e), user_id=user_id)
+
+
+# Model IDs mapped to user-friendly labels
+_MODELS = {
+    "opus": "claude-opus-4-6",
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+# Effort levels per model (Haiku doesn't support effort; "max" is Opus-only)
+_EFFORT_BY_MODEL = {
+    "opus": ["low", "medium", "high", "max"],
+    "sonnet": ["low", "medium", "high"],
+    "haiku": [],
+}
+
+
+def _current_model_label(context: ContextTypes.DEFAULT_TYPE) -> str:
+    """Return a human-friendly label for the active model + effort."""
+    override = context.user_data.get("model_override")
+    effort = context.user_data.get("effort_override")
+    # Reverse-map model ID to short name
+    model_id = override or ""
+    label = model_id
+    for short, full in _MODELS.items():
+        if full == model_id:
+            label = short.capitalize()
+            break
+    if not override:
+        label = "Default"
+    parts = [label]
+    if effort:
+        parts.append(f"effort={effort}")
+    return " | ".join(parts)
+
+
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /model command - show model selection keyboard."""
+    current = _current_model_label(context)
+
+    keyboard = [
+        [
+            InlineKeyboardButton("Opus", callback_data="model:opus"),
+            InlineKeyboardButton("Sonnet", callback_data="model:sonnet"),
+            InlineKeyboardButton("Haiku", callback_data="model:haiku"),
+        ],
+        [InlineKeyboardButton("Reset to default", callback_data="model:default")],
+    ]
+
+    await update.message.reply_text(
+        f"🤖 <b>Current:</b> {escape_html(current)}\n\n"
+        "Choose a model:\n"
+        "<i>⚠️ Switching will start a new session.</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def _handle_model_selection(query, data: str, context) -> None:
+    """Shared logic for model/effort selection (used by both callback routes)."""
+    if data.startswith("model:"):
+        choice = data.split(":", 1)[1]
+
+        if choice == "default":
+            context.user_data.pop("model_override", None)
+            context.user_data.pop("effort_override", None)
+            context.user_data["force_new_session"] = True
+            await query.edit_message_text(
+                "🤖 Model and effort reset to server defaults.\n"
+                "<i>Next message starts a fresh session.</i>",
+                parse_mode="HTML",
+            )
+            logger.info("Model override cleared", user_id=query.from_user.id)
+            return
+
+        model_id = _MODELS.get(choice)
+        if not model_id:
+            await query.edit_message_text("Unknown model.")
+            return
+
+        context.user_data["model_override"] = model_id
+        # Clear stale effort when switching models
+        context.user_data.pop("effort_override", None)
+        # Force new session so the model change takes effect immediately
+        context.user_data["force_new_session"] = True
+
+        logger.info(
+            "Model override set",
+            user_id=query.from_user.id,
+            model=model_id,
+        )
+
+        # Show effort level selection (if supported by this model)
+        effort_levels = _EFFORT_BY_MODEL.get(choice, [])
+        if not effort_levels:
+            # Model doesn't support effort (e.g. Haiku)
+            current = _current_model_label(context)
+            await query.edit_message_text(
+                f"🤖 <b>{escape_html(current)}</b> — ready.\n"
+                "<i>New session will start with your next message.</i>",
+                parse_mode="HTML",
+            )
+            return
+
+        rows = []
+        row = []
+        for level in effort_levels:
+            row.append(
+                InlineKeyboardButton(level.capitalize(), callback_data=f"effort:{level}")
+            )
+            if len(row) == 2:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        rows.append(
+            [InlineKeyboardButton("Skip (keep current)", callback_data="effort:skip")]
+        )
+
+        await query.edit_message_text(
+            f"🤖 Model set to <b>{escape_html(choice.capitalize())}</b>.\n\n"
+            "Choose effort level:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+
+    elif data.startswith("effort:"):
+        level = data.split(":", 1)[1]
+
+        if level == "skip":
+            current = _current_model_label(context)
+            await query.edit_message_text(
+                f"🤖 <b>{escape_html(current)}</b> — ready.\n"
+                "<i>New session will start with your next message.</i>",
+                parse_mode="HTML",
+            )
+            return
+
+        all_effort_levels = {"low", "medium", "high", "max"}
+        if level in all_effort_levels:
+            context.user_data["effort_override"] = level
+            current = _current_model_label(context)
+            await query.edit_message_text(
+                f"🤖 <b>{escape_html(current)}</b> — ready.\n"
+                "<i>New session will start with your next message.</i>",
+                parse_mode="HTML",
+            )
+            logger.info(
+                "Effort override set",
+                user_id=query.from_user.id,
+                effort=level,
+            )
+
+
+async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle model and effort selection callbacks (agentic mode route)."""
+    query = update.callback_query
+    await query.answer()
+    await _handle_model_selection(query, query.data, context)
 
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

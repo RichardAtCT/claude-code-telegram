@@ -393,6 +393,8 @@ async def handle_text_message(
                 session_id=session_id,
                 on_stream=stream_handler,
                 force_new=force_new,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             # New session created successfully — clear the one-shot flag
@@ -818,6 +820,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             # Update session ID
@@ -945,6 +949,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     working_directory=current_dir,
                     user_id=user_id,
                     session_id=session_id,
+                    model_override=context.user_data.get("model_override"),
+                    effort_override=context.user_data.get("effort_override"),
                 )
 
                 # Update session ID
@@ -1073,6 +1079,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             context.user_data["claude_session_id"] = claude_response.session_id

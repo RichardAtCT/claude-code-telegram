@@ -40,6 +40,8 @@ class ClaudeIntegration:
         force_new: bool = False,
         interrupt_event: Optional["asyncio.Event"] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        model_override: Optional[str] = None,
+        effort_override: Optional[str] = None,
     ) -> ClaudeResponse:
         """Run Claude Code command with full integration."""
         logger.info(
@@ -49,6 +51,8 @@ class ClaudeIntegration:
             session_id=session_id,
             prompt_length=len(prompt),
             force_new=force_new,
+            model_override=model_override,
+            effort_override=effort_override,
         )
 
         # If no session_id provided, try to find an existing session for this
@@ -90,6 +94,8 @@ class ClaudeIntegration:
                     stream_callback=on_stream,
                     interrupt_event=interrupt_event,
                     images=images,
+                    model_override=model_override,
+                    effort_override=effort_override,
                 )
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
@@ -116,6 +122,8 @@ class ClaudeIntegration:
                         stream_callback=on_stream,
                         interrupt_event=interrupt_event,
                         images=images,
+                        model_override=model_override,
+                        effort_override=effort_override,
                     )
                 else:
                     raise
@@ -161,6 +169,8 @@ class ClaudeIntegration:
         stream_callback: Optional[Callable] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        model_override: Optional[str] = None,
+        effort_override: Optional[str] = None,
     ) -> ClaudeResponse:
         """Execute command via SDK."""
         return await self.sdk_manager.execute_command(
@@ -171,6 +181,8 @@ class ClaudeIntegration:
             stream_callback=stream_callback,
             interrupt_event=interrupt_event,
             images=images,
+            model_override=model_override,
+            effort_override=effort_override,
         )
 
     async def _find_resumable_session(
