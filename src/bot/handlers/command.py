@@ -1260,7 +1260,9 @@ def _current_model_label(context: ContextTypes.DEFAULT_TYPE) -> str:
             label = short.capitalize()
             break
     if not override:
-        label = "Default"
+        settings = context.bot_data.get("settings")
+        server_model = getattr(settings, "claude_model", None) if settings else None
+        label = f"Default ({server_model or 'CLI default'})"
     parts = [label]
     if effort:
         parts.append(f"effort={effort}")
