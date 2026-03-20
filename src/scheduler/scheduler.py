@@ -116,12 +116,89 @@ class JobScheduler:
         logger.info("Scheduled job removed", job_id=job_id)
         return True
 
-    async def list_jobs(self) -> List[Dict[str, Any]]:
-        """List all scheduled jobs from the database."""
+    async def pause_job(self, job_id: str) -> bool:
+        """Pause a scheduled job (remove from APScheduler, mark inactive in DB)."""
+        try:
+            self._scheduler.remove_job(job_id)
+        except Exception:
+            logger.warning("Job not found in scheduler", job_id=job_id)
+
         async with self.db_manager.get_connection() as conn:
             cursor = await conn.execute(
-                "SELECT * FROM scheduled_jobs WHERE is_active = 1 ORDER BY created_at"
+                "UPDATE scheduled_jobs SET is_active = 0 WHERE job_id = ?",
+                (job_id,),
             )
+            await conn.commit()
+            if cursor.rowcount == 0:
+                return False
+
+        logger.info("Scheduled job paused", job_id=job_id)
+        return True
+
+    async def resume_job(self, job_id: str) -> bool:
+        """Resume a paused job (re-register with APScheduler, mark active in DB)."""
+        async with self.db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM scheduled_jobs WHERE job_id = ?",
+                (job_id,),
+            )
+            row = await cursor.fetchone()
+
+        if not row:
+            return False
+
+        row_dict = dict(row)
+
+        # Re-register with APScheduler
+        try:
+            trigger = CronTrigger.from_crontab(row_dict["cron_expression"])
+            chat_ids_str = row_dict.get("target_chat_ids", "")
+            chat_ids = (
+                [int(x) for x in chat_ids_str.split(",") if x.strip()]
+                if chat_ids_str
+                else []
+            )
+            self._scheduler.add_job(
+                self._fire_event,
+                trigger=trigger,
+                kwargs={
+                    "job_name": row_dict["job_name"],
+                    "prompt": row_dict["prompt"],
+                    "working_directory": row_dict["working_directory"],
+                    "target_chat_ids": chat_ids,
+                    "skill_name": row_dict.get("skill_name"),
+                },
+                id=job_id,
+                name=row_dict["job_name"],
+                replace_existing=True,
+            )
+        except Exception:
+            logger.exception("Failed to re-register job with scheduler", job_id=job_id)
+            return False
+
+        # Mark active in DB
+        async with self.db_manager.get_connection() as conn:
+            await conn.execute(
+                "UPDATE scheduled_jobs SET is_active = 1 WHERE job_id = ?",
+                (job_id,),
+            )
+            await conn.commit()
+
+        logger.info("Scheduled job resumed", job_id=job_id)
+        return True
+
+    async def list_jobs(self, include_paused: bool = False) -> List[Dict[str, Any]]:
+        """List scheduled jobs from the database."""
+        async with self.db_manager.get_connection() as conn:
+            if include_paused:
+                cursor = await conn.execute(
+                    "SELECT * FROM scheduled_jobs ORDER BY created_at"
+                )
+            else:
+                cursor = await conn.execute(
+                    "SELECT * FROM scheduled_jobs"
+                    " WHERE is_active = 1 ORDER BY created_at"
+                )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
