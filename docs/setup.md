@@ -197,12 +197,23 @@ VOICE_PROVIDER=openai
 OPENAI_API_KEY=your-openai-api-key
 ```
 
-If you installed via pip/uv, make sure voice extras are installed:
+**Local whisper.cpp (offline, no API key needed):**
+```bash
+VOICE_PROVIDER=local
+# Optional — auto-detected from PATH if unset
+WHISPER_CPP_BINARY_PATH=/usr/local/bin/whisper-cpp
+# Model name ("base", "small", "medium") or full path to .bin file
+WHISPER_CPP_MODEL_PATH=base
+```
+
+Requires `ffmpeg` and a locally built `whisper.cpp` binary. See the full [local whisper.cpp setup guide](local-whisper-cpp.md) for build instructions and model downloads.
+
+If you installed via pip/uv, make sure voice extras are installed (cloud providers only):
 ```bash
 pip install "claude-code-telegram[voice]"
 ```
 
-Optionally override the transcription model with `VOICE_TRANSCRIPTION_MODEL` (defaults to `voxtral-mini-latest` for Mistral, `whisper-1` for OpenAI).
+Optionally override the transcription model with `VOICE_TRANSCRIPTION_MODEL` (defaults to `voxtral-mini-latest` for Mistral, `whisper-1` for OpenAI, `base` for local).
 
 ### Notification Recipients
 

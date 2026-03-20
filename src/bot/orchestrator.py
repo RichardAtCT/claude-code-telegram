@@ -1507,6 +1507,12 @@ class MessageOrchestrator:
 
     def _voice_unavailable_message(self) -> str:
         """Return provider-aware guidance when voice feature is unavailable."""
+        if self.settings.voice_provider == "local":
+            return (
+                "Voice processing is not available. "
+                "Ensure whisper.cpp is installed and the model file exists. "
+                "Check WHISPER_CPP_BINARY_PATH and WHISPER_CPP_MODEL_PATH settings."
+            )
         return (
             "Voice processing is not available. "
             f"Set {self.settings.voice_provider_api_key_env} "
