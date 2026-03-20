@@ -127,6 +127,7 @@ class MessageOrchestrator:
         self.settings = settings
         self.deps = deps
         self._active_requests: Dict[int, ActiveRequest] = {}
+        self._known_commands: frozenset[str] = frozenset()
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
         """Wrap handler to inject dependencies into context.bot_data."""
@@ -324,6 +325,9 @@ class MessageOrchestrator:
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
+        # Derive known commands dynamically — avoids drift when new commands are added
+        self._known_commands: frozenset[str] = frozenset(cmd for cmd, _ in handlers)
+
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
 
@@ -332,6 +336,19 @@ class MessageOrchestrator:
             MessageHandler(
                 filters.TEXT & ~filters.COMMAND,
                 self._inject_deps(self.agentic_text),
+            ),
+            group=10,
+        )
+
+        # Unknown slash commands -> Claude (passthrough in agentic mode).
+        # Registered commands are handled by CommandHandlers in group 0
+        # (higher priority). This catches any /command not matched there
+        # and forwards it to Claude, while skipping known commands to
+        # avoid double-firing.
+        app.add_handler(
+            MessageHandler(
+                filters.COMMAND,
+                self._inject_deps(self._handle_unknown_command),
             ),
             group=10,
         )
@@ -1504,6 +1521,25 @@ class MessageOrchestrator:
                     )
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
+
+    async def _handle_unknown_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Forward unknown slash commands to Claude in agentic mode.
+
+        Known commands are handled by their own CommandHandlers (group 0);
+        this handler fires for *every* COMMAND message in group 10 but
+        returns immediately when the command is registered, preventing
+        double execution.
+        """
+        msg = update.effective_message
+        if not msg or not msg.text:
+            return
+        cmd = msg.text.split()[0].lstrip("/").split("@")[0].lower()
+        if cmd in self._known_commands:
+            return  # let the registered CommandHandler take care of it
+        # Forward unrecognised /commands to Claude as natural language
+        await self.agentic_text(update, context)
 
     def _voice_unavailable_message(self) -> str:
         """Return provider-aware guidance when voice feature is unavailable."""
