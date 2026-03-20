@@ -1,4 +1,4 @@
-.PHONY: install dev test lint format clean help run run-remote remote-attach remote-stop \
+.PHONY: install dev test lint format clean help run run-watch run-remote remote-attach remote-stop \
        bump-patch bump-minor bump-major release version
 
 # Default target
@@ -11,6 +11,7 @@ help:
 	@echo "  format        - Format code"
 	@echo "  clean         - Clean up generated files"
 	@echo "  run           - Run the bot"
+	@echo "  run-watch     - Run the bot with auto-restart on code changes"
 	@echo "  version       - Show current version"
 	@echo "  bump-patch    - Bump patch version (1.2.0 -> 1.2.1), commit, and tag"
 	@echo "  bump-minor    - Bump minor version (1.2.0 -> 1.3.0), commit, and tag"
@@ -48,6 +49,9 @@ clean:
 
 run:
 	poetry run claude-telegram-bot
+
+run-watch:  ## Run the bot with auto-restart on src/ changes (uses watchfiles)
+	poetry run watchfiles "python -m src.main" src/
 
 # For debugging
 run-debug:
