@@ -319,6 +319,7 @@ class MessageOrchestrator:
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("model", command.model_command),
             ("restart", command.restart_command),
         ]
         if self.settings.enable_project_threads:
@@ -364,6 +365,14 @@ class MessageOrchestrator:
             )
         )
 
+        # Model/effort selection callbacks
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(command.model_callback),
+                pattern=r"^(model|effort):",
+            )
+        )
+
         # Only cd: callbacks (for project selection), scoped by pattern
         app.add_handler(
             CallbackQueryHandler(
@@ -392,6 +401,7 @@ class MessageOrchestrator:
             ("export", command.export_session),
             ("actions", command.quick_actions),
             ("git", command.git_command),
+            ("model", command.model_command),
             ("restart", command.restart_command),
         ]
         if self.settings.enable_project_threads:
@@ -436,6 +446,7 @@ class MessageOrchestrator:
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("model", "Switch Claude model and effort"),
                 BotCommand("restart", "Restart the bot"),
             ]
             if self.settings.enable_project_threads:
@@ -456,6 +467,7 @@ class MessageOrchestrator:
                 BotCommand("export", "Export current session"),
                 BotCommand("actions", "Show quick actions"),
                 BotCommand("git", "Git repository commands"),
+                BotCommand("model", "Switch Claude model and effort"),
                 BotCommand("restart", "Restart the bot"),
             ]
             if self.settings.enable_project_threads:
@@ -990,6 +1002,8 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 interrupt_event=interrupt_event,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             # New session created successfully — clear the one-shot flag
@@ -1240,6 +1254,8 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             if force_new:
@@ -1439,6 +1455,8 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
         finally:
             heartbeat.cancel()
