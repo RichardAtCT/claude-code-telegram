@@ -20,6 +20,8 @@ from claude_agent_sdk import (
     PermissionResultDeny,
     ProcessError,
     ResultMessage,
+    TextBlock,
+    ThinkingBlock,
     ToolPermissionContext,
     ToolUseBlock,
     UserMessage,
@@ -496,13 +498,15 @@ class ClaudeSDKManager:
                         if isinstance(block, ToolUseBlock):
                             tool_calls.append(
                                 {
-                                    "name": getattr(block, "name", "unknown"),
-                                    "input": getattr(block, "input", {}),
-                                    "id": getattr(block, "id", None),
+                                    "name": block.name,
+                                    "input": block.input,
+                                    "id": block.id,
                                 }
                             )
-                        elif hasattr(block, "text"):
+                        elif isinstance(block, TextBlock):
                             text_parts.append(block.text)
+                        elif isinstance(block, ThinkingBlock):
+                            text_parts.append(block.thinking)
 
                 if text_parts or tool_calls:
                     update = StreamUpdate(
