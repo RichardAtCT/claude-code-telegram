@@ -473,12 +473,33 @@ class ClaudeSDKManager:
                     f"Claude SDK task error: {exceptions[0] if exceptions else e}"
                 )
 
+            error_str = str(e)
+
+            # ProcessError sometimes arrives as plain Exception due to
+            # asyncio task/shield wrapping.  Detect it by message pattern
+            # so we get the same diagnostics as the ProcessError handler.
+            exit_code = getattr(e, "exit_code", None)
+            captured_stderr = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
+            if "Command failed with exit code" in error_str or exit_code is not None:
+                if captured_stderr:
+                    error_str = f"{error_str}\nStderr: {captured_stderr}"
+                logger.error(
+                    "Claude process failed (wrapped exception)",
+                    error=error_str,
+                    exit_code=exit_code,
+                    original_type=type(e).__name__,
+                    stderr=captured_stderr or None,
+                )
+                if "mcp" in error_str.lower():
+                    raise ClaudeMCPError(f"MCP server error: {error_str}")
+                raise ClaudeProcessError(f"Claude process error: {error_str}")
+
             logger.error(
                 "Unexpected error in Claude SDK",
-                error=str(e),
+                error=error_str,
                 error_type=type(e).__name__,
             )
-            raise ClaudeProcessError(f"Unexpected error: {str(e)}")
+            raise ClaudeProcessError(f"Unexpected error: {error_str}")
 
     async def _handle_stream_message(
         self, message: Message, stream_callback: Callable[[StreamUpdate], None]

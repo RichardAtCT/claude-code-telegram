@@ -3,10 +3,15 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+# Strip CLAUDECODE env var early — prevents "nested session" detection
+# when the bot is launched from a terminal running Claude Code.
+os.environ.pop("CLAUDECODE", None)
 
 import structlog
 
@@ -234,15 +239,37 @@ async def run_application(app: Dict[str, Any]) -> None:
         # Initialize the bot first (creates the Telegram Application)
         await bot.initialize()
 
+        # Load project registry for /repo curated list (independent of threads)
+        if config.projects_config_path and config.projects_config_path.exists():
+            try:
+                registry = load_project_registry(
+                    config_path=config.projects_config_path,
+                    approved_directory=config.approved_directory,
+                )
+                bot.deps["project_registry"] = registry
+                logger.info(
+                    "Project registry loaded for /repo",
+                    count=len(registry.list_enabled()),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not load project registry, /repo will list directories",
+                    error=str(e),
+                )
+
         if config.enable_project_threads:
             if not config.projects_config_path:
                 raise ConfigurationError(
                     "Project thread mode enabled but required settings are missing"
                 )
-            registry = load_project_registry(
-                config_path=config.projects_config_path,
-                approved_directory=config.approved_directory,
-            )
+            if not bot.deps.get("project_registry"):
+                registry = load_project_registry(
+                    config_path=config.projects_config_path,
+                    approved_directory=config.approved_directory,
+                )
+                bot.deps["project_registry"] = registry
+
+            registry = bot.deps["project_registry"]
             project_threads_manager = ProjectThreadManager(
                 registry=registry,
                 repository=storage.project_threads,
@@ -251,7 +278,6 @@ async def run_application(app: Dict[str, Any]) -> None:
                 ),
             )
 
-            bot.deps["project_registry"] = registry
             bot.deps["project_threads_manager"] = project_threads_manager
 
             if config.project_threads_mode == "group":
