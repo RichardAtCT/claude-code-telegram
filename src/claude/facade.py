@@ -4,12 +4,14 @@ Provides simple interface for bot handlers.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import structlog
 
 from ..config.settings import Settings
+from .exceptions import ClaudeTimeoutError
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
@@ -89,6 +91,20 @@ class ClaudeIntegration:
                     stream_callback=on_stream,
                     interrupt_event=interrupt_event,
                 )
+            except ClaudeTimeoutError:
+                # Timeout is transient — the session is likely still valid on
+                # Claude's side. Preserve it so the next message can resume.
+                # Touch last_used so the session doesn't expire while the user
+                # is actively trying to use it.
+                if session.session_id:
+                    session.last_used = datetime.now(UTC)
+                    await self.session_manager.storage.save_session(session)
+                logger.warning(
+                    "Claude timed out, preserving session for next attempt",
+                    session_id=claude_session_id,
+                    user_id=user_id,
+                )
+                raise
             except Exception as resume_error:
                 # If resume failed (e.g., session expired/missing on Claude's side),
                 # retry as a fresh session.  The CLI returns a generic exit-code-1
