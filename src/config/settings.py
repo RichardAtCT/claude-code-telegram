@@ -248,6 +248,20 @@ class Settings(BaseSettings):
     webhook_port: int = Field(8443, description="Webhook port")
     webhook_path: str = Field("/webhook", description="Webhook path")
 
+    # Discord settings
+    discord_enabled: bool = Field(
+        False, description="Enable Discord bot alongside Telegram"
+    )
+    discord_bot_token: Optional[SecretStr] = Field(
+        None, description="Discord bot token from Developer Portal"
+    )
+    discord_allowed_users: Optional[List[int]] = Field(
+        None, description="Allowed Discord user IDs (numeric)"
+    )
+    discord_allowed_guilds: Optional[List[int]] = Field(
+        None, description="Allowed Discord guild/server IDs (numeric)"
+    )
+
     # Agentic platform settings
     enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
     api_server_port: int = Field(8080, description="Webhook API server port")
@@ -287,7 +301,13 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
 
-    @field_validator("allowed_users", "notification_chat_ids", mode="before")
+    @field_validator(
+        "allowed_users",
+        "notification_chat_ids",
+        "discord_allowed_users",
+        "discord_allowed_guilds",
+        mode="before",
+    )
     @classmethod
     def parse_int_list(cls, v: Any) -> Optional[List[int]]:
         """Parse comma-separated integer lists."""
@@ -436,6 +456,12 @@ class Settings(BaseSettings):
         if self.enable_mcp and not self.mcp_config_path:
             raise ValueError("mcp_config_path required when enable_mcp is True")
 
+        # Check Discord requirements
+        if self.discord_enabled and not self.discord_bot_token:
+            raise ValueError(
+                "discord_bot_token required when discord_enabled is True"
+            )
+
         if self.enable_project_threads:
             if (
                 self.project_threads_mode == "group"
@@ -469,6 +495,13 @@ class Settings(BaseSettings):
     def telegram_token_str(self) -> str:
         """Get Telegram token as string."""
         return self.telegram_bot_token.get_secret_value()
+
+    @property
+    def discord_token_str(self) -> Optional[str]:
+        """Get Discord token as string."""
+        if self.discord_bot_token:
+            return self.discord_bot_token.get_secret_value()
+        return None
 
     @property
     def auth_secret_str(self) -> Optional[str]:

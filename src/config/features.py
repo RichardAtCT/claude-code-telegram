@@ -81,6 +81,11 @@ class FeatureFlags:
         return self.settings.mistral_api_key is not None
 
     @property
+    def discord_enabled(self) -> bool:
+        """Check if Discord bot is enabled."""
+        return self.settings.discord_enabled and self.settings.discord_bot_token is not None
+
+    @property
     def stream_drafts_enabled(self) -> bool:
         """Check if streaming drafts via sendMessageDraft is enabled."""
         return self.settings.enable_stream_drafts
@@ -100,6 +105,7 @@ class FeatureFlags:
             "scheduler": self.scheduler_enabled,
             "agentic_mode": self.agentic_mode_enabled,
             "voice_messages": self.voice_messages_enabled,
+            "discord": self.discord_enabled,
             "stream_drafts": self.stream_drafts_enabled,
         }
         return feature_map.get(feature_name, False)
@@ -129,6 +135,8 @@ class FeatureFlags:
             features.append("scheduler")
         if self.voice_messages_enabled:
             features.append("voice_messages")
+        if self.discord_enabled:
+            features.append("discord")
         if self.stream_drafts_enabled:
             features.append("stream_drafts")
         return features

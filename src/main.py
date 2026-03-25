@@ -322,6 +322,21 @@ async def run_application(app: Dict[str, Any]) -> None:
         bot_task = asyncio.create_task(bot.start())
         tasks.append(bot_task)
 
+        # Discord bot (if enabled)
+        discord_bot = None
+        if features.discord_enabled:
+            from src.discord import DiscordBot
+
+            discord_deps = {
+                "claude_integration": claude_integration,
+                "storage": storage,
+                "rate_limiter": RateLimiter(config),
+            }
+            discord_bot = DiscordBot(config, discord_deps)
+            discord_task = asyncio.create_task(discord_bot.start())
+            tasks.append(discord_task)
+            logger.info("Discord bot enabled")
+
         # API server (if enabled)
         if features.api_server_enabled:
             from src.api.server import run_api_server
@@ -383,6 +398,8 @@ async def run_application(app: Dict[str, Any]) -> None:
             if notification_service:
                 await notification_service.stop()
             await event_bus.stop()
+            if discord_bot:
+                await discord_bot.stop()
             await bot.stop()
             await claude_integration.shutdown()
             await storage.close()
