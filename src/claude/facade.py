@@ -4,6 +4,7 @@ Provides simple interface for bot handlers.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -89,20 +90,28 @@ class ClaudeIntegration:
                     stream_callback=on_stream,
                     interrupt_event=interrupt_event,
                 )
-            except Exception as resume_error:
-                # If resume failed (e.g., session expired/missing on Claude's side),
-                # retry as a fresh session.  The CLI returns a generic exit-code-1
-                # when the session is gone, so we catch *any* error during resume.
-                if should_continue:
+            except Exception as exec_error:
+                # Decide whether to destroy the session or preserve it.
+                # Timeouts and most process errors are transient — the
+                # Claude session likely still exists.  Only destroy when
+                # the error clearly indicates the session is gone.
+                _SESSION_GONE_HINTS = (
+                    "session not found",
+                    "invalid session",
+                    "session expired",
+                    "no such session",
+                )
+                error_str = str(exec_error).lower()
+                session_is_gone = any(h in error_str for h in _SESSION_GONE_HINTS)
+
+                if should_continue and session_is_gone:
                     logger.warning(
-                        "Session resume failed, starting fresh session",
+                        "Session gone on Claude side, starting fresh",
                         failed_session_id=claude_session_id,
-                        error=str(resume_error),
+                        error=str(exec_error),
                     )
-                    # Clean up the stale session
                     await self.session_manager.remove_session(session.session_id)
 
-                    # Create a fresh session and retry
                     session = await self.session_manager.get_or_create_session(
                         user_id, working_directory
                     )
@@ -115,6 +124,18 @@ class ClaudeIntegration:
                         interrupt_event=interrupt_event,
                     )
                 else:
+                    # Transient error — preserve the session so the next
+                    # message can resume it.
+                    if session.session_id:
+                        session.last_used = datetime.now(UTC)
+                        await self.session_manager.storage.save_session(session)
+                    logger.warning(
+                        "Claude command failed, preserving session",
+                        session_id=claude_session_id,
+                        user_id=user_id,
+                        error=str(exec_error),
+                        error_type=type(exec_error).__name__,
+                    )
                     raise
 
             # Update session (assigns real session_id for new sessions)
