@@ -10,11 +10,12 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import structlog
 from telegram import (
     BotCommand,
+    Chat,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
@@ -32,7 +33,12 @@ from telegram.ext import (
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
-from .features.chat_routing import GroupChatBuffer, get_working_directory, HISTORY_CONTEXT_SIZE
+from .features.chat_routing import (
+    append_to_buffer,
+    build_group_prompt,
+    get_working_directory,
+    is_group_triggered,
+)
 from .utils.draft_streamer import DraftStreamer, generate_draft_id
 from .utils.html_format import escape_html
 from .utils.image_extractor import (
@@ -533,7 +539,11 @@ class MessageOrchestrator:
                 except Exception:
                     sync_line = "\n\n🧵 Topic sync failed. Run /sync_threads to retry."
         chat_id = update.effective_chat.id if update.effective_chat else None
-        current_dir = self._get_working_directory(chat_id) if chat_id else self.settings.approved_directory
+        current_dir = (
+            self._get_working_directory(chat_id)
+            if chat_id
+            else self.settings.approved_directory
+        )
         dir_display = f"<code>{current_dir}/</code>"
 
         safe_name = escape_html(user.first_name)
@@ -924,35 +934,21 @@ class MessageOrchestrator:
 
         # Group chat: store message in history buffer; only respond if prefixed
         chat_type = update.effective_chat.type if update.effective_chat else None
-        if chat_type in ("group", "supergroup"):
-            buffer = context.chat_data.setdefault("_msg_buffer", [])
-            sender_name = (update.effective_user.first_name or "Unknown") if update.effective_user else "Unknown"
-            GroupChatBuffer.append(buffer, sender_name, message_text)
-            prefix = getattr(self.settings, "group_trigger_prefix", "claude")
-            lower_text = message_text.lower()
-            lower_prefix = prefix.lower()
-            slash_prefix = "/" + lower_prefix
-            triggered = (
-                lower_text == lower_prefix
-                or lower_text.startswith(lower_prefix + " ")
-                or lower_text == slash_prefix
-                or lower_text.startswith(slash_prefix + " ")
+        if chat_type in (Chat.GROUP, Chat.SUPERGROUP):
+            buffer = cast(
+                list[dict[str, str]], context.chat_data.setdefault("_msg_buffer", [])
             )
-            if not triggered:
+            sender_name = (
+                update.effective_user.first_name if update.effective_user else None
+            )
+            append_to_buffer(buffer, sender_name or "Unknown", message_text)
+            prefix = self.settings.group_trigger_prefix
+            if not is_group_triggered(message_text, prefix):
                 # Not triggered — store only, no response
                 return
-            # Strip prefix (with or without leading slash) and prepend history
-            if lower_text.startswith(slash_prefix):
-                stripped = message_text[len(slash_prefix):].lstrip()
-            else:
-                stripped = message_text[len(prefix):].lstrip()
+
             history = buffer[:-1]  # All messages except the one just added
-            if history:
-                context_messages = history[-HISTORY_CONTEXT_SIZE:] if len(history) > HISTORY_CONTEXT_SIZE else history
-                history_str = GroupChatBuffer.format_history(context_messages)
-                message_text = f"[Recent group conversation:\n{history_str}\n]\n\n{stripped}"
-            else:
-                message_text = stripped
+            message_text = build_group_prompt(history, message_text, prefix)
 
         logger.info(
             "Agentic text message",

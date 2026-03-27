@@ -1,4 +1,4 @@
-"""Per-chat routing: working directories and group conversation history buffer.
+"""Per-chat routing: working directories and group conversation helpers.
 
 This module enables two related features:
 
@@ -18,7 +18,8 @@ was discussed without every participant having to @-mention the bot.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+
+from src.config.settings import Settings
 
 # Maximum number of messages kept in the per-chat history buffer.
 MAX_BUFFER_SIZE = 30
@@ -27,36 +28,67 @@ MAX_BUFFER_SIZE = 30
 HISTORY_CONTEXT_SIZE = 20
 
 
-class GroupChatBuffer:
-    """Rolling buffer of recent group chat messages, stored in ``chat_data``.
-
-    Each entry is a ``{"sender": str, "text": str}`` dict.  The buffer is
-    capped at :data:`MAX_BUFFER_SIZE` entries; older messages are evicted from
-    the front as new ones arrive.
-
-    All methods are static so callers can pass a plain list from
-    ``context.chat_data`` without instantiating the class.
-    """
-
-    @staticmethod
-    def append(buffer: List[Dict[str, Any]], sender_name: str, text: str) -> None:
-        """Append a message and trim the buffer to :data:`MAX_BUFFER_SIZE`."""
-        buffer.append({"sender": sender_name, "text": text})
-        if len(buffer) > MAX_BUFFER_SIZE:
-            del buffer[: len(buffer) - MAX_BUFFER_SIZE]
-
-    @staticmethod
-    def format_history(messages: List[Dict[str, Any]]) -> str:
-        """Return messages formatted as ``Sender: text`` lines."""
-        lines = []
-        for msg in messages:
-            sender = msg.get("sender", "Unknown")
-            text = msg.get("text", "")
-            lines.append(f"{sender}: {text}")
-        return "\n".join(lines)
+def append_to_buffer(
+    buffer: list[dict[str, str]], sender_name: str, text: str
+) -> None:
+    """Append a message and trim the buffer to :data:`MAX_BUFFER_SIZE`."""
+    buffer.append({"sender": sender_name, "text": text})
+    if len(buffer) > MAX_BUFFER_SIZE:
+        del buffer[: len(buffer) - MAX_BUFFER_SIZE]
 
 
-def get_working_directory(chat_id: int, settings: Any) -> Path:
+def format_history(messages: list[dict[str, str]]) -> str:
+    """Return messages formatted as ``Sender: text`` lines."""
+    return "\n".join(f"{msg['sender']}: {msg['text']}" for msg in messages)
+
+
+def is_group_triggered(message_text: str, trigger_prefix: str) -> bool:
+    """Return whether a group message should trigger Claude."""
+    lower_text = message_text.lower()
+    lower_prefix = trigger_prefix.lower()
+    slash_prefix = f"/{lower_prefix}"
+    slash_variants = (f"{slash_prefix} ", f"{slash_prefix}@")
+    return (
+        lower_text == lower_prefix
+        or lower_text.startswith(f"{lower_prefix} ")
+        or lower_text == slash_prefix
+        or lower_text.startswith(slash_variants)
+    )
+
+
+def strip_group_trigger_prefix(message_text: str, trigger_prefix: str) -> str:
+    """Remove the plain/slash trigger prefix, including ``@botname`` variants."""
+    lower_text = message_text.lower()
+    lower_prefix = trigger_prefix.lower()
+    slash_prefix = f"/{lower_prefix}"
+    if lower_text == lower_prefix:
+        return ""
+    if lower_text.startswith(f"{lower_prefix} "):
+        return message_text[len(trigger_prefix) :].lstrip()
+    if lower_text == slash_prefix:
+        return ""
+    if lower_text.startswith(f"{slash_prefix} "):
+        return message_text[len(slash_prefix) :].lstrip()
+    if lower_text.startswith(f"{slash_prefix}@"):
+        parts = message_text.split(maxsplit=1)
+        return parts[1] if len(parts) > 1 else ""
+    return message_text
+
+
+def build_group_prompt(
+    history: list[dict[str, str]], message_text: str, trigger_prefix: str
+) -> str:
+    """Build the Claude prompt for a triggered group message."""
+    stripped = strip_group_trigger_prefix(message_text, trigger_prefix)
+    context_messages = history[-HISTORY_CONTEXT_SIZE:]
+    if not context_messages:
+        return stripped
+
+    history_str = format_history(context_messages)
+    return f"[Recent group conversation:\n{history_str}\n]\n\n{stripped}"
+
+
+def get_working_directory(chat_id: int, settings: Settings) -> Path:
     """Return the working directory to use for *chat_id*.
 
     Priority:
