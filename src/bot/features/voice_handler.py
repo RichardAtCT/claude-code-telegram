@@ -126,6 +126,53 @@ class VoiceHandler:
             raise ValueError("Mistral transcription returned an empty response.")
         return text
 
+    async def synthesize_speech(self, text: str) -> bytes:
+        """Synthesize text to audio using the Mistral TTS REST API.
+
+        Uses httpx directly because mistralai SDK 1.x lacks audio.speech.
+        Returns raw audio bytes in the configured format.
+        """
+        import base64
+
+        try:
+            import httpx
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "httpx is required for TTS. It should be installed as a "
+                "dependency of mistralai."
+            ) from exc
+
+        api_key = self.config.mistral_api_key_str
+        if not api_key:
+            raise RuntimeError("Mistral API key is not configured.")
+
+        payload = {
+            "model": self.config.voice_response_model,
+            "input": text,
+            "voice_id": self.config.voice_response_voice,
+            "response_format": self.config.voice_response_format,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    "https://api.mistral.ai/v1/audio/speech",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                audio_b64 = data.get("audio_data", "")
+                if not audio_b64:
+                    raise ValueError("Mistral TTS returned empty audio_data.")
+                return base64.b64decode(audio_b64)
+        except Exception as exc:
+            logger.warning(
+                "Mistral TTS request failed",
+                error_type=type(exc).__name__,
+            )
+            raise RuntimeError("Mistral TTS request failed.") from exc
+
     def _get_mistral_client(self) -> Any:
         """Create and cache a Mistral client on first use."""
         if self._mistral_client is not None:

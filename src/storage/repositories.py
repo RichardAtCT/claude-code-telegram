@@ -114,6 +114,30 @@ class UserRepository:
             rows = await cursor.fetchall()
             return [UserModel.from_row(row) for row in rows]
 
+    async def get_voice_responses_enabled(self, user_id: int) -> bool:
+        """Get voice response preference for a user."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT voice_responses_enabled FROM users WHERE user_id = ?",
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+            return bool(row[0]) if row else False
+
+    async def set_voice_responses_enabled(self, user_id: int, enabled: bool) -> None:
+        """Set voice response preference for a user."""
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                "UPDATE users SET voice_responses_enabled = ? WHERE user_id = ?",
+                (enabled, user_id),
+            )
+            await conn.commit()
+            logger.info(
+                "Updated voice response preference",
+                user_id=user_id,
+                enabled=enabled,
+            )
+
 
 class SessionRepository:
     """Session data access."""

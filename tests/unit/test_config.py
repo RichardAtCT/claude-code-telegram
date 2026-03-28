@@ -678,3 +678,61 @@ def test_configuration_error_handling():
                 "APPROVED_DIRECTORY",
             ]:
                 os.environ.pop(key, None)
+
+
+def test_voice_response_settings_defaults(tmp_path):
+    """Voice response settings have correct defaults."""
+    from src.config.settings import Settings
+
+    project_dir = tmp_path / "projects"
+    project_dir.mkdir()
+
+    config = Settings(
+        telegram_bot_token="test:token",
+        telegram_bot_username="testbot",
+        approved_directory=str(project_dir),
+    )
+    assert config.enable_voice_responses is False
+    assert config.voice_response_model == "voxtral-mini-tts-2603"
+    assert config.voice_response_voice == "c69964a6-ab8b-4f8a-9465-ec0925096ec8"
+    assert config.voice_response_format == "opus"
+    assert config.voice_response_max_length == 2000
+
+
+def test_voice_responses_feature_flag_enabled():
+    """voice_responses_enabled is True when enable_voice_responses and mistral_api_key set."""
+    from unittest.mock import MagicMock
+
+    from src.config.features import FeatureFlags
+
+    settings = MagicMock()
+    settings.enable_voice_responses = True
+    settings.mistral_api_key = MagicMock()  # not None = key is set
+    flags = FeatureFlags(settings)
+    assert flags.voice_responses_enabled is True
+
+
+def test_voice_responses_feature_flag_disabled_no_key():
+    """voice_responses_enabled is False when mistral_api_key is None."""
+    from unittest.mock import MagicMock
+
+    from src.config.features import FeatureFlags
+
+    settings = MagicMock()
+    settings.enable_voice_responses = True
+    settings.mistral_api_key = None
+    flags = FeatureFlags(settings)
+    assert flags.voice_responses_enabled is False
+
+
+def test_voice_responses_feature_flag_disabled_not_enabled():
+    """voice_responses_enabled is False when enable_voice_responses is False."""
+    from unittest.mock import MagicMock
+
+    from src.config.features import FeatureFlags
+
+    settings = MagicMock()
+    settings.enable_voice_responses = False
+    settings.mistral_api_key = MagicMock()
+    flags = FeatureFlags(settings)
+    assert flags.voice_responses_enabled is False
