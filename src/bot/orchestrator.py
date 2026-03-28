@@ -319,6 +319,7 @@ class MessageOrchestrator:
             ("new", self.agentic_new),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
+            ("voice", self.agentic_voice_toggle),
             ("repo", self.agentic_repo),
             ("restart", command.restart_command),
         ]
@@ -452,6 +453,7 @@ class MessageOrchestrator:
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("voice", "Toggle voice responses (on/off)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -612,6 +614,47 @@ class MessageOrchestrator:
         labels = {0: "quiet", 1: "normal", 2: "detailed"}
         await update.message.reply_text(
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
+            parse_mode="HTML",
+        )
+
+    async def agentic_voice_toggle(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Toggle voice responses: /voice [on|off]."""
+        if not self.settings.enable_voice_responses:
+            await update.message.reply_text(
+                "Voice responses are not enabled on this instance.",
+                parse_mode="HTML",
+            )
+            return
+
+        user_id = update.effective_user.id
+        storage = context.bot_data.get("storage")
+        args = update.message.text.split()[1:] if update.message.text else []
+
+        if not args:
+            enabled = await storage.users.get_voice_responses_enabled(user_id)
+            status = "on" if enabled else "off"
+            await update.message.reply_text(
+                f"Voice responses: <b>{status}</b>\n\n"
+                "Usage: <code>/voice on</code> or <code>/voice off</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        arg = args[0].lower()
+        if arg not in ("on", "off"):
+            await update.message.reply_text(
+                "Please use: /voice on or /voice off",
+                parse_mode="HTML",
+            )
+            return
+
+        enabled = arg == "on"
+        await storage.users.set_voice_responses_enabled(user_id, enabled)
+        status = "enabled" if enabled else "disabled"
+        await update.message.reply_text(
+            f"Voice responses <b>{status}</b>",
             parse_mode="HTML",
         )
 
