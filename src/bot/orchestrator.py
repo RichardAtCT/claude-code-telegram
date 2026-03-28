@@ -1150,6 +1150,7 @@ class MessageOrchestrator:
         heartbeat = self._start_typing_heartbeat(chat)
 
         success = True
+        response_content: Optional[str] = None
         try:
             claude_response = await claude_integration.run_command(
                 prompt=message_text,
@@ -1243,8 +1244,24 @@ class MessageOrchestrator:
                 except Exception as img_err:
                     logger.warning("Image+caption send failed", error=str(img_err))
 
-        # Send text messages (skip if caption was already embedded in photos)
-        if not caption_sent:
+        # Try voice response first (if enabled and user toggled on)
+        voice_sent = False
+        if not caption_sent and response_content:
+            features = context.bot_data.get("features")
+            voice_handler = features.get_voice_handler() if features else None
+            try:
+                voice_sent = await self._maybe_send_voice_response(
+                    update=update,
+                    context=context,
+                    response_text=response_content,
+                    user_id=user_id,
+                    voice_handler=voice_handler,
+                )
+            except Exception as voice_err:
+                logger.warning("Voice response attempt failed", error=str(voice_err))
+
+        # Send text messages (skip if caption or voice was already sent)
+        if not caption_sent and not voice_sent:
             for i, message in enumerate(formatted_messages):
                 if not message.text or not message.text.strip():
                     continue
