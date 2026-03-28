@@ -104,6 +104,8 @@ Output verbosity: `VERBOSE_LEVEL` (default 1, range 0-2). Controls how much of C
 
 Voice transcription: `ENABLE_VOICE_MESSAGES` (default true), `VOICE_PROVIDER` (`mistral`|`openai`, default `mistral`), `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `VOICE_TRANSCRIPTION_MODEL`. Provider implementation is in `src/bot/features/voice_handler.py`.
 
+Voice responses (TTS): `ENABLE_VOICE_RESPONSES` (default false), `VOICE_RESPONSE_MODEL` (default `voxtral-4b-tts-2603`), `VOICE_RESPONSE_VOICE` (default `jessica`), `VOICE_RESPONSE_FORMAT` (default `opus`), `VOICE_RESPONSE_MAX_LENGTH` (default 2000). Users toggle via `/voice on|off`. Long responses are summarized before TTS; on failure, falls back to text with note.
+
 Feature flags in `src/config/features.py` control: MCP, git integration, file uploads, quick actions, session export, image uploads, voice messages, conversation mode, agentic mode, API server, scheduler.
 
 ### DateTime Convention
@@ -122,7 +124,7 @@ All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow(
 
 ### Agentic mode
 
-Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
+Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/voice`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
 
 1. Add handler function in `src/bot/orchestrator.py`
 2. Register in `MessageOrchestrator._register_agentic_handlers()`

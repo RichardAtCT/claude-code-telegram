@@ -1,8 +1,6 @@
 """Tests for /voice toggle command."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 
 def _make_update_context(user_id=123, text="/voice"):
@@ -29,7 +27,7 @@ def _make_update_context(user_id=123, text="/voice"):
     return update, context, storage, settings
 
 
-async def test_voice_on_enables(monkeypatch):
+async def test_voice_on_enables():
     """'/voice on' enables voice responses for the user."""
     update, context, storage, settings = _make_update_context(text="/voice on")
     storage.users.set_voice_responses_enabled = AsyncMock()
@@ -46,7 +44,7 @@ async def test_voice_on_enables(monkeypatch):
     assert "on" in reply_text.lower() or "enabled" in reply_text.lower()
 
 
-async def test_voice_off_disables(monkeypatch):
+async def test_voice_off_disables():
     """'/voice off' disables voice responses for the user."""
     update, context, storage, settings = _make_update_context(text="/voice off")
     storage.users.set_voice_responses_enabled = AsyncMock()
