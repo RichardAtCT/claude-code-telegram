@@ -187,6 +187,20 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
+            # Inform Claude about voice response capabilities when enabled
+            if self.config.enable_voice_responses:
+                base_prompt += (
+                    "\n\n## Telegram Bot Capabilities\n"
+                    "You are accessed via a Telegram bot. "
+                    "Users can send voice messages which the bot transcribes to text before they reach you. "
+                    "When the user has enabled voice responses (via /voice on), "
+                    "the bot automatically converts your text responses to audio "
+                    "using text-to-speech and sends them as Telegram voice messages. "
+                    "Just respond normally in text — the bot handles audio conversion. "
+                    "Do NOT tell users you cannot send voice messages. "
+                    "When asked about voice capabilities, tell them to use /voice on or /voice off."
+                )
+
             # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
             # tools so the SDK does not restrict tool usage (e.g. MCP tools).
             if self.config.disable_tool_validation:
