@@ -948,6 +948,115 @@ class MessageOrchestrator:
 
         return caption_sent
 
+    async def _maybe_send_voice_response(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        response_text: str,
+        user_id: int,
+        voice_handler: Any,
+    ) -> bool:
+        """Try to send response as voice message.
+
+        Returns True if voice was sent (caller should adjust text sending).
+        Returns False if voice was not sent (caller sends text as normal).
+        """
+        if not self.settings.enable_voice_responses:
+            return False
+
+        storage = context.bot_data.get("storage")
+        if not storage:
+            return False
+
+        try:
+            enabled = await storage.users.get_voice_responses_enabled(user_id)
+        except Exception:
+            return False
+
+        if not enabled:
+            return False
+
+        if not voice_handler:
+            return False
+
+        text_to_speak = response_text
+        is_long = len(response_text) > self.settings.voice_response_max_length
+        send_full_text = False
+
+        if is_long:
+            # Summarize for spoken delivery
+            try:
+                claude_integration = context.bot_data.get("claude_integration")
+                if claude_integration:
+                    summary_prompt = (
+                        "Summarize the following response in 2-3 sentences "
+                        "suitable for being read aloud as a voice message. "
+                        "Output ONLY the summary, nothing else.\n\n"
+                        f"{response_text}"
+                    )
+                    summary_response = await claude_integration.run_command(
+                        prompt=summary_prompt,
+                        working_directory=Path(self.settings.approved_directory),
+                        user_id=user_id,
+                        force_new=True,
+                    )
+                    text_to_speak = summary_response.content or response_text
+                    send_full_text = True
+                else:
+                    # No Claude integration, truncate instead
+                    text_to_speak = response_text[
+                        : self.settings.voice_response_max_length
+                    ]
+                    send_full_text = True
+            except Exception as exc:
+                logger.warning(
+                    "Voice summary generation failed, falling back to text",
+                    error=str(exc),
+                )
+                return False
+
+        try:
+            audio_bytes = await voice_handler.synthesize_speech(text_to_speak)
+            await update.message.reply_voice(
+                voice=audio_bytes,
+                reply_to_message_id=update.message.message_id,
+            )
+
+            if send_full_text:
+                # Long response: send full text alongside
+                from .utils.formatting import ResponseFormatter
+
+                formatter = ResponseFormatter(self.settings)
+                formatted_messages = formatter.format_claude_response(response_text)
+                for message in formatted_messages:
+                    if message.text and message.text.strip():
+                        try:
+                            await update.message.reply_text(
+                                message.text,
+                                parse_mode=message.parse_mode,
+                                reply_markup=None,
+                            )
+                        except Exception:
+                            await update.message.reply_text(
+                                message.text, reply_markup=None
+                            )
+            else:
+                # Short response: just a label
+                await update.message.reply_text(
+                    "Voice response",
+                    reply_markup=None,
+                )
+
+            return True
+
+        except Exception as exc:
+            logger.warning(
+                "TTS failed, falling back to text",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return False
+
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
