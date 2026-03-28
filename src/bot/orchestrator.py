@@ -1040,13 +1040,6 @@ class MessageOrchestrator:
                             await update.message.reply_text(
                                 message.text, reply_markup=None
                             )
-            else:
-                # Short response: just a label
-                await update.message.reply_text(
-                    "Voice response",
-                    reply_markup=None,
-                )
-
             return True
 
         except Exception as exc:

@@ -60,8 +60,8 @@ async def test_short_response_sends_voice():
         "Hello, this is a short response."
     )
     update.message.reply_voice.assert_called_once()
-    # Should send a short label text too
-    update.message.reply_text.assert_called_once()
+    # Short responses: audio only, no text label
+    update.message.reply_text.assert_not_called()
 
 
 async def test_voice_disabled_skips():
