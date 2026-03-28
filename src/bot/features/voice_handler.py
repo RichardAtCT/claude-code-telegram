@@ -126,6 +126,28 @@ class VoiceHandler:
             raise ValueError("Mistral transcription returned an empty response.")
         return text
 
+    async def synthesize_speech(self, text: str) -> bytes:
+        """Synthesize text to audio using the Mistral TTS API.
+
+        Returns raw audio bytes in the configured format.
+        """
+        client = self._get_mistral_client()
+        try:
+            response = await client.audio.speech.complete_async(
+                model=self.config.voice_response_model,
+                voice=self.config.voice_response_voice,
+                input=text,
+                response_format=self.config.voice_response_format,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Mistral TTS request failed",
+                error_type=type(exc).__name__,
+            )
+            raise RuntimeError("Mistral TTS request failed.") from exc
+
+        return response
+
     def _get_mistral_client(self) -> Any:
         """Create and cache a Mistral client on first use."""
         if self._mistral_client is not None:
