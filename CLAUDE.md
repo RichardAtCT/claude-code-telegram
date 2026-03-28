@@ -104,7 +104,7 @@ Output verbosity: `VERBOSE_LEVEL` (default 1, range 0-2). Controls how much of C
 
 Voice transcription: `ENABLE_VOICE_MESSAGES` (default true), `VOICE_PROVIDER` (`mistral`|`openai`, default `mistral`), `MISTRAL_API_KEY`, `OPENAI_API_KEY`, `VOICE_TRANSCRIPTION_MODEL`. Provider implementation is in `src/bot/features/voice_handler.py`.
 
-Voice responses (TTS): `ENABLE_VOICE_RESPONSES` (default false), `VOICE_RESPONSE_MODEL` (default `voxtral-4b-tts-2603`), `VOICE_RESPONSE_VOICE` (default `jessica`), `VOICE_RESPONSE_FORMAT` (default `opus`), `VOICE_RESPONSE_MAX_LENGTH` (default 2000). Users toggle via `/voice on|off`. Long responses are summarized before TTS; on failure, falls back to text with note.
+Voice responses (TTS): `ENABLE_VOICE_RESPONSES` (default false), `VOICE_RESPONSE_MODEL` (default `voxtral-mini-tts-2603`), `VOICE_RESPONSE_VOICE` (voice UUID from Mistral `/v1/audio/voices`), `VOICE_RESPONSE_FORMAT` (default `opus`), `VOICE_RESPONSE_MAX_LENGTH` (default 2000). Users toggle via `/voice on|off`. Long responses are summarized before TTS; on failure, falls back to text with note.
 
 Feature flags in `src/config/features.py` control: MCP, git integration, file uploads, quick actions, session export, image uploads, voice messages, conversation mode, agentic mode, API server, scheduler.
 

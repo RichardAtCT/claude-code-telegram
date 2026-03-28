@@ -201,12 +201,12 @@ class Settings(BaseSettings):
         False, description="Enable text-to-speech voice responses"
     )
     voice_response_model: str = Field(
-        "voxtral-4b-tts-2603",
+        "voxtral-mini-tts-2603",
         description="Mistral TTS model for voice responses",
     )
     voice_response_voice: str = Field(
-        "jessica",
-        description="Mistral TTS voice preset name",
+        "c69964a6-ab8b-4f8a-9465-ec0925096ec8",
+        description="Mistral TTS voice ID (UUID from /v1/audio/voices)",
     )
     voice_response_format: str = Field(
         "opus",

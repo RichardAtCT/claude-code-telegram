@@ -693,8 +693,8 @@ def test_voice_response_settings_defaults(tmp_path):
         approved_directory=str(project_dir),
     )
     assert config.enable_voice_responses is False
-    assert config.voice_response_model == "voxtral-4b-tts-2603"
-    assert config.voice_response_voice == "jessica"
+    assert config.voice_response_model == "voxtral-mini-tts-2603"
+    assert config.voice_response_voice == "c69964a6-ab8b-4f8a-9465-ec0925096ec8"
     assert config.voice_response_format == "opus"
     assert config.voice_response_max_length == 2000
 
