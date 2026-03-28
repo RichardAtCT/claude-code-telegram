@@ -38,6 +38,7 @@ class UserModel:
     total_cost: float = 0.0
     message_count: int = 0
     session_count: int = 0
+    voice_responses_enabled: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""

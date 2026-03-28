@@ -310,6 +310,13 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- Add voice response preference to users
+                ALTER TABLE users ADD COLUMN voice_responses_enabled BOOLEAN DEFAULT FALSE;
+                """,
+            ),
         ]
 
     async def _init_pool(self):
