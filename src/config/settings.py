@@ -195,6 +195,30 @@ class Settings(BaseSettings):
         ge=1,
         le=200,
     )
+
+    # Voice response (TTS) settings
+    enable_voice_responses: bool = Field(
+        False, description="Enable text-to-speech voice responses"
+    )
+    voice_response_model: str = Field(
+        "voxtral-4b-tts-2603",
+        description="Mistral TTS model for voice responses",
+    )
+    voice_response_voice: str = Field(
+        "jessica",
+        description="Mistral TTS voice preset name",
+    )
+    voice_response_format: str = Field(
+        "opus",
+        description="TTS output audio format (opus for Telegram voice compatibility)",
+    )
+    voice_response_max_length: int = Field(
+        2000,
+        description="Character threshold above which responses are summarized before TTS",
+        ge=100,
+        le=10000,
+    )
+
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
         True,

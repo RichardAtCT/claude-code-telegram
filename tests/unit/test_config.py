@@ -678,3 +678,22 @@ def test_configuration_error_handling():
                 "APPROVED_DIRECTORY",
             ]:
                 os.environ.pop(key, None)
+
+
+def test_voice_response_settings_defaults(tmp_path):
+    """Voice response settings have correct defaults."""
+    from src.config.settings import Settings
+
+    project_dir = tmp_path / "projects"
+    project_dir.mkdir()
+
+    config = Settings(
+        telegram_bot_token="test:token",
+        telegram_bot_username="testbot",
+        approved_directory=str(project_dir),
+    )
+    assert config.enable_voice_responses is False
+    assert config.voice_response_model == "voxtral-4b-tts-2603"
+    assert config.voice_response_voice == "jessica"
+    assert config.voice_response_format == "opus"
+    assert config.voice_response_max_length == 2000
