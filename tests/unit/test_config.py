@@ -697,3 +697,42 @@ def test_voice_response_settings_defaults(tmp_path):
     assert config.voice_response_voice == "jessica"
     assert config.voice_response_format == "opus"
     assert config.voice_response_max_length == 2000
+
+
+def test_voice_responses_feature_flag_enabled():
+    """voice_responses_enabled is True when enable_voice_responses and mistral_api_key set."""
+    from unittest.mock import MagicMock
+
+    from src.config.features import FeatureFlags
+
+    settings = MagicMock()
+    settings.enable_voice_responses = True
+    settings.mistral_api_key = MagicMock()  # not None = key is set
+    flags = FeatureFlags(settings)
+    assert flags.voice_responses_enabled is True
+
+
+def test_voice_responses_feature_flag_disabled_no_key():
+    """voice_responses_enabled is False when mistral_api_key is None."""
+    from unittest.mock import MagicMock
+
+    from src.config.features import FeatureFlags
+
+    settings = MagicMock()
+    settings.enable_voice_responses = True
+    settings.mistral_api_key = None
+    flags = FeatureFlags(settings)
+    assert flags.voice_responses_enabled is False
+
+
+def test_voice_responses_feature_flag_disabled_not_enabled():
+    """voice_responses_enabled is False when enable_voice_responses is False."""
+    from unittest.mock import MagicMock
+
+    from src.config.features import FeatureFlags
+
+    settings = MagicMock()
+    settings.enable_voice_responses = False
+    settings.mistral_api_key = MagicMock()
+    flags = FeatureFlags(settings)
+    assert flags.voice_responses_enabled is False
