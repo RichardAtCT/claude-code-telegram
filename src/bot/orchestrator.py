@@ -1055,6 +1055,13 @@ class MessageOrchestrator:
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
+            try:
+                await update.message.reply_text(
+                    "(Audio unavailable, sent as text)",
+                    reply_markup=None,
+                )
+            except Exception:
+                pass
             return False
 
     async def agentic_text(
