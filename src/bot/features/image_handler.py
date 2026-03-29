@@ -57,7 +57,6 @@ class ImageHandler:
         else:
             prompt = self._create_generic_prompt(caption)
 
-        # Convert to base64 for Claude (if supported in future)
         base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         return ProcessedImage(

@@ -4,7 +4,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import structlog
 from claude_agent_sdk import (
@@ -155,6 +155,7 @@ class ClaudeSDKManager:
         continue_session: bool = False,
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -248,7 +249,37 @@ class ClaudeSDKManager:
                 client = ClaudeSDKClient(options)
                 try:
                     await client.connect()
-                    await client.query(prompt)
+
+                    if images:
+                        content_blocks: List[Dict[str, Any]] = []
+                        for img in images:
+                            media_type = img.get("media_type", "image/png")
+                            content_blocks.append(
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": img["data"],
+                                    },
+                                }
+                            )
+                        content_blocks.append({"type": "text", "text": prompt})
+
+                        multimodal_msg = {
+                            "type": "user",
+                            "message": {
+                                "role": "user",
+                                "content": content_blocks,
+                            },
+                        }
+
+                        async def _multimodal_prompt() -> AsyncIterator[Dict[str, Any]]:
+                            yield multimodal_msg
+
+                        await client.query(_multimodal_prompt())
+                    else:
+                        await client.query(prompt)
 
                     async for raw_data in client._query.receive_messages():
                         try:
