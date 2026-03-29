@@ -493,6 +493,9 @@ def test_voice_provider_local_requires_no_api_key(tmp_path):
         telegram_bot_username="test_bot",
         approved_directory=str(project_dir),
         voice_provider="local",
+        whisper_cpp_binary_path=None,
+        whisper_cpp_model_path=None,
+        _env_file=None,
     )
 
     assert settings.voice_provider == "local"

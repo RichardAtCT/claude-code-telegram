@@ -3,7 +3,6 @@
 import asyncio
 import sys
 from datetime import timedelta
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -368,6 +367,7 @@ def local_config():
     cfg.resolved_whisper_cpp_model_path = "/tmp/models/ggml-base.bin"
     cfg.voice_max_file_size_mb = 20
     cfg.voice_max_file_size_bytes = 20 * 1024 * 1024
+    cfg.whisper_cpp_timeout = 120
     return cfg
 
 
@@ -530,4 +530,63 @@ async def test_transcribe_local_whisper_nonzero_exit(local_voice_handler):
         ),
     ):
         with pytest.raises(RuntimeError, match="transcription failed"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+async def test_transcribe_local_ffmpeg_timeout(local_voice_handler):
+    """ffmpeg timeout raises RuntimeError with 'timed out' message."""
+    local_voice_handler.config.whisper_cpp_timeout = 1
+
+    mock_process = AsyncMock()
+    mock_process.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_process.kill = MagicMock()
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            return_value=mock_process,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="timed out"):
+            await local_voice_handler._transcribe_local(b"fake-ogg")
+
+
+async def test_transcribe_local_whisper_timeout(local_voice_handler):
+    """whisper.cpp timeout raises RuntimeError with 'timed out' message."""
+    local_voice_handler.config.whisper_cpp_timeout = 1
+
+    mock_ffmpeg = AsyncMock()
+    mock_ffmpeg.communicate = AsyncMock(return_value=(b"", b""))
+    mock_ffmpeg.returncode = 0
+
+    mock_whisper = AsyncMock()
+    mock_whisper.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_whisper.kill = MagicMock()
+
+    call_count = 0
+
+    async def fake_subprocess(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return mock_ffmpeg
+        return mock_whisper
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/whisper-cpp"),
+        patch(
+            "src.bot.features.voice_handler.Path.is_file",
+            return_value=True,
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=fake_subprocess,
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="timed out"):
             await local_voice_handler._transcribe_local(b"fake-ogg")

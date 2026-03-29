@@ -196,19 +196,27 @@ class Settings(BaseSettings):
         le=200,
     )
     whisper_cpp_binary_path: Optional[str] = Field(
-        None,
+        default=None,
         description=(
             "Path to whisper.cpp binary. "
             "Required when VOICE_PROVIDER=local. Auto-detected from PATH if unset."
         ),
     )
     whisper_cpp_model_path: Optional[str] = Field(
-        None,
+        default=None,
         description=(
             "Path to whisper.cpp GGML model file, or model name "
             "(e.g. 'base', 'small'). Defaults to 'base'. "
             "Named models resolve to ~/.cache/whisper-cpp/ggml-{name}.bin"
         ),
+    )
+    whisper_cpp_timeout: int = Field(
+        default=120,
+        description=(
+            "Timeout in seconds for ffmpeg and whisper.cpp subprocess calls "
+            "when using the local voice provider"
+        ),
+        ge=1,
     )
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
@@ -558,6 +566,4 @@ class Settings(BaseSettings):
         path_or_name = self.whisper_cpp_model_path or "base"
         if "/" in path_or_name or path_or_name.endswith(".bin"):
             return path_or_name
-        return str(
-            Path.home() / ".cache" / "whisper-cpp" / f"ggml-{path_or_name}.bin"
-        )
+        return str(Path.home() / ".cache" / "whisper-cpp" / f"ggml-{path_or_name}.bin")

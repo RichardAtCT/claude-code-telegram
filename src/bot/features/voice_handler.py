@@ -28,14 +28,32 @@ class ProcessedVoice:
 class VoiceHandler:
     """Transcribe Telegram voice messages using Mistral, OpenAI, or local whisper.cpp."""
 
-    # Timeout (seconds) for ffmpeg and whisper.cpp subprocess calls.
-    LOCAL_SUBPROCESS_TIMEOUT: int = 120
-
     def __init__(self, config: Settings):
         self.config = config
         self._mistral_client: Optional[Any] = None
         self._openai_client: Optional[Any] = None
         self._resolved_whisper_binary: Optional[str] = None
+
+    def validate_local_provider(self) -> None:
+        """Validate that whisper.cpp binary and model are available.
+
+        Call at startup to fail fast instead of waiting for the first
+        voice message.
+        """
+        binary = self._resolve_whisper_binary()
+        model_path = self.config.resolved_whisper_cpp_model_path
+        if not Path(model_path).is_file():
+            raise RuntimeError(
+                f"whisper.cpp model not found at {model_path}. "
+                "Download it with: "
+                "curl -L -o ~/.cache/whisper-cpp/ggml-base.bin "
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+            )
+        logger.info(
+            "Local whisper.cpp provider validated",
+            binary_path=binary,
+            model_path=model_path,
+        )
 
     def _ensure_allowed_file_size(self, file_size: Optional[int]) -> None:
         """Reject files that exceed the configured max size."""
@@ -208,6 +226,7 @@ class VoiceHandler:
         """Transcribe audio locally using whisper.cpp binary."""
         binary = self._resolve_whisper_binary()
         model_path = self.config.resolved_whisper_cpp_model_path
+        logger.info("Using whisper.cpp model", model_path=model_path)
 
         if not Path(model_path).is_file():
             raise RuntimeError(
@@ -262,7 +281,7 @@ class VoiceHandler:
             )
             _, stderr = await asyncio.wait_for(
                 process.communicate(),
-                timeout=self.LOCAL_SUBPROCESS_TIMEOUT,
+                timeout=self.config.whisper_cpp_timeout,
             )
 
             if process.returncode != 0:
@@ -273,7 +292,7 @@ class VoiceHandler:
         except asyncio.TimeoutError:
             process.kill()
             raise RuntimeError(
-                f"ffmpeg conversion timed out after {self.LOCAL_SUBPROCESS_TIMEOUT}s."
+                f"ffmpeg conversion timed out after {self.config.whisper_cpp_timeout}s."
             )
         except FileNotFoundError:
             raise RuntimeError(
@@ -300,7 +319,7 @@ class VoiceHandler:
             )
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(),
-                timeout=self.LOCAL_SUBPROCESS_TIMEOUT,
+                timeout=self.config.whisper_cpp_timeout,
             )
 
             if process.returncode != 0:
@@ -317,7 +336,7 @@ class VoiceHandler:
             process.kill()
             raise RuntimeError(
                 f"whisper.cpp transcription timed out after "
-                f"{self.LOCAL_SUBPROCESS_TIMEOUT}s."
+                f"{self.config.whisper_cpp_timeout}s."
             )
         except FileNotFoundError:
             raise RuntimeError(
@@ -346,4 +365,5 @@ class VoiceHandler:
                 "Set WHISPER_CPP_BINARY_PATH to the full path."
             )
         self._resolved_whisper_binary = resolved
+        logger.info("Resolved whisper.cpp binary", binary_path=resolved)
         return resolved

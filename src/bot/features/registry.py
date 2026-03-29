@@ -80,11 +80,9 @@ class FeatureRegistry:
 
         # Voice transcription - requires provider-specific API key (or local)
         voice_key_available = (
-            self.config.voice_provider == "local"
-        ) or (
-            self.config.voice_provider == "openai" and self.config.openai_api_key
-        ) or (
-            self.config.voice_provider == "mistral" and self.config.mistral_api_key
+            (self.config.voice_provider == "local")
+            or (self.config.voice_provider == "openai" and self.config.openai_api_key)
+            or (self.config.voice_provider == "mistral" and self.config.mistral_api_key)
         )
         if self.config.enable_voice_messages and voice_key_available:
             try:
