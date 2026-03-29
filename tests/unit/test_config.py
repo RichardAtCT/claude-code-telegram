@@ -457,7 +457,7 @@ def test_project_threads_validation_invalid_mode(tmp_path):
 
 
 def test_voice_provider_validation_and_normalization(tmp_path):
-    """VOICE_PROVIDER accepts only mistral/openai and normalizes casing."""
+    """VOICE_PROVIDER accepts mistral/openai/local and normalizes casing."""
     project_dir = tmp_path / "projects"
     project_dir.mkdir()
 
@@ -481,6 +481,26 @@ def test_voice_provider_validation_and_normalization(tmp_path):
         )
 
     assert "voice_provider must be one of" in str(exc_info.value)
+
+
+def test_voice_provider_local_requires_no_api_key(tmp_path):
+    """VOICE_PROVIDER=local needs no API key and has correct display properties."""
+    project_dir = tmp_path / "projects"
+    project_dir.mkdir()
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(project_dir),
+        voice_provider="local",
+    )
+
+    assert settings.voice_provider == "local"
+    assert settings.voice_provider_api_key_env == ""
+    assert settings.voice_provider_display_name == "Local whisper.cpp"
+    assert settings.resolved_voice_model == "base"
+    assert settings.resolved_whisper_cpp_binary == "whisper-cpp"
+    assert settings.resolved_whisper_cpp_model_path.endswith("ggml-base.bin")
 
 
 def test_voice_max_file_size_configuration(tmp_path):

@@ -169,9 +169,9 @@ class Settings(BaseSettings):
     enable_voice_messages: bool = Field(
         True, description="Enable voice message transcription"
     )
-    voice_provider: Literal["mistral", "openai"] = Field(
+    voice_provider: Literal["mistral", "openai", "local"] = Field(
         "mistral",
-        description="Voice transcription provider: 'mistral' or 'openai'",
+        description="Voice transcription provider: 'mistral', 'openai', or 'local'",
     )
     mistral_api_key: Optional[SecretStr] = Field(
         None, description="Mistral API key for voice transcription"
@@ -194,6 +194,21 @@ class Settings(BaseSettings):
         ),
         ge=1,
         le=200,
+    )
+    whisper_cpp_binary_path: Optional[str] = Field(
+        None,
+        description=(
+            "Path to whisper.cpp binary. "
+            "Required when VOICE_PROVIDER=local. Auto-detected from PATH if unset."
+        ),
+    )
+    whisper_cpp_model_path: Optional[str] = Field(
+        None,
+        description=(
+            "Path to whisper.cpp GGML model file, or model name "
+            "(e.g. 'base', 'small'). Defaults to 'base'. "
+            "Named models resolve to ~/.cache/whisper-cpp/ggml-{name}.bin"
+        ),
     )
     enable_quick_actions: bool = Field(True, description="Enable quick action buttons")
     agentic_mode: bool = Field(
@@ -395,8 +410,10 @@ class Settings(BaseSettings):
         if v is None:
             return "mistral"
         provider = str(v).strip().lower()
-        if provider not in {"mistral", "openai"}:
-            raise ValueError("voice_provider must be one of ['mistral', 'openai']")
+        if provider not in {"mistral", "openai", "local"}:
+            raise ValueError(
+                "voice_provider must be one of ['mistral', 'openai', 'local']"
+            )
         return provider
 
     @field_validator("project_threads_chat_id", mode="before")
@@ -503,6 +520,8 @@ class Settings(BaseSettings):
             return self.voice_transcription_model
         if self.voice_provider == "openai":
             return "whisper-1"
+        if self.voice_provider == "local":
+            return self.whisper_cpp_model_path or "base"
         return "voxtral-mini-latest"
 
     @property
@@ -515,6 +534,8 @@ class Settings(BaseSettings):
         """API key environment variable required for the configured voice provider."""
         if self.voice_provider == "openai":
             return "OPENAI_API_KEY"
+        if self.voice_provider == "local":
+            return ""
         return "MISTRAL_API_KEY"
 
     @property
@@ -522,4 +543,21 @@ class Settings(BaseSettings):
         """Human-friendly label for the configured voice provider."""
         if self.voice_provider == "openai":
             return "OpenAI Whisper"
+        if self.voice_provider == "local":
+            return "Local whisper.cpp"
         return "Mistral Voxtral"
+
+    @property
+    def resolved_whisper_cpp_binary(self) -> str:
+        """Resolve whisper.cpp binary path, defaulting to 'whisper-cpp' on PATH."""
+        return self.whisper_cpp_binary_path or "whisper-cpp"
+
+    @property
+    def resolved_whisper_cpp_model_path(self) -> str:
+        """Resolve whisper.cpp model file path from name or explicit path."""
+        path_or_name = self.whisper_cpp_model_path or "base"
+        if "/" in path_or_name or path_or_name.endswith(".bin"):
+            return path_or_name
+        return str(
+            Path.home() / ".cache" / "whisper-cpp" / f"ggml-{path_or_name}.bin"
+        )

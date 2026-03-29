@@ -51,7 +51,7 @@ run:
 	poetry run claude-telegram-bot
 
 run-watch:  ## Run the bot with auto-restart on src/ changes (uses watchfiles)
-	poetry run watchfiles "python -m src.main" src/
+	poetry run watchfiles "claude-telegram-bot" src/
 
 # For debugging
 run-debug:

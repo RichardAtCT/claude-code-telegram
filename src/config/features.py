@@ -76,6 +76,8 @@ class FeatureFlags:
         """Check if voice message transcription is enabled."""
         if not self.settings.enable_voice_messages:
             return False
+        if self.settings.voice_provider == "local":
+            return True  # No API key needed for local whisper.cpp
         if self.settings.voice_provider == "openai":
             return self.settings.openai_api_key is not None
         return self.settings.mistral_api_key is not None

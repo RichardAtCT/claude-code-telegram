@@ -194,7 +194,7 @@ Enable with `ENABLE_API_SERVER=true` and `ENABLE_SCHEDULER=true`. See [docs/setu
 - Directory sandboxing with path traversal prevention
 - File upload handling with archive extraction
 - Image/screenshot upload with analysis
-- Voice message transcription (Mistral Voxtral / OpenAI Whisper)
+- Voice message transcription (Mistral Voxtral / OpenAI Whisper / [local whisper.cpp](docs/local-whisper-cpp.md))
 - Git integration with safe repository operations
 - Quick actions system with context-aware buttons
 - Session export in Markdown, HTML, and JSON formats

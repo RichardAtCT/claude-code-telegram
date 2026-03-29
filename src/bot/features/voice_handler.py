@@ -1,7 +1,11 @@
-"""Handle voice message transcription via Mistral (Voxtral) or OpenAI (Whisper)."""
+"""Handle voice message transcription via Mistral (Voxtral), OpenAI (Whisper), or local whisper.cpp."""
 
+import asyncio
+import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Optional
 
 import structlog
@@ -22,12 +26,16 @@ class ProcessedVoice:
 
 
 class VoiceHandler:
-    """Transcribe Telegram voice messages using Mistral or OpenAI."""
+    """Transcribe Telegram voice messages using Mistral, OpenAI, or local whisper.cpp."""
+
+    # Timeout (seconds) for ffmpeg and whisper.cpp subprocess calls.
+    LOCAL_SUBPROCESS_TIMEOUT: int = 120
 
     def __init__(self, config: Settings):
         self.config = config
         self._mistral_client: Optional[Any] = None
         self._openai_client: Optional[Any] = None
+        self._resolved_whisper_binary: Optional[str] = None
 
     def _ensure_allowed_file_size(self, file_size: Optional[int]) -> None:
         """Reject files that exceed the configured max size."""
@@ -48,7 +56,7 @@ class VoiceHandler:
         """Download and transcribe a voice message.
 
         1. Download .ogg bytes from Telegram
-        2. Call the configured transcription API (Mistral or OpenAI)
+        2. Call the configured transcription provider (Mistral, OpenAI, or local)
         3. Build a prompt combining caption + transcription
         """
         initial_file_size = getattr(voice, "file_size", None)
@@ -79,7 +87,9 @@ class VoiceHandler:
             file_size=initial_file_size or resolved_file_size or len(voice_bytes),
         )
 
-        if self.config.voice_provider == "openai":
+        if self.config.voice_provider == "local":
+            transcription = await self._transcribe_local(voice_bytes)
+        elif self.config.voice_provider == "openai":
             transcription = await self._transcribe_openai(voice_bytes)
         else:
             transcription = await self._transcribe_mistral(voice_bytes)
@@ -102,6 +112,8 @@ class VoiceHandler:
             transcription=transcription,
             duration=duration_secs,
         )
+
+    # -- Mistral provider --
 
     async def _transcribe_mistral(self, voice_bytes: bytes) -> str:
         """Transcribe audio using the Mistral API (Voxtral)."""
@@ -147,6 +159,8 @@ class VoiceHandler:
         self._mistral_client = Mistral(api_key=api_key)
         return self._mistral_client
 
+    # -- OpenAI provider --
+
     async def _transcribe_openai(self, voice_bytes: bytes) -> str:
         """Transcribe audio using the OpenAI Whisper API."""
         client = self._get_openai_client()
@@ -187,3 +201,149 @@ class VoiceHandler:
 
         self._openai_client = AsyncOpenAI(api_key=api_key)
         return self._openai_client
+
+    # -- Local whisper.cpp provider --
+
+    async def _transcribe_local(self, voice_bytes: bytes) -> str:
+        """Transcribe audio locally using whisper.cpp binary."""
+        binary = self._resolve_whisper_binary()
+        model_path = self.config.resolved_whisper_cpp_model_path
+
+        if not Path(model_path).is_file():
+            raise RuntimeError(
+                f"whisper.cpp model not found at {model_path}. "
+                "Download it with: "
+                "curl -L -o ~/.cache/whisper-cpp/ggml-base.bin "
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+            )
+
+        tmp_dir = None
+        try:
+            tmp_dir = tempfile.mkdtemp(prefix="voice_")
+            ogg_path = Path(tmp_dir) / "voice.ogg"
+            wav_path = Path(tmp_dir) / "voice.wav"
+
+            ogg_path.write_bytes(voice_bytes)
+
+            # Convert OGG/Opus -> WAV (16kHz mono PCM)
+            await self._convert_ogg_to_wav(ogg_path, wav_path)
+
+            # Run whisper.cpp
+            text = await self._run_whisper_cpp(binary, model_path, wav_path)
+
+        finally:
+            if tmp_dir:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        text = text.strip()
+        if not text:
+            raise ValueError(
+                "Local whisper.cpp transcription returned an empty response."
+            )
+        return text
+
+    async def _convert_ogg_to_wav(self, ogg_path: Path, wav_path: Path) -> None:
+        """Convert OGG/Opus to WAV (16kHz mono PCM) using ffmpeg."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-i",
+                str(ogg_path),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-f",
+                "wav",
+                str(wav_path),
+                "-y",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.LOCAL_SUBPROCESS_TIMEOUT,
+            )
+
+            if process.returncode != 0:
+                raise RuntimeError(
+                    f"ffmpeg conversion failed (exit {process.returncode}): "
+                    f"{stderr.decode()[:200]}"
+                )
+        except asyncio.TimeoutError:
+            process.kill()
+            raise RuntimeError(
+                f"ffmpeg conversion timed out after {self.LOCAL_SUBPROCESS_TIMEOUT}s."
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "ffmpeg is required for local voice transcription but was not found. "
+                "Install it with: apt install ffmpeg"
+            )
+
+    async def _run_whisper_cpp(
+        self, binary: str, model_path: str, wav_path: Path
+    ) -> str:
+        """Execute whisper.cpp binary and return transcription text."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                binary,
+                "-m",
+                model_path,
+                "-f",
+                str(wav_path),
+                "--no-timestamps",
+                "-l",
+                "auto",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.LOCAL_SUBPROCESS_TIMEOUT,
+            )
+
+            if process.returncode != 0:
+                logger.warning(
+                    "whisper.cpp transcription failed",
+                    return_code=process.returncode,
+                    stderr=stderr.decode()[:300],
+                )
+                raise RuntimeError("Local whisper.cpp transcription failed.")
+
+            return stdout.decode()
+
+        except asyncio.TimeoutError:
+            process.kill()
+            raise RuntimeError(
+                f"whisper.cpp transcription timed out after "
+                f"{self.LOCAL_SUBPROCESS_TIMEOUT}s."
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"whisper.cpp binary not found at '{binary}'. "
+                "Set WHISPER_CPP_BINARY_PATH or install whisper.cpp."
+            )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "whisper.cpp transcription request failed",
+                error_type=type(exc).__name__,
+            )
+            raise RuntimeError("Local whisper.cpp transcription failed.") from exc
+
+    def _resolve_whisper_binary(self) -> str:
+        """Resolve and validate the whisper.cpp binary path on first use."""
+        if self._resolved_whisper_binary is not None:
+            return self._resolved_whisper_binary
+
+        binary = self.config.resolved_whisper_cpp_binary
+        resolved = shutil.which(binary)
+        if not resolved:
+            raise RuntimeError(
+                f"whisper.cpp binary '{binary}' not found on PATH. "
+                "Set WHISPER_CPP_BINARY_PATH to the full path."
+            )
+        self._resolved_whisper_binary = resolved
+        return resolved
