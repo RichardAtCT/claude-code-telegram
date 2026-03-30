@@ -122,7 +122,7 @@ All datetimes use timezone-aware UTC: `datetime.now(UTC)` (not `datetime.utcnow(
 
 ### Agentic mode
 
-Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. To add a new command:
+Agentic mode commands: `/start`, `/new`, `/status`, `/verbose`, `/repo`. If `ENABLE_PROJECT_THREADS=true`: `/sync_threads`. If `ENABLE_SCHEDULER=true`: `/schedule`. To add a new command:
 
 1. Add handler function in `src/bot/orchestrator.py`
 2. Register in `MessageOrchestrator._register_agentic_handlers()`

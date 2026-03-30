@@ -181,6 +181,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
         "event_bus": event_bus,
         "project_registry": None,
         "project_threads_manager": None,
+        "scheduler": None,
     }
 
     bot = ClaudeCodeBot(config, dependencies)
@@ -314,6 +315,7 @@ async def run_application(app: Dict[str, Any]) -> None:
                 default_working_directory=config.approved_directory,
             )
             await scheduler.start()
+            bot.deps["scheduler"] = scheduler
             logger.info("Job scheduler enabled")
 
         # Shutdown task

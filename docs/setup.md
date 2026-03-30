@@ -173,7 +173,23 @@ ENABLE_SCHEDULER=true
 NOTIFICATION_CHAT_IDS=123456789  # Where to deliver results
 ```
 
-Jobs are managed programmatically and persist in the SQLite database.
+Jobs persist in the SQLite database and survive bot restarts. Manage them directly from Telegram with the `/schedule` command:
+
+```
+/schedule list                                      # List all jobs (active + paused)
+/schedule add <name> <min> <hour> <day> <month> <weekday> <prompt>
+/schedule remove <job_id>                           # Remove a job
+/schedule pause <job_id>                            # Pause without deleting
+/schedule resume <job_id>                           # Resume a paused job
+```
+
+Example -- create a job that runs every weekday at 9 AM:
+
+```
+/schedule add daily-report 0 9 * * 1-5 Summarize yesterday's git commits
+```
+
+The `chat_id`, `working_directory`, and `created_by` fields are auto-populated from your current Telegram context. Results are delivered to the chat where the job was created.
 
 ### Voice Message Transcription
 
