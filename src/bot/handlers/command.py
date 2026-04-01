@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 import structlog
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from ...claude.facade import ClaudeIntegration
@@ -1233,14 +1233,13 @@ async def git_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         logger.error("Error in git_command", error=str(e), user_id=user_id)
 
 
-# Model IDs mapped to user-friendly labels
-_MODELS = {
-    "opus": "claude-opus-4-6",
-    "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001",
-}
+# Short CLI aliases passed directly to the Claude CLI, which resolves them to
+# the current latest model of each family. No version numbers to maintain here.
+# See: https://docs.anthropic.com/en/docs/about-claude/models/overview
+_MODEL_FAMILIES = ["opus", "sonnet", "haiku"]
 
-# Effort levels per model (Haiku doesn't support effort; "max" is Opus-only)
+# Effort levels per model family. Haiku has none; "max" is Opus-only.
+# Update here if a future model's effort support changes.
 _EFFORT_BY_MODEL = {
     "opus": ["low", "medium", "high", "max"],
     "sonnet": ["low", "medium", "high"],
@@ -1250,23 +1249,15 @@ _EFFORT_BY_MODEL = {
 
 def _current_model_label(context: ContextTypes.DEFAULT_TYPE) -> str:
     """Return a human-friendly label for the active model + effort."""
-    override = context.user_data.get("model_override")
+    override = context.user_data.get("model_override")  # "opus", "sonnet", "haiku", or None
     effort = context.user_data.get("effort_override")
-    # Reverse-map model ID to short name
-    model_id = override or ""
-    label = model_id
-    for short, full in _MODELS.items():
-        if full == model_id:
-            label = short.capitalize()
-            break
     if not override:
         settings = context.bot_data.get("settings")
         server_model = getattr(settings, "claude_model", None) if settings else None
         label = f"Default ({server_model or 'CLI default'})"
-    parts = [label]
-    if effort:
-        parts.append(f"effort={effort}")
-    return " | ".join(parts)
+    else:
+        label = override.capitalize()
+    return f"{label} | effort={effort}" if effort else label
 
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1291,7 +1282,11 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def _handle_model_selection(query, data: str, context) -> None:
+async def _handle_model_selection(
+    query: CallbackQuery,
+    data: str,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
     """Shared logic for model/effort selection (used by both callback routes)."""
     if data.startswith("model:"):
         choice = data.split(":", 1)[1]
@@ -1299,6 +1294,7 @@ async def _handle_model_selection(query, data: str, context) -> None:
         if choice == "default":
             context.user_data.pop("model_override", None)
             context.user_data.pop("effort_override", None)
+            # Note: if PR #165 merges first, change this to context.chat_data
             context.user_data["force_new_session"] = True
             await query.edit_message_text(
                 "🤖 Model and effort reset to server defaults.\n"
@@ -1308,21 +1304,23 @@ async def _handle_model_selection(query, data: str, context) -> None:
             logger.info("Model override cleared", user_id=query.from_user.id)
             return
 
-        model_id = _MODELS.get(choice)
-        if not model_id:
+        if choice not in _MODEL_FAMILIES:
             await query.edit_message_text("Unknown model.")
             return
 
-        context.user_data["model_override"] = model_id
+        # Store short CLI alias ("opus"/"sonnet"/"haiku") — the CLI resolves it
+        # to the current latest model, so no version numbers to maintain.
+        context.user_data["model_override"] = choice
         # Clear stale effort when switching models
         context.user_data.pop("effort_override", None)
         # Force new session so the model change takes effect immediately
+        # Note: if PR #165 merges first, change this to context.chat_data
         context.user_data["force_new_session"] = True
 
         logger.info(
             "Model override set",
             user_id=query.from_user.id,
-            model=model_id,
+            model=choice,
         )
 
         # Show effort level selection (if supported by this model)
