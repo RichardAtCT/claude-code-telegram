@@ -239,11 +239,11 @@ async def test_agentic_new_resets_session(agentic_settings, deps):
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
-    context.user_data = {"claude_session_id": "old-session-123"}
+    context.chat_data = {"claude_session_id": "old-session-123"}
 
     await orchestrator.agentic_new(update, context)
 
-    assert context.user_data["claude_session_id"] is None
+    assert context.chat_data["claude_session_id"] is None
     update.message.reply_text.assert_called_once_with("Session reset. What's next?")
 
 
@@ -256,7 +256,7 @@ async def test_agentic_status_compact(agentic_settings, deps):
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
-    context.user_data = {}
+    context.chat_data = {}
     context.bot_data = {"rate_limiter": None}
 
     await orchestrator.agentic_status(update, context)
@@ -292,7 +292,7 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
     update.message.reply_text.return_value = progress_msg
 
     context = MagicMock()
-    context.user_data = {}
+    context.chat_data = {}
     context.bot_data = {
         "settings": agentic_settings,
         "claude_integration": claude_integration,
@@ -307,7 +307,7 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
     claude_integration.run_command.assert_called_once()
 
     # Session ID updated
-    assert context.user_data["claude_session_id"] == "session-abc"
+    assert context.chat_data["claude_session_id"] == "session-abc"
 
     # Progress message deleted
     progress_msg.delete.assert_called_once()
@@ -402,7 +402,7 @@ async def test_agentic_voice_calls_claude(agentic_settings, deps):
     update.message.reply_text.return_value = progress_msg
 
     context = MagicMock()
-    context.user_data = {}
+    context.chat_data = {}
     context.bot_data = {
         "settings": agentic_settings,
         "features": features,
@@ -415,7 +415,7 @@ async def test_agentic_voice_calls_claude(agentic_settings, deps):
         update.message.voice, "please summarize"
     )
     claude_integration.run_command.assert_awaited_once()
-    assert context.user_data["claude_session_id"] == "voice-session-123"
+    assert context.chat_data["claude_session_id"] == "voice-session-123"
 
 
 async def test_agentic_voice_missing_handler_is_provider_aware(tmp_path, deps):

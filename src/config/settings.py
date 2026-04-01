@@ -308,6 +308,24 @@ class Settings(BaseSettings):
     notification_chat_ids: Optional[List[int]] = Field(
         None, description="Default Telegram chat IDs for proactive notifications"
     )
+
+    # Per-chat routing
+    personal_chat_id: Optional[int] = Field(
+        None, description="Telegram personal DM chat ID for routing"
+    )
+    personal_chat_directory: Optional[Path] = Field(
+        None, description="Working directory for personal DM chat"
+    )
+    group_chat_id: Optional[int] = Field(
+        None, description="Telegram group chat ID for routing"
+    )
+    group_chat_directory: Optional[Path] = Field(
+        None, description="Working directory for group chat"
+    )
+    group_trigger_prefix: str = Field(
+        "claude", description="Prefix required to trigger Claude in group chats"
+    )
+
     enable_project_threads: bool = Field(
         False,
         description="Enable strict routing by Telegram forum project threads",
@@ -462,6 +480,39 @@ class Settings(BaseSettings):
         if isinstance(v, int):
             return v
         return v  # type: ignore[no-any-return]
+
+    @field_validator("personal_chat_id", "group_chat_id", mode="before")
+    @classmethod
+    def validate_optional_chat_id(cls, v: Any) -> Optional[int]:
+        """Allow empty chat ID by treating blank values as None."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            return int(value)
+        if isinstance(v, int):
+            return v
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("personal_chat_directory", "group_chat_directory", mode="before")
+    @classmethod
+    def validate_optional_directory(cls, v: Any) -> Optional[Path]:
+        """Validate optional routing directories — allow None/empty."""
+        if not v:
+            return None
+        if isinstance(v, str):
+            value = v.strip()
+            if not value:
+                return None
+            v = Path(value)
+        path = v.resolve()
+        if not path.exists():
+            raise ValueError(f"Routing directory does not exist: {path}")
+        if not path.is_dir():
+            raise ValueError(f"Routing directory is not a directory: {path}")
+        return path  # type: ignore[no-any-return]
 
     @field_validator("log_level")
     @classmethod

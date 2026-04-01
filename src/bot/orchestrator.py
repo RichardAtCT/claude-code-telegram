@@ -10,11 +10,12 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import structlog
 from telegram import (
     BotCommand,
+    Chat,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
@@ -32,6 +33,12 @@ from telegram.ext import (
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
+from .features.chat_routing import (
+    append_to_buffer,
+    build_group_prompt,
+    get_working_directory,
+    is_group_triggered,
+)
 from .utils.draft_streamer import DraftStreamer, generate_draft_id
 from .utils.html_format import escape_html
 from .utils.image_extractor import (
@@ -273,6 +280,10 @@ class MessageOrchestrator:
             return True
         except ValueError:
             return False
+
+    def _get_working_directory(self, chat_id: int) -> Path:
+        """Return working directory based on per-chat routing config."""
+        return get_working_directory(chat_id, self.settings)
 
     @staticmethod
     def _extract_message_thread_id(update: Update) -> Optional[int]:
@@ -527,8 +538,11 @@ class MessageOrchestrator:
                     return
                 except Exception:
                     sync_line = "\n\n🧵 Topic sync failed. Run /sync_threads to retry."
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        current_dir = (
+            self._get_working_directory(chat_id)
+            if chat_id
+            else self.settings.approved_directory
         )
         dir_display = f"<code>{current_dir}/</code>"
 
@@ -546,9 +560,9 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Reset session, one-line confirmation."""
-        context.user_data["claude_session_id"] = None
-        context.user_data["session_started"] = True
-        context.user_data["force_new_session"] = True
+        context.chat_data["claude_session_id"] = None
+        context.chat_data["session_started"] = True
+        context.chat_data["force_new_session"] = True
 
         await update.message.reply_text("Session reset. What's next?")
 
@@ -556,12 +570,11 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Compact one-line status, no buttons."""
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
+        chat_id = update.effective_chat.id
+        current_dir = self._get_working_directory(chat_id)
         dir_display = str(current_dir)
 
-        session_id = context.user_data.get("claude_session_id")
+        session_id = context.chat_data.get("claude_session_id")
         session_status = "active" if session_id else "none"
 
         # Cost info
@@ -919,6 +932,24 @@ class MessageOrchestrator:
         user_id = update.effective_user.id
         message_text = update.message.text
 
+        # Group chat: store message in history buffer; only respond if prefixed
+        chat_type = update.effective_chat.type if update.effective_chat else None
+        if chat_type in (Chat.GROUP, Chat.SUPERGROUP):
+            buffer = cast(
+                list[dict[str, str]], context.chat_data.setdefault("_msg_buffer", [])
+            )
+            sender_name = (
+                update.effective_user.first_name if update.effective_user else None
+            )
+            append_to_buffer(buffer, sender_name or "Unknown", message_text)
+            prefix = self.settings.group_trigger_prefix
+            if not is_group_triggered(message_text, prefix):
+                # Not triggered — store only, no response
+                return
+
+            history = buffer[:-1]  # All messages except the one just added
+            message_text = build_group_prompt(history, message_text, prefix)
+
         logger.info(
             "Agentic text message",
             user_id=user_id,
@@ -964,14 +995,13 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
+        chat_id = update.effective_chat.id
+        current_dir = self._get_working_directory(chat_id)
+        session_id = context.chat_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
+        force_new = bool(context.chat_data.get("force_new_session"))
 
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
@@ -1018,9 +1048,9 @@ class MessageOrchestrator:
 
             # New session created successfully — clear the one-shot flag
             if force_new:
-                context.user_data["force_new_session"] = False
+                context.chat_data["force_new_session"] = False
 
-            context.user_data["claude_session_id"] = claude_response.session_id
+            context.chat_data["claude_session_id"] = claude_response.session_id
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
@@ -1234,14 +1264,13 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
+        chat_id = update.effective_chat.id
+        current_dir = self._get_working_directory(chat_id)
+        session_id = context.chat_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
+        force_new = bool(context.chat_data.get("force_new_session"))
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -1267,9 +1296,9 @@ class MessageOrchestrator:
             )
 
             if force_new:
-                context.user_data["force_new_session"] = False
+                context.chat_data["force_new_session"] = False
 
-            context.user_data["claude_session_id"] = claude_response.session_id
+            context.chat_data["claude_session_id"] = claude_response.session_id
 
             from .handlers.message import _update_working_directory_from_claude_response
 
@@ -1446,11 +1475,10 @@ class MessageOrchestrator:
             )
             return
 
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
-        session_id = context.user_data.get("claude_session_id")
-        force_new = bool(context.user_data.get("force_new_session"))
+        chat_id = update.effective_chat.id
+        current_dir = self._get_working_directory(chat_id)
+        session_id = context.chat_data.get("claude_session_id")
+        force_new = bool(context.chat_data.get("force_new_session"))
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -1479,9 +1507,9 @@ class MessageOrchestrator:
             heartbeat.cancel()
 
         if force_new:
-            context.user_data["force_new_session"] = False
+            context.chat_data["force_new_session"] = False
 
-        context.user_data["claude_session_id"] = claude_response.session_id
+        context.chat_data["claude_session_id"] = claude_response.session_id
 
         from .handlers.message import _update_working_directory_from_claude_response
 
