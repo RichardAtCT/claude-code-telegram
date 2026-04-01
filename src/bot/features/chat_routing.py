@@ -28,9 +28,7 @@ MAX_BUFFER_SIZE = 30
 HISTORY_CONTEXT_SIZE = 20
 
 
-def append_to_buffer(
-    buffer: list[dict[str, str]], sender_name: str, text: str
-) -> None:
+def append_to_buffer(buffer: list[dict[str, str]], sender_name: str, text: str) -> None:
     """Append a message and trim the buffer to :data:`MAX_BUFFER_SIZE`."""
     buffer.append({"sender": sender_name, "text": text})
     if len(buffer) > MAX_BUFFER_SIZE:

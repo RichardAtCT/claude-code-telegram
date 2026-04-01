@@ -134,9 +134,7 @@ def test_strip_group_trigger_prefix_handles_slash_prefix() -> None:
 
 def test_build_group_prompt_returns_stripped_text_without_history() -> None:
     """Triggered messages without history do not get a history wrapper."""
-    assert (
-        build_group_prompt([], "claude summarize this", "claude") == "summarize this"
-    )
+    assert build_group_prompt([], "claude summarize this", "claude") == "summarize this"
 
 
 def test_build_group_prompt_injects_recent_history() -> None:
@@ -149,8 +147,7 @@ def test_build_group_prompt_injects_recent_history() -> None:
     prompt = build_group_prompt(history, "claude summarize this", "claude")
 
     assert prompt == (
-        "[Recent group conversation:\nAlice: First\nBob: Second\n]\n\n"
-        "summarize this"
+        "[Recent group conversation:\nAlice: First\nBob: Second\n]\n\n" "summarize this"
     )
 
 
