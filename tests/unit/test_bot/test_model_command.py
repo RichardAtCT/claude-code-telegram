@@ -8,6 +8,8 @@ Covers:
 - Haiku skips effort keyboard (not supported)
 - Opus shows "max" effort, Sonnet does not
 - _current_model_label returns correct labels
+- Regression: model: callback data prefix is never rewritten as effort:
+- force_new_session is always set on model change
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -17,7 +19,7 @@ from telegram import InlineKeyboardMarkup
 
 from src.bot.handlers.command import (
     _EFFORT_BY_MODEL,
-    _MODELS,
+    _MODEL_FAMILIES,
     _current_model_label,
     _handle_model_selection,
     model_command,
@@ -85,7 +87,7 @@ async def test_model_command_shows_keyboard(update, context):
 @pytest.mark.asyncio
 async def test_model_command_shows_current_override(update, context):
     """When an override is active, /model should show it."""
-    context.user_data["model_override"] = _MODELS["sonnet"]
+    context.user_data["model_override"] = "sonnet"
     await model_command(update, context)
 
     text = update.message.reply_text.call_args.args[0]
@@ -99,19 +101,19 @@ async def test_model_command_shows_current_override(update, context):
 
 @pytest.mark.asyncio
 async def test_select_opus_sets_override(callback_query, context):
-    """Selecting Opus sets model_override and force_new_session."""
+    """Selecting Opus sets model_override to short alias and force_new_session."""
     await _handle_model_selection(callback_query, "model:opus", context)
 
-    assert context.user_data["model_override"] == _MODELS["opus"]
+    assert context.user_data["model_override"] == "opus"
     assert context.user_data["force_new_session"] is True
 
 
 @pytest.mark.asyncio
 async def test_select_sonnet_sets_override(callback_query, context):
-    """Selecting Sonnet sets the correct model ID."""
+    """Selecting Sonnet sets the correct short alias."""
     await _handle_model_selection(callback_query, "model:sonnet", context)
 
-    assert context.user_data["model_override"] == _MODELS["sonnet"]
+    assert context.user_data["model_override"] == "sonnet"
 
 
 @pytest.mark.asyncio
@@ -119,7 +121,7 @@ async def test_select_haiku_skips_effort(callback_query, context):
     """Selecting Haiku should not show effort keyboard (not supported)."""
     await _handle_model_selection(callback_query, "model:haiku", context)
 
-    assert context.user_data["model_override"] == _MODELS["haiku"]
+    assert context.user_data["model_override"] == "haiku"
     # Final message, no reply_markup (no effort keyboard)
     call_kwargs = callback_query.edit_message_text.call_args
     assert "reply_markup" not in call_kwargs.kwargs or call_kwargs.kwargs.get("reply_markup") is None
@@ -156,7 +158,7 @@ async def test_select_sonnet_shows_effort_without_max(callback_query, context):
 @pytest.mark.asyncio
 async def test_default_clears_overrides(callback_query, context):
     """Selecting 'default' clears model, effort, and forces new session."""
-    context.user_data["model_override"] = _MODELS["opus"]
+    context.user_data["model_override"] = "opus"
     context.user_data["effort_override"] = "high"
 
     await _handle_model_selection(callback_query, "model:default", context)
@@ -174,7 +176,7 @@ async def test_default_clears_overrides(callback_query, context):
 @pytest.mark.asyncio
 async def test_effort_sets_override(callback_query, context):
     """Selecting an effort level stores it in user_data."""
-    context.user_data["model_override"] = _MODELS["opus"]
+    context.user_data["model_override"] = "opus"
 
     await _handle_model_selection(callback_query, "effort:high", context)
 
@@ -184,7 +186,7 @@ async def test_effort_sets_override(callback_query, context):
 @pytest.mark.asyncio
 async def test_effort_skip_keeps_existing(callback_query, context):
     """Selecting 'skip' should not set effort_override."""
-    context.user_data["model_override"] = _MODELS["sonnet"]
+    context.user_data["model_override"] = "sonnet"
 
     await _handle_model_selection(callback_query, "effort:skip", context)
 
@@ -199,6 +201,44 @@ async def test_model_switch_clears_stale_effort(callback_query, context):
     await _handle_model_selection(callback_query, "model:haiku", context)
 
     assert "effort_override" not in context.user_data
+
+
+# ---------------------------------------------------------------------------
+# Regression: callback data prefix integrity (closure-bug guard)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_model_callback_sets_model_not_effort(callback_query, context):
+    """model: callback must set model_override, not effort_override.
+
+    Regression guard: a shared closure capturing 'action' from outer scope
+    could silently rewrite 'model:opus' as 'effort:opus'. This test would
+    have caught that.
+    """
+    await _handle_model_selection(callback_query, "model:sonnet", context)
+
+    assert context.user_data.get("model_override") == "sonnet"
+    assert "effort_override" not in context.user_data
+
+
+@pytest.mark.asyncio
+async def test_effort_callback_sets_effort_not_model(callback_query, context):
+    """effort: callback must set effort_override and not overwrite model_override."""
+    context.user_data["model_override"] = "sonnet"
+
+    await _handle_model_selection(callback_query, "effort:high", context)
+
+    assert context.user_data.get("effort_override") == "high"
+    assert context.user_data.get("model_override") == "sonnet"  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_force_new_session_set_on_model_switch(callback_query, context):
+    """force_new_session must be True after any model switch."""
+    await _handle_model_selection(callback_query, "model:opus", context)
+
+    assert context.user_data.get("force_new_session") is True
 
 
 # ---------------------------------------------------------------------------
@@ -222,13 +262,13 @@ def test_label_default_with_server_model():
 
 def test_label_with_model_and_effort():
     ctx = MagicMock()
-    ctx.user_data = {"model_override": _MODELS["sonnet"], "effort_override": "medium"}
+    ctx.user_data = {"model_override": "sonnet", "effort_override": "medium"}
     assert _current_model_label(ctx) == "Sonnet | effort=medium"
 
 
 def test_label_model_only():
     ctx = MagicMock()
-    ctx.user_data = {"model_override": _MODELS["opus"]}
+    ctx.user_data = {"model_override": "opus"}
     assert _current_model_label(ctx) == "Opus"
 
 
@@ -248,3 +288,9 @@ def test_sonnet_has_no_max():
 
 def test_opus_has_max():
     assert "max" in _EFFORT_BY_MODEL["opus"]
+
+
+def test_model_families_contains_expected():
+    assert "opus" in _MODEL_FAMILIES
+    assert "sonnet" in _MODEL_FAMILIES
+    assert "haiku" in _MODEL_FAMILIES

@@ -12,6 +12,7 @@ from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
+from .command import _handle_model_selection
 
 logger = structlog.get_logger()
 
@@ -57,11 +58,6 @@ async def handle_callback_query(
             action, param = data, None
 
         # Route to appropriate handler
-        from .command import _handle_model_selection
-
-        async def _model_effort_handler(query, param, context):
-            await _handle_model_selection(query, f"{action}:{param}", context)
-
         handlers = {
             "cd": handle_cd_callback,
             "action": handle_action_callback,
@@ -71,8 +67,8 @@ async def handle_callback_query(
             "conversation": handle_conversation_callback,
             "git": handle_git_callback,
             "export": handle_export_callback,
-            "model": _model_effort_handler,
-            "effort": _model_effort_handler,
+            "model": lambda q, p, ctx: _handle_model_selection(q, f"model:{p}", ctx),
+            "effort": lambda q, p, ctx: _handle_model_selection(q, f"effort:{p}", ctx),
         }
 
         handler = handlers.get(action)
