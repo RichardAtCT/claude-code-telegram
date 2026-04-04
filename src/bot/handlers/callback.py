@@ -1349,7 +1349,7 @@ async def handle_check_match_callback(
 
     # Step 2 -- Extract player names and market from message
     player_match = re.search(
-        r"([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s+vs\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
+        r"([A-Z][a-z]+(?:[ ][A-Z][a-z]+)*)\s+vs\s+([A-Z][a-z]+(?:[ ][A-Z][a-z]+)*)",
         original_text,
     )
     market_match = re.search(r"Market:\s*(\S+)", original_text)
