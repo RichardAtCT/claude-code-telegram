@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import json as _json
+import sqlite3
+
+import requests as _requests
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -1314,10 +1318,10 @@ async def handle_check_match_callback(
 ) -> None:
     """Handle 'Check Match' button from escalation messages.
 
-    Runs a one-shot claude -p web search to evaluate the current match state,
-    then edits the original message in-place to append the verdict.
+    Fetches live score from SofaScore API via the poly_dashboard DB,
+    then uses Claude (no tools) to assess the trade outcome.
     """
-    check_match_button = InlineKeyboardMarkup(
+    both_buttons = InlineKeyboardMarkup(
         [[InlineKeyboardButton("\U0001f50d Check Match", callback_data="check_match"),
           InlineKeyboardButton("\U0001f50e Investigate", callback_data="investigate_trade")]]
     )
@@ -1333,77 +1337,166 @@ async def handle_check_match_callback(
     checking_text = (
         f"{original_text}\n\n"
         f"{MATCH_SEPARATOR}\n"
-        f"\U0001f50d Checking\u2026 (fetching live score)"
+        f"\U0001f50d Checking\u2026 (fetching score from SofaScore)"
     )
-    # Truncate to Telegram's 4096 char limit
     if len(checking_text) > 4096:
         checking_text = checking_text[:4093] + "..."
     try:
-        await query.edit_message_text(
-            checking_text,
-            reply_markup=check_match_button,
-        )
+        await query.edit_message_text(checking_text, reply_markup=both_buttons)
     except Exception as e:
         logger.error("check_match: failed to edit message for checking state", error=str(e))
         return
 
-    # Step 2 -- Extract player names for context
+    # Step 2 -- Extract player names and market from message
     player_match = re.search(
         r"([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s+vs\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
         original_text,
     )
-    if player_match:
-        match_context = f"{player_match.group(1)} vs {player_match.group(2)}"
-    else:
-        match_context = original_text[:500]
+    market_match = re.search(r"Market:\s*(\S+)", original_text)
+    market_type = market_match.group(1) if market_match else "unknown"
 
-    # Step 3 -- Run claude -p with web search
+    if not player_match:
+        verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Could not parse player names from message."
+        await _edit_check_verdict(query, original_text, verdict, both_buttons)
+        return
+
+    p1_name = player_match.group(1)
+    p2_name = player_match.group(2)
+
+    # Step 3 -- Look up match in poly_dashboard DB to get sofa_id
+    db_path = os.path.expanduser("~/poly_dashboard/data/app.db")
+    sofa_id = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT sofa_id, match_id FROM monitored_matches "
+            "WHERE player1 LIKE ? AND player2 LIKE ? AND sofa_id IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1",
+            (f"%{p1_name}%", f"%{p2_name}%"),
+        ).fetchone()
+        if not row:
+            # Try reversed player order
+            row = conn.execute(
+                "SELECT sofa_id, match_id FROM monitored_matches "
+                "WHERE player1 LIKE ? AND player2 LIKE ? AND sofa_id IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1",
+                (f"%{p2_name}%", f"%{p1_name}%"),
+            ).fetchone()
+        if row:
+            sofa_id = row["sofa_id"]
+        conn.close()
+    except Exception as e:
+        logger.error("check_match: DB lookup failed", error=str(e))
+
+    if not sofa_id:
+        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: No SofaScore ID found for {p1_name} vs {p2_name}."
+        await _edit_check_verdict(query, original_text, verdict, both_buttons)
+        return
+
+    # Step 4 -- Fetch score from SofaScore API
+    score_data = None
+    try:
+        url = f"https://api.sofascore.com/api/v1/event/{sofa_id}"
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+        resp = _requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        event = data.get("event", {})
+        if event:
+            status_obj = event.get("status", {})
+            home_score = event.get("homeScore", {})
+            away_score = event.get("awayScore", {})
+            home_team = event.get("homeTeam", {})
+            away_team = event.get("awayTeam", {})
+
+            # Build per-set scores
+            sets = []
+            for i in range(1, 6):
+                key = f"period{i}"
+                if key in home_score and key in away_score:
+                    sets.append({"home": home_score[key], "away": away_score[key]})
+
+            # Current game score within the active set
+            point_score = ""
+            if "point" in home_score and "point" in away_score:
+                point_score = f"{home_score['point']}-{away_score['point']}"
+
+            score_data = {
+                "status": status_obj.get("type", "").lower(),
+                "status_description": status_obj.get("description", ""),
+                "home_name": home_team.get("name", ""),
+                "away_name": away_team.get("name", ""),
+                "home_sets": home_score.get("current", 0) or 0,
+                "away_sets": away_score.get("current", 0) or 0,
+                "sets": sets,
+                "point_score": point_score,
+            }
+    except Exception as e:
+        logger.error("check_match: SofaScore API failed", error=str(e))
+
+    if not score_data:
+        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: SofaScore API returned no data for event {sofa_id}."
+        await _edit_check_verdict(query, original_text, verdict, both_buttons)
+        return
+
+    # Step 5 -- Build score summary string
+    sets_str = " | ".join(f"{s['home']}-{s['away']}" for s in score_data["sets"])
+    score_summary = (
+        f"Status: {score_data['status']} ({score_data['status_description']})\n"
+        f"{score_data['home_name']} vs {score_data['away_name']}\n"
+        f"Sets: {score_data['home_sets']}-{score_data['away_sets']} ({sets_str})"
+    )
+    if score_data["point_score"]:
+        score_summary += f"\nCurrent game: {score_data['point_score']}"
+
+    # Step 6 -- Use Claude (no tools) for assessment
     prompt = (
-        "You are evaluating a sports trade alert. Given this escalation message:\n\n"
-        "---\n"
-        f"{original_text[:2000]}\n"
-        "---\n\n"
-        f"The match is: {match_context}\n\n"
-        "Search the web for the CURRENT live score or final result of this match.\n\n"
-        "Respond in this exact format (3 lines max):\n"
-        "Line 1: STATUS -- one of: \u2705 WINNING | \u274c LOSING | \u2705 WON | \u274c LOST | \u2753 UNKNOWN\n"
-        "Line 2: Score: <current score or \"not found\">\n"
-        "Line 3: Reason: <one sentence max -- why profitable/not, or why unknown>\n\n"
+        "Assess this tennis trade based on the live score data.\n\n"
+        "TRADE:\n"
+        f"{original_text[:1500]}\n\n"
+        "LIVE SCORE:\n"
+        f"{score_summary}\n\n"
+        "Respond in EXACTLY this format (3 lines, nothing else):\n"
+        "Line 1: One of: \u2705 WON | \u274c LOST | \u2705 WINNING | \u274c LOSING | \u2753 UNKNOWN\n"
+        "Line 2: Score: <sets score and game details>\n"
+        "Line 3: Reason: <one sentence>\n\n"
         "Rules:\n"
-        "- If match is live and we're winning: \u2705 WINNING\n"
-        "- If match finished and we won: \u2705 WON\n"
-        "- If match is live and we're losing: \u274c LOSING\n"
-        "- If match finished and we lost: \u274c LOST\n"
-        "- If match not started, postponed, score unavailable, or can't determine: \u2753 UNKNOWN\n"
-        "- Be concise. No extra text."
+        "- Determine which player/outcome the trade is betting on from the Market field\n"
+        "- Compare with the actual score to determine if winning or losing\n"
+        "- If match is finished: WON or LOST\n"
+        "- If match is live: WINNING or LOSING\n"
+        "- If unclear: UNKNOWN\n"
+        "- Output ONLY the 3 lines, no sources, no extra text"
     )
 
-    verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Check failed."
+    verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: Assessment failed."
     try:
         claude_path = shutil.which("claude") or "/usr/bin/claude"
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
         result = subprocess.run(
-            [claude_path, "-p", prompt, "--allowedTools", "WebSearch,WebFetch,Bash"],
+            [claude_path, "-p", prompt, "--allowedTools", ""],
             capture_output=True,
             text=True,
-            timeout=90,
+            timeout=30,
             env=env,
             cwd="/home/ubuntu/poly_dashboard",
         )
         if result.stdout.strip():
             verdict = result.stdout.strip()
-    except FileNotFoundError:
-        verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Claude CLI not available on this machine."
     except subprocess.TimeoutExpired:
-        verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Claude timed out, try again."
+        verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: Claude timed out."
     except Exception as e:
         logger.error("check_match: claude -p failed", error=str(e))
-        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: {str(e)[:80]}"
+        verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: {str(e)[:80]}"
 
-    # Step 4 -- Edit message with verdict
+    await _edit_check_verdict(query, original_text, verdict, both_buttons)
+
+
+async def _edit_check_verdict(query, original_text, verdict, reply_markup):
+    """Edit the message with the final check verdict."""
     now_utc = datetime.now(timezone.utc).strftime("%H:%M UTC")
-    # HTML-escape the verdict to avoid breaking parse_mode=HTML
     safe_verdict = escape_html(verdict)
 
     final_text = (
@@ -1412,7 +1505,6 @@ async def handle_check_match_callback(
         f"\U0001f50d Check: {now_utc}\n"
         f"{safe_verdict}"
     )
-    # Truncate to Telegram limit
     if len(final_text) > 4096:
         overflow = len(final_text) - 4096 + 3
         final_text = (
@@ -1421,12 +1513,8 @@ async def handle_check_match_callback(
             f"\U0001f50d Check: {now_utc}\n"
             f"{safe_verdict}"
         )
-
     try:
-        await query.edit_message_text(
-            final_text,
-            reply_markup=check_match_button,
-        )
+        await query.edit_message_text(final_text, reply_markup=reply_markup)
     except Exception as e:
         logger.error("check_match: failed to edit message with verdict", error=str(e))
 
