@@ -1,5 +1,9 @@
 """Handle inline keyboard callbacks."""
 
+import os
+import re
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -66,6 +70,7 @@ async def handle_callback_query(
             "conversation": handle_conversation_callback,
             "git": handle_git_callback,
             "export": handle_export_callback,
+            "check_match": handle_check_match_callback,
         }
 
         handler = handlers.get(action)
@@ -1297,6 +1302,129 @@ async def handle_export_callback(
             f"❌ <b>Export Failed</b>\n\n{escape_html(str(e))}",
             parse_mode="HTML",
         )
+
+
+MATCH_SEPARATOR = "\u2501" * 14  # ━━━━━━━━━━━━━━
+
+
+async def handle_check_match_callback(
+    query, _param: str, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle 'Check Match' button from escalation messages.
+
+    Runs a one-shot claude -p web search to evaluate the current match state,
+    then edits the original message in-place to append the verdict.
+    """
+    check_match_button = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("\U0001f50d Check Match", callback_data="check_match")]]
+    )
+
+    # Extract original message text (strip any previous verdict)
+    full_text = query.message.text or ""
+    if MATCH_SEPARATOR in full_text:
+        original_text = full_text[: full_text.index(MATCH_SEPARATOR)].rstrip()
+    else:
+        original_text = full_text
+
+    # Step 1 -- Show "checking" state
+    checking_text = (
+        f"{original_text}\n\n"
+        f"{MATCH_SEPARATOR}\n"
+        f"\U0001f50d Checking\u2026 (fetching live score)"
+    )
+    # Truncate to Telegram's 4096 char limit
+    if len(checking_text) > 4096:
+        checking_text = checking_text[:4093] + "..."
+    try:
+        await query.edit_message_text(
+            checking_text,
+            reply_markup=check_match_button,
+        )
+    except Exception as e:
+        logger.error("check_match: failed to edit message for checking state", error=str(e))
+        return
+
+    # Step 2 -- Extract player names for context
+    player_match = re.search(
+        r"([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s+vs\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
+        original_text,
+    )
+    if player_match:
+        match_context = f"{player_match.group(1)} vs {player_match.group(2)}"
+    else:
+        match_context = original_text[:500]
+
+    # Step 3 -- Run claude -p with web search
+    prompt = (
+        "You are evaluating a sports trade alert. Given this escalation message:\n\n"
+        "---\n"
+        f"{original_text[:2000]}\n"
+        "---\n\n"
+        f"The match is: {match_context}\n\n"
+        "Search the web for the CURRENT live score or final result of this match.\n\n"
+        "Respond in this exact format (3 lines max):\n"
+        "Line 1: STATUS -- one of: \u2705 WINNING | \u274c LOSING | \u2705 WON | \u274c LOST | \u2753 UNKNOWN\n"
+        "Line 2: Score: <current score or \"not found\">\n"
+        "Line 3: Reason: <one sentence max -- why profitable/not, or why unknown>\n\n"
+        "Rules:\n"
+        "- If match is live and we're winning: \u2705 WINNING\n"
+        "- If match finished and we won: \u2705 WON\n"
+        "- If match is live and we're losing: \u274c LOSING\n"
+        "- If match finished and we lost: \u274c LOST\n"
+        "- If match not started, postponed, score unavailable, or can't determine: \u2753 UNKNOWN\n"
+        "- Be concise. No extra text."
+    )
+
+    verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Check failed."
+    try:
+        claude_path = os.path.expanduser("~/.local/bin/claude")
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
+        result = subprocess.run(
+            [claude_path, "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        if result.stdout.strip():
+            verdict = result.stdout.strip()
+    except FileNotFoundError:
+        verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Claude CLI not available on this machine."
+    except subprocess.TimeoutExpired:
+        verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Claude timed out, try again."
+    except Exception as e:
+        logger.error("check_match: claude -p failed", error=str(e))
+        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: {str(e)[:80]}"
+
+    # Step 4 -- Edit message with verdict
+    now_utc = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    # HTML-escape the verdict to avoid breaking parse_mode=HTML
+    safe_verdict = escape_html(verdict)
+
+    final_text = (
+        f"{original_text}\n\n"
+        f"{MATCH_SEPARATOR}\n"
+        f"\U0001f50d Check: {now_utc}\n"
+        f"{safe_verdict}"
+    )
+    # Truncate to Telegram limit
+    if len(final_text) > 4096:
+        overflow = len(final_text) - 4096 + 3
+        final_text = (
+            f"{original_text[:len(original_text) - overflow]}...\n\n"
+            f"{MATCH_SEPARATOR}\n"
+            f"\U0001f50d Check: {now_utc}\n"
+            f"{safe_verdict}"
+        )
+
+    try:
+        await query.edit_message_text(
+            final_text,
+            reply_markup=check_match_button,
+        )
+    except Exception as e:
+        logger.error("check_match: failed to edit message with verdict", error=str(e))
 
 
 def _format_file_size(size: int) -> str:
