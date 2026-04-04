@@ -71,6 +71,7 @@ async def handle_callback_query(
             "git": handle_git_callback,
             "export": handle_export_callback,
             "check_match": handle_check_match_callback,
+            "investigate_trade": handle_investigate_trade_callback,
         }
 
         handler = handlers.get(action)
@@ -1425,6 +1426,188 @@ async def handle_check_match_callback(
         )
     except Exception as e:
         logger.error("check_match: failed to edit message with verdict", error=str(e))
+
+
+async def handle_investigate_trade_callback(
+    query, _param: str, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle 'Investigate' button from trade fill notifications.
+
+    Runs a deep claude -p analysis that queries the database, reads logs,
+    checks price evolution, finds similar historical trades, and evaluates
+    whether this trade pattern is reliably profitable.  The response is sent
+    as a reply message (not edited into the original) because investigation
+    output is substantially longer than a quick check.
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    # Keep both buttons on the original message
+    both_buttons = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "\U0001f50d Check Match", callback_data="check_match"
+                ),
+                InlineKeyboardButton(
+                    "\U0001f50e Investigate", callback_data="investigate_trade"
+                ),
+            ]
+        ]
+    )
+
+    # Step 1 -- Acknowledge and send placeholder reply
+    try:
+        await query.answer("\U0001f50e Investigating trade\u2026")
+    except Exception:
+        pass
+
+    try:
+        placeholder = await query.message.reply_text(
+            "\U0001f50e <b>Investigating trade\u2026</b>\n\n"
+            "Analyzing price history, similar trades, and logs. "
+            "This takes 30\u201360 seconds.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error("investigate_trade: failed to send placeholder", error=str(e))
+        return
+
+    # Step 2 -- Extract trade context from original message text
+    message_text = query.message.text or ""
+
+    # Step 3 -- Build the investigation prompt
+    prompt = (
+        "You are a trade investigation analyst for a tennis betting system on Polymarket.\n\n"
+        "A trade just filled. Here is the notification:\n"
+        "---\n"
+        f"{message_text[:2000]}\n"
+        "---\n\n"
+        "Your job: deep-dive into this trade using the local database and logs, then report findings.\n\n"
+        "## Tools Available\n"
+        "- Run `sqlite3 /home/ubuntu/poly_dashboard/data/app.db \"<query>\"` for database queries\n"
+        "- Run `grep` / `tail` on log files in `/home/ubuntu/poly_dashboard/data/logs/`\n"
+        "- Use web search to find the current match score if needed\n\n"
+        "## Investigation Steps\n\n"
+        "### 1. Trade Details\n"
+        "Query the trades table for this specific trade (match players + market type + most recent filled_at):\n"
+        "```sql\n"
+        "SELECT t.*, mm.player1, mm.player2, mm.status as match_status, mm.winner\n"
+        "FROM trades t JOIN monitored_matches mm ON mm.match_id = t.match_id\n"
+        "WHERE (mm.player1 LIKE '%<player1_surname>%' OR mm.player2 LIKE '%<player1_surname>%')\n"
+        "AND t.status NOT IN ('cancelled') ORDER BY t.filled_at DESC LIMIT 1;\n"
+        "```\n"
+        "Replace <player1_surname> with the first player's last name from the notification.\n\n"
+        "### 2. Price & Model Evolution\n"
+        "Query match_snapshots for this match to see how price and model probability evolved:\n"
+        "```sql\n"
+        "SELECT captured_at, set1_score, set2_score, set3_score,\n"
+        "       moneyline_p1, market_p1_mid,\n"
+        "       total_sets_over, ts_over_mid\n"
+        "FROM match_snapshots WHERE match_id = <match_id>\n"
+        "ORDER BY captured_at;\n"
+        "```\n"
+        "Summarize: when did the edge appear? Did it grow or shrink? "
+        "What was happening in the match at trade time?\n\n"
+        "### 3. Similar Historical Trades\n"
+        "Find trades with the same market_type, similar price range (+/-0.05), and similar edge:\n"
+        "```sql\n"
+        "SELECT t.id, mm.player1, mm.player2, t.market_type, t.price, t.edge, t.model_prob,\n"
+        "       t.cost, t.pnl, t.status, t.created_at\n"
+        "FROM trades t JOIN monitored_matches mm ON mm.match_id = t.match_id\n"
+        "WHERE t.market_type = '<market_type>'\n"
+        "AND t.status IN ('won','lost','redeemed','sold')\n"
+        "AND t.price BETWEEN <price-0.05> AND <price+0.05>\n"
+        "ORDER BY t.filled_at DESC LIMIT 30;\n"
+        "```\n"
+        "Report: X won, Y lost, win rate, total PnL from similar trades.\n\n"
+        "### 4. Configuration Check\n"
+        "Query trading_config to see current thresholds for this market:\n"
+        "```sql\n"
+        "SELECT market_edges, market_thresholds, market_gains, market_start_scores,\n"
+        "       market_max_prices, market_min_prices, market_side_filters\n"
+        "FROM trading_config WHERE id = 1;\n"
+        "```\n"
+        "Note which filters were active and whether this trade was borderline.\n\n"
+        "### 5. Log Context\n"
+        "Check trader.log around the trade time for signal evaluation details:\n"
+        "```bash\n"
+        "grep -A2 -B2 \"<player1_surname>\" /home/ubuntu/poly_dashboard/data/logs/trader.log | tail -40\n"
+        "```\n\n"
+        "### 6. Current Match State\n"
+        "Web search for the current score of this match.\n\n"
+        "## Output Format (strict -- follow exactly)\n\n"
+        "\U0001f50e <b>Trade Investigation</b>\n"
+        "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n"
+        "\U0001f4cb <b>This Trade</b>\n"
+        "[1-2 lines: what was bought, at what price/edge, match state at trade time]\n\n"
+        "\U0001f4c8 <b>Price Evolution</b>\n"
+        "[2-3 lines: how model prob and market price moved before/after trade]\n\n"
+        "\U0001f4ca <b>Similar Trades</b>\n"
+        "[market_type] at price ~[X]: [N] total | [W] won | [L] lost | Win rate: [%]\n"
+        "Total PnL from similar: $[X]\n"
+        "[1 line: pattern observation]\n\n"
+        "\u2699\ufe0f <b>Config Analysis</b>\n"
+        "[1-2 lines: current thresholds, whether this trade was borderline]\n\n"
+        "\U0001f3df\ufe0f <b>Current Status</b>\n"
+        "[1 line: current score or final result]\n\n"
+        "\U0001f4a1 <b>Suggestions</b>\n"
+        "[2-4 bullet points: concrete parameter changes or observations]\n\n"
+        "Keep the entire response under 3500 characters (Telegram message limit is 4096).\n"
+        "Use HTML formatting (<b>, <code>, <i>). Do NOT use markdown.\n"
+        "Be direct and data-driven. No filler text.\n"
+    )
+
+    # Step 4 -- Run claude -p with investigation prompt
+    verdict = None
+    try:
+        claude_path = os.path.expanduser("~/.local/bin/claude")
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
+        result = subprocess.run(
+            [
+                claude_path,
+                "-p",
+                prompt,
+                "--allowedTools",
+                "Bash,WebSearch",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        if result.stdout.strip():
+            verdict = result.stdout.strip()
+    except FileNotFoundError:
+        verdict = (
+            "\U0001f50e Investigation failed \u2014 Claude CLI not available on this machine."
+        )
+    except subprocess.TimeoutExpired:
+        verdict = (
+            "\U0001f50e Investigation timed out (120s). Try again."
+        )
+    except Exception as e:
+        logger.error("investigate_trade: claude -p failed", error=str(e))
+        verdict = f"\U0001f50e Investigation error: {str(e)[:100]}"
+
+    if not verdict:
+        verdict = "\U0001f50e No findings \u2014 Claude returned empty."
+
+    # Truncate to stay within Telegram's 4096 char limit
+    if len(verdict) > 4000:
+        verdict = verdict[:3997] + "..."
+
+    # Step 5 -- Edit placeholder with the actual result
+    try:
+        await placeholder.edit_text(verdict, parse_mode="HTML")
+    except Exception:
+        # HTML parse failed -- retry without parse_mode
+        try:
+            await placeholder.edit_text(verdict)
+        except Exception as e:
+            logger.error(
+                "investigate_trade: failed to edit placeholder", error=str(e)
+            )
 
 
 def _format_file_size(size: int) -> str:
