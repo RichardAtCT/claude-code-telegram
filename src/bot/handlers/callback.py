@@ -2,6 +2,7 @@
 
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1317,7 +1318,8 @@ async def handle_check_match_callback(
     then edits the original message in-place to append the verdict.
     """
     check_match_button = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("\U0001f50d Check Match", callback_data="check_match")]]
+        [[InlineKeyboardButton("\U0001f50d Check Match", callback_data="check_match"),
+          InlineKeyboardButton("\U0001f50e Investigate", callback_data="investigate_trade")]]
     )
 
     # Extract original message text (strip any previous verdict)
@@ -1378,15 +1380,16 @@ async def handle_check_match_callback(
 
     verdict = "\u2753 UNKNOWN\nScore: unavailable\nReason: Check failed."
     try:
-        claude_path = os.path.expanduser("~/.local/bin/claude")
+        claude_path = shutil.which("claude") or "/usr/bin/claude"
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
         result = subprocess.run(
-            [claude_path, "-p", prompt],
+            [claude_path, "-p", prompt, "--allowedTools", "WebSearch,WebFetch,Bash"],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=90,
             env=env,
+            cwd="/home/ubuntu/poly_dashboard",
         )
         if result.stdout.strip():
             verdict = result.stdout.strip()
@@ -1560,7 +1563,7 @@ async def handle_investigate_trade_callback(
     # Step 4 -- Run claude -p with investigation prompt
     verdict = None
     try:
-        claude_path = os.path.expanduser("~/.local/bin/claude")
+        claude_path = shutil.which("claude") or "/usr/bin/claude"
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
         result = subprocess.run(
