@@ -1366,6 +1366,7 @@ async def handle_check_match_callback(
     # Step 3 -- Look up match in poly_dashboard DB to get sofa_id
     db_path = os.path.expanduser("~/poly_dashboard/data/app.db")
     sofa_id = None
+    match_id = None
     try:
         conn = sqlite3.connect(db_path, timeout=5)
         conn.row_factory = sqlite3.Row
@@ -1385,58 +1386,67 @@ async def handle_check_match_callback(
             ).fetchone()
         if row:
             sofa_id = row["sofa_id"]
-        conn.close()
+            match_id = row["match_id"]
+        conn2 = conn  # keep open for step 4
     except Exception as e:
         logger.error("check_match: DB lookup failed", error=str(e))
 
-    if not sofa_id:
-        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: No SofaScore ID found for {p1_name} vs {p2_name}."
+    if not sofa_id or not match_id:
+        if hasattr(conn, 'close'):
+            conn.close()
+        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: No match found for {p1_name} vs {p2_name}."
         await _edit_check_verdict(query, original_text, verdict, both_buttons)
         return
 
-    # Step 4 -- Fetch score from SofaScore API
+    # Step 4 -- Fetch score from poly_dashboard DB (latest snapshot)
     score_data = None
     try:
-        url = f"https://api.sofascore.com/api/v1/event/{sofa_id}"
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
-        resp = _requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        event = data.get("event", {})
-        if event:
-            status_obj = event.get("status", {})
-            home_score = event.get("homeScore", {})
-            away_score = event.get("awayScore", {})
-            home_team = event.get("homeTeam", {})
-            away_team = event.get("awayTeam", {})
-
-            # Build per-set scores
+        snap = conn2.execute(
+            "SELECT s.p1_sets, s.p2_sets, s.p1_games, s.p2_games, "
+            "s.p1_point, s.p2_point, s.sets_json, s.status, s.captured_at, "
+            "m.player1, m.player2, m.status as match_status "
+            "FROM match_snapshots s "
+            "JOIN monitored_matches m ON s.match_id = m.match_id "
+            "WHERE s.match_id = ? ORDER BY s.captured_at DESC LIMIT 1",
+            (match_id,),
+        ).fetchone()
+        conn2.close()
+        if snap:
             sets = []
-            for i in range(1, 6):
-                key = f"period{i}"
-                if key in home_score and key in away_score:
-                    sets.append({"home": home_score[key], "away": away_score[key]})
+            if snap["sets_json"]:
+                try:
+                    sets_raw = _json.loads(snap["sets_json"])
+                    for s in sets_raw:
+                        if isinstance(s, dict):
+                            sets.append({"home": s.get("p1", s.get("home", 0)), "away": s.get("p2", s.get("away", 0))})
+                        elif isinstance(s, (list, tuple)) and len(s) >= 2:
+                            sets.append({"home": s[0], "away": s[1]})
+                except Exception:
+                    pass
 
-            # Current game score within the active set
             point_score = ""
-            if "point" in home_score and "point" in away_score:
-                point_score = f"{home_score['point']}-{away_score['point']}"
+            if snap["p1_point"] and snap["p2_point"]:
+                point_score = f"{snap['p1_point']}-{snap['p2_point']}"
+
+            match_status = snap["match_status"] or snap["status"] or "unknown"
 
             score_data = {
-                "status": status_obj.get("type", "").lower(),
-                "status_description": status_obj.get("description", ""),
-                "home_name": home_team.get("name", ""),
-                "away_name": away_team.get("name", ""),
-                "home_sets": home_score.get("current", 0) or 0,
-                "away_sets": away_score.get("current", 0) or 0,
+                "status": match_status,
+                "status_description": match_status,
+                "home_name": snap["player1"] or p1_name,
+                "away_name": snap["player2"] or p2_name,
+                "home_sets": snap["p1_sets"] or 0,
+                "away_sets": snap["p2_sets"] or 0,
                 "sets": sets,
                 "point_score": point_score,
+                "home_games": snap["p1_games"] or 0,
+                "away_games": snap["p2_games"] or 0,
             }
     except Exception as e:
-        logger.error("check_match: SofaScore API failed", error=str(e))
+        logger.error("check_match: DB snapshot lookup failed", error=str(e))
 
     if not score_data:
-        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: SofaScore API returned no data for event {sofa_id}."
+        verdict = f"\u2753 UNKNOWN\nScore: unavailable\nReason: No snapshot data found for match {match_id}."
         await _edit_check_verdict(query, original_text, verdict, both_buttons)
         return
 
@@ -1447,6 +1457,8 @@ async def handle_check_match_callback(
         f"{score_data['home_name']} vs {score_data['away_name']}\n"
         f"Sets: {score_data['home_sets']}-{score_data['away_sets']} ({sets_str})"
     )
+    if score_data.get("home_games") is not None:
+        score_summary += f"\nCurrent set games: {score_data['home_games']}-{score_data['away_games']}"
     if score_data["point_score"]:
         score_summary += f"\nCurrent game: {score_data['point_score']}"
 
