@@ -1452,22 +1452,19 @@ async def handle_check_match_callback(
 
     # Step 6 -- Use Claude (no tools) for assessment
     prompt = (
-        "Assess this tennis trade based on the live score data.\n\n"
+        "You output EXACTLY 3 lines. No analysis, no reasoning, no markdown, no extra text.\n\n"
         "TRADE:\n"
         f"{original_text[:1500]}\n\n"
         "LIVE SCORE:\n"
         f"{score_summary}\n\n"
-        "Respond in EXACTLY this format (3 lines, nothing else):\n"
-        "Line 1: One of: \u2705 WON | \u274c LOST | \u2705 WINNING | \u274c LOSING | \u2753 UNKNOWN\n"
-        "Line 2: Score: <sets score and game details>\n"
-        "Line 3: Reason: <one sentence>\n\n"
-        "Rules:\n"
-        "- Determine which player/outcome the trade is betting on from the Market field\n"
-        "- Compare with the actual score to determine if winning or losing\n"
-        "- If match is finished: WON or LOST\n"
-        "- If match is live: WINNING or LOSING\n"
-        "- If unclear: UNKNOWN\n"
-        "- Output ONLY the 3 lines, no sources, no extra text"
+        "Output these 3 lines and NOTHING else:\n"
+        "<STATUS>\n"
+        "Score: <score>\n"
+        "Reason: <one sentence>\n\n"
+        "STATUS must be exactly one of: \u2705 WON | \u274c LOST | \u2705 WINNING | \u274c LOSING | \u2753 UNKNOWN\n"
+        "Determine the trade outcome by comparing the Market field against the live score.\n"
+        "If match finished: WON or LOST. If live: WINNING or LOSING. If unclear: UNKNOWN.\n\n"
+        "IMPORTANT: Your entire response must be exactly 3 lines. Do not explain your reasoning."
     )
 
     verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: Assessment failed."
@@ -1476,7 +1473,7 @@ async def handle_check_match_callback(
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CODE_ENTRYPOINT"] = "cli"
         result = subprocess.run(
-            [claude_path, "-p", prompt, "--allowedTools", ""],
+            [claude_path, "-p", prompt, "--allowedTools", "", "--max-turns", "1"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -1484,7 +1481,14 @@ async def handle_check_match_callback(
             cwd="/home/ubuntu/poly_dashboard",
         )
         if result.stdout.strip():
-            verdict = result.stdout.strip()
+            raw = result.stdout.strip()
+            # Extract only the 3 verdict lines, skip any preamble
+            lines = raw.split("\n")
+            verdict_lines = []
+            for ln in lines:
+                if any(ln.startswith(p) for p in ("\u2705", "\u274c", "\u2753", "Score:", "Reason:")):
+                    verdict_lines.append(ln)
+            verdict = "\n".join(verdict_lines) if len(verdict_lines) >= 2 else raw
     except subprocess.TimeoutExpired:
         verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: Claude timed out."
     except Exception as e:
@@ -1668,7 +1672,14 @@ async def handle_investigate_trade_callback(
             env=env,
         )
         if result.stdout.strip():
-            verdict = result.stdout.strip()
+            raw = result.stdout.strip()
+            # Extract only the 3 verdict lines, skip any preamble
+            lines = raw.split("\n")
+            verdict_lines = []
+            for ln in lines:
+                if any(ln.startswith(p) for p in ("\u2705", "\u274c", "\u2753", "Score:", "Reason:")):
+                    verdict_lines.append(ln)
+            verdict = "\n".join(verdict_lines) if len(verdict_lines) >= 2 else raw
     except FileNotFoundError:
         verdict = (
             "\U0001f50e Investigation failed \u2014 Claude CLI not available on this machine."
