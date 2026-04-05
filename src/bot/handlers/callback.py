@@ -51,7 +51,22 @@ async def handle_callback_query(
 ) -> None:
     """Route callback queries to appropriate handlers."""
     query = update.callback_query
-    await query.answer()  # Acknowledge the callback
+
+    # Acknowledge the callback — but don't fail on stale/old buttons.
+    # Telegram rejects query.answer() if the callback is older than ~60s
+    # (e.g. buttons from before a bot restart). We still want to process
+    # the action, so just log and continue.
+    try:
+        await query.answer()
+    except Exception as e:
+        if "too old" in str(e).lower() or "query id is invalid" in str(e).lower():
+            logger.info(
+                "Stale callback query (button still works)",
+                user_id=query.from_user.id,
+                callback_data=query.data,
+            )
+        else:
+            raise
 
     user_id = query.from_user.id
     data = query.data
@@ -1680,7 +1695,6 @@ async def handle_investigate_trade_callback(
             ],
             capture_output=True,
             text=True,
-            timeout=120,
             env=env,
         )
         if result.stdout.strip():
@@ -1695,10 +1709,6 @@ async def handle_investigate_trade_callback(
     except FileNotFoundError:
         verdict = (
             "\U0001f50e Investigation failed \u2014 Claude CLI not available on this machine."
-        )
-    except subprocess.TimeoutExpired:
-        verdict = (
-            "\U0001f50e Investigation timed out (120s). Try again."
         )
     except Exception as e:
         logger.error("investigate_trade: claude -p failed", error=str(e))

@@ -261,6 +261,27 @@ class ClaudeCodeBot:
     ) -> None:
         """Handle errors globally."""
         error = context.error
+
+        # Stale callback queries are benign — Telegram rejects answer() for
+        # buttons older than ~60s (e.g. after bot restart).  Don't alarm the
+        # user or log a security violation for this.
+        from telegram.error import BadRequest
+
+        if isinstance(error, BadRequest) and (
+            "too old" in str(error).lower()
+            or "query id is invalid" in str(error).lower()
+        ):
+            logger.info(
+                "Ignored stale callback query in global handler",
+                error=str(error),
+                user_id=(
+                    update.effective_user.id
+                    if update and update.effective_user
+                    else None
+                ),
+            )
+            return
+
         logger.error(
             "Global error handler triggered",
             error=str(error),
