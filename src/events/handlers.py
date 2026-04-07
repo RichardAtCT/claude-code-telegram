@@ -4,8 +4,9 @@ AgentHandler: translates events into ClaudeIntegration.run_command() calls.
 NotificationHandler: subscribes to AgentResponseEvent and delivers to Telegram.
 """
 
+import asyncio
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 import structlog
 
@@ -35,6 +36,8 @@ class AgentHandler:
         self.claude = claude_integration
         self.default_working_directory = default_working_directory
         self.default_user_id = default_user_id
+        self._scheduled_semaphore = asyncio.Semaphore(2)
+        self._background_tasks: Set[asyncio.Task[Any]] = set()
 
     def register(self) -> None:
         """Subscribe to events that need agent processing."""
@@ -92,15 +95,27 @@ class AgentHandler:
             job_name=event.job_name,
         )
 
-        prompt = event.prompt
-        if event.skill_name:
-            prompt = (
-                f"/{event.skill_name}\n\n{prompt}" if prompt else f"/{event.skill_name}"
-            )
+        task = asyncio.create_task(
+            self._run_scheduled(event),
+            name=f"scheduled:{event.job_id or event.job_name or event.id}",
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._task_done)
+        await asyncio.sleep(0)
 
-        working_dir = event.working_directory or self.default_working_directory
+    async def _run_scheduled(self, event: ScheduledEvent) -> None:
+        """Run scheduled Claude work in the background with concurrency limits."""
+        async with self._scheduled_semaphore:
+            prompt = event.prompt
+            if event.skill_name:
+                prompt = (
+                    f"/{event.skill_name}\n\n{prompt}"
+                    if prompt
+                    else f"/{event.skill_name}"
+                )
 
-        try:
+            working_dir = event.working_directory or self.default_working_directory
+
             response = await self.claude.run_command(
                 prompt=prompt,
                 working_directory=working_dir,
@@ -126,11 +141,18 @@ class AgentHandler:
                             originating_event_id=event.id,
                         )
                     )
+
+    def _task_done(self, task: asyncio.Task[Any]) -> None:
+        """Clean up finished scheduled tasks and log failures."""
+        self._background_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
         except Exception:
             logger.exception(
                 "Agent execution failed for scheduled event",
-                job_id=event.job_id,
-                event_id=event.id,
+                task_name=task.get_name(),
             )
 
     def _build_webhook_prompt(self, event: WebhookEvent) -> str:
