@@ -32,7 +32,12 @@ class JobScheduler:
         self.event_bus = event_bus
         self.db_manager = db_manager
         self.default_working_directory = default_working_directory
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = AsyncIOScheduler(
+            job_defaults={
+                "misfire_grace_time": None,  # Always run, no matter how late
+                "coalesce": True,            # Merge multiple missed runs into one
+            }
+        )
 
     async def start(self) -> None:
         """Load persisted jobs and start the scheduler."""
