@@ -156,13 +156,16 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns 11 bot commands (6 core + 5 vault)."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
+    assert len(commands) == 11
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    assert cmd_names == [
+        "start", "new", "status", "verbose", "repo", "restart",
+        "today", "closeday", "capture", "schedule", "context",
+    ]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
@@ -990,3 +993,34 @@ async def test_bot_suffixed_command_not_forwarded(agentic_settings, deps):
     ) as mock_claude:
         await orchestrator._handle_unknown_command(update, context)
         mock_claude.assert_not_called()
+
+
+# --- Vault commands menu tests ---
+
+VAULT_COMMANDS = {"today", "closeday", "capture", "schedule", "context"}
+
+
+class TestVaultCommandsMenu:
+    """Vault commands appear in the bot menu but pass through to Claude."""
+
+    async def test_vault_commands_in_bot_command_list(self, agentic_settings, deps):
+        """Vault commands appear in the Telegram command menu."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        commands = await orchestrator.get_bot_commands()
+        cmd_names = {c.command for c in commands}
+        assert VAULT_COMMANDS.issubset(cmd_names), (
+            f"Missing vault commands: {VAULT_COMMANDS - cmd_names}"
+        )
+
+    async def test_vault_commands_not_in_known_commands(self, agentic_settings, deps):
+        """Vault commands are NOT in _known_commands so they forward to Claude."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        # register_handlers populates _known_commands
+        app = MagicMock()
+        app.add_handler = MagicMock()
+        orchestrator.register_handlers(app)
+
+        for cmd in VAULT_COMMANDS:
+            assert cmd not in orchestrator._known_commands, (
+                f"/{cmd} should NOT be a known command — it must pass through to Claude"
+            )
