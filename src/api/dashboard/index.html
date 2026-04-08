@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Telegram - Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #e6edf3; --text-muted: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff;
+  --radius: 12px; --shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+
+/* Layout */
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header .status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
+.header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+
+.container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+.grid { display: grid; gap: 16px; }
+.grid-4 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.grid-2 { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
+
+/* Cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+.card h2 { font-size: 14px; font-weight: 500; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .5px; }
+.stat-value { font-size: 32px; font-weight: 700; line-height: 1.2; }
+.stat-label { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.stat-value.green { color: var(--green); }
+.stat-value.accent { color: var(--accent); }
+.stat-value.orange { color: var(--orange); }
+.stat-value.purple { color: var(--purple); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 12px; color: var(--text-muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; text-transform: uppercase; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+tr:hover td { background: rgba(88,166,255,.05); }
+
+/* Tags */
+.tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+.tag-success { background: rgba(63,185,80,.15); color: var(--green); }
+.tag-error { background: rgba(248,81,73,.15); color: var(--red); }
+.tag-tool { background: rgba(188,140,255,.15); color: var(--purple); }
+.tag-info { background: rgba(88,166,255,.15); color: var(--accent); }
+
+/* Activity feed */
+.feed { max-height: 500px; overflow-y: auto; }
+.feed-item { padding: 12px 0; border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: flex-start; }
+.feed-item:last-child { border-bottom: none; }
+.feed-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+.feed-icon.tool { background: rgba(188,140,255,.15); }
+.feed-icon.msg { background: rgba(88,166,255,.15); }
+.feed-icon.err { background: rgba(248,81,73,.15); }
+.feed-text { font-size: 13px; line-height: 1.5; }
+.feed-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+/* Bar chart */
+.bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding-top: 8px; }
+.bar { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; min-width: 8px; transition: height .3s; position: relative; cursor: pointer; opacity: .7; }
+.bar:hover { opacity: 1; }
+.bar-label { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 9px; color: var(--text-muted); white-space: nowrap; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.tab { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; background: transparent; color: var(--text-muted); border: none; transition: all .2s; }
+.tab:hover { background: rgba(255,255,255,.05); color: var(--text); }
+.tab.active { background: var(--accent); color: #fff; }
+
+/* Refresh btn */
+.btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); transition: all .2s; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Loading */
+.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+.spinner { display: inline-block; width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Claude Code Telegram</h1>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div class="status"><div class="dot"></div> <span id="status-text">Connecting...</span></div>
+    <button class="btn" onclick="refreshAll()">Refresh</button>
+  </div>
+</div>
+
+<div class="container">
+  <!-- Stats cards -->
+  <div class="grid grid-4" id="stats-grid">
+    <div class="card"><h2>Messages</h2><div class="stat-value accent" id="stat-messages">-</div><div class="stat-label">total interactions</div></div>
+    <div class="card"><h2>Sessions</h2><div class="stat-value green" id="stat-sessions">-</div><div class="stat-label">total sessions</div></div>
+    <div class="card"><h2>Cost</h2><div class="stat-value orange" id="stat-cost">-</div><div class="stat-label">total USD spent</div></div>
+    <div class="card"><h2>Avg Duration</h2><div class="stat-value purple" id="stat-duration">-</div><div class="stat-label">ms per request</div></div>
+  </div>
+
+  <!-- Activity chart + tools -->
+  <div class="grid grid-2" style="margin-top:16px;">
+    <div class="card">
+      <h2>Daily Activity (30 days)</h2>
+      <div class="bar-chart" id="activity-chart"></div>
+      <div style="height:24px;"></div>
+    </div>
+    <div class="card">
+      <h2>Top Tools</h2>
+      <table>
+        <thead><tr><th>Tool</th><th>Uses</th><th>Sessions</th><th>Success</th></tr></thead>
+        <tbody id="tools-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Tabs: Messages / Audit / Sessions -->
+  <div style="margin-top:16px;">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('messages',this)">Recent Messages</button>
+      <button class="tab" onclick="switchTab('audit',this)">Audit Log</button>
+      <button class="tab" onclick="switchTab('sessions',this)">Sessions</button>
+    </div>
+
+    <div class="card">
+      <div id="tab-messages" class="feed"></div>
+      <div id="tab-audit" class="feed" style="display:none;"></div>
+      <div id="tab-sessions" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';  // same origin
+
+function fmt(n, dec=0) { return n == null ? '-' : Number(n).toLocaleString(undefined, {minimumFractionDigits:dec,maximumFractionDigits:dec}); }
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+}
+function truncate(s, n=120) { return s && s.length > n ? s.slice(0,n) + '...' : (s||''); }
+
+async function fetchJSON(url) {
+  try {
+    const r = await fetch(API + url);
+    if (!r.ok) throw new Error(r.statusText);
+    return await r.json();
+  } catch(e) {
+    console.error('Fetch error:', url, e);
+    return null;
+  }
+}
+
+async function loadDashboard() {
+  const data = await fetchJSON('/api/dashboard');
+  if (!data) { document.getElementById('status-text').textContent = 'Error'; return; }
+
+  const o = data.system_stats?.overall || {};
+  document.getElementById('stat-messages').textContent = fmt(o.total_messages);
+  document.getElementById('stat-sessions').textContent = fmt(o.total_sessions);
+  document.getElementById('stat-cost').textContent = '$' + fmt(o.total_cost, 4);
+  document.getElementById('stat-duration').textContent = fmt(o.avg_duration, 0);
+
+  // Activity chart
+  const daily = (data.system_stats?.daily_activity || []).reverse().slice(-30);
+  const chart = document.getElementById('activity-chart');
+  chart.innerHTML = '';
+  if (daily.length) {
+    const maxMsgs = Math.max(...daily.map(d => d.total_messages || 0), 1);
+    daily.forEach(d => {
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = Math.max(4, ((d.total_messages||0)/maxMsgs)*100) + '%';
+      bar.title = `${d.date}: ${d.total_messages} msgs, $${(d.total_cost||0).toFixed(4)}`;
+      const lbl = document.createElement('div');
+      lbl.className = 'bar-label';
+      lbl.textContent = (d.date||'').slice(5);
+      bar.appendChild(lbl);
+      chart.appendChild(bar);
+    });
+  } else {
+    chart.innerHTML = '<div style="color:var(--text-muted);margin:auto;">No activity yet</div>';
+  }
+
+  // Tools table
+  const tools = data.tool_stats || data.system_stats?.tool_stats || [];
+  const tbody = document.getElementById('tools-table');
+  tbody.innerHTML = tools.slice(0,10).map(t => `
+    <tr>
+      <td><span class="tag tag-tool">${t.tool_name}</span></td>
+      <td>${fmt(t.usage_count)}</td>
+      <td>${fmt(t.sessions_used)}</td>
+      <td>${t.success_count != null ? `<span class="tag tag-success">${t.success_count}</span> / <span class="tag tag-error">${t.error_count||0}</span>` : '-'}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('status-text').textContent = 'Live';
+}
+
+async function loadMessages() {
+  const msgs = await fetchJSON('/api/messages/recent?hours=72');
+  const feed = document.getElementById('tab-messages');
+  if (!msgs || !msgs.length) { feed.innerHTML = '<div class="loading">No recent messages</div>'; return; }
+  feed.innerHTML = msgs.slice(0,50).map(m => `
+    <div class="feed-item">
+      <div class="feed-icon ${m.error ? 'err' : 'msg'}">${m.error ? '!' : '>'}</div>
+      <div>
+        <div class="feed-text"><strong>${truncate(m.prompt, 80)}</strong></div>
+        <div class="feed-text" style="color:var(--text-muted);">${truncate(m.response, 150)}</div>
+        <div class="feed-time">${fmtTime(m.timestamp)} &middot; $${(m.cost||0).toFixed(4)} &middot; ${m.duration_ms||0}ms</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadAudit() {
+  const entries = await fetchJSON('/api/audit?hours=72');
+  const feed = document.getElementById('tab-audit');
+  if (!entries || !entries.length) { feed.innerHTML = '<div class="loading">No audit entries</div>'; return; }
+  feed.innerHTML = entries.slice(0,50).map(e => `
+    <div class="feed-item">
+      <div class="feed-icon ${e.success ? 'tool' : 'err'}">${e.success ? '#' : '!'}</div>
+      <div>
+        <div class="feed-text"><span class="tag ${e.success?'tag-success':'tag-error'}">${e.event_type}</span></div>
+        <div class="feed-text" style="color:var(--text-muted);font-size:12px;">${truncate(JSON.stringify(e.event_data), 200)}</div>
+        <div class="feed-time">${fmtTime(e.timestamp)} &middot; User: ${e.user_id}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function loadSessions() {
+  const sessions = await fetchJSON('/api/sessions');
+  const el = document.getElementById('tab-sessions');
+  if (!sessions || !sessions.length) { el.innerHTML = '<div class="loading">No sessions</div>'; return; }
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>Session</th><th>User</th><th>Project</th><th>Messages</th><th>Cost</th><th>Last Used</th><th>Status</th></tr></thead>
+      <tbody>${sessions.slice(0,30).map(s => `
+        <tr>
+          <td style="font-family:monospace;font-size:11px;">${(s.session_id||'').slice(0,12)}...</td>
+          <td>${s.user_id}</td>
+          <td style="font-size:12px;">${truncate(s.project_path, 40)}</td>
+          <td>${s.message_count||0}</td>
+          <td>$${(s.total_cost||0).toFixed(4)}</td>
+          <td>${fmtTime(s.last_used)}</td>
+          <td><span class="tag ${s.is_active?'tag-success':'tag-error'}">${s.is_active?'active':'closed'}</span></td>
+        </tr>
+      `).join('')}</tbody>
+    </table>
+  `;
+}
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  ['messages','audit','sessions'].forEach(t => {
+    document.getElementById('tab-'+t).style.display = t===name ? '' : 'none';
+  });
+}
+
+async function refreshAll() {
+  document.getElementById('status-text').textContent = 'Refreshing...';
+  await Promise.all([loadDashboard(), loadMessages(), loadAudit(), loadSessions()]);
+  document.getElementById('status-text').textContent = 'Live';
+}
+
+// Initial load
+refreshAll();
+
+// Auto-refresh every 15 seconds
+setInterval(refreshAll, 15000);
+</script>
+</body>
+</html>

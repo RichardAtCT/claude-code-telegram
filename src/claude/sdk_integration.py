@@ -362,6 +362,45 @@ class ClaudeSDKManager:
                     session_id=session_id,
                 )
 
+            # Windows fix: when cli_path is a .js file, the SDK cannot
+            # execute it directly (Windows needs node.exe to run JS).
+            # We patch the transport to prepend node.exe to all commands
+            # and skip the version check (which also tries to run .js).
+            if os.name == "nt" and options.cli_path:
+                cli_p = str(options.cli_path)
+                if cli_p.endswith(".js"):
+                    import shutil
+
+                    from claude_agent_sdk._internal.transport.subprocess_cli import (
+                        SubprocessCLITransport,
+                    )
+
+                    node_exe = shutil.which("node") or (
+                        r"C:\Program Files\nodejs\node.exe"
+                    )
+
+                    if not hasattr(SubprocessCLITransport, "_orig_build_command"):
+                        SubprocessCLITransport._orig_build_command = (
+                            SubprocessCLITransport._build_command
+                        )
+
+                        def _patched_build(self_t: Any) -> list:
+                            cmd = SubprocessCLITransport._orig_build_command(self_t)
+                            if cmd and cmd[0].endswith(".js"):
+                                cmd.insert(0, node_exe)
+                            return cmd
+
+                        SubprocessCLITransport._build_command = _patched_build
+
+                    # Skip version check — it also calls [cli_path, "-v"]
+                    os.environ["CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK"] = "1"
+
+                    logger.info(
+                        "Windows JS CLI path detected, patched transport",
+                        cli_path=cli_p,
+                        node_exe=node_exe,
+                    )
+
             # Collect messages via ClaudeSDKClient
             messages: List[Message] = []
             interrupted = False

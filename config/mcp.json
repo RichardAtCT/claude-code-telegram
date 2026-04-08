@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "python",
+      "args": ["src/mcp/telegram_server.py"]
+    },
+    "metricool": {
+      "command": "python",
+      "args": ["src/mcp/metricool_server.py"]
+    },
+    "ibkr": {
+      "command": "python",
+      "args": ["src/mcp/ibkr_server.py"]
+    }
+  }
+}

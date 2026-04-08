@@ -1,19 +1,24 @@
-"""FastAPI webhook server.
+"""FastAPI webhook server + dashboard API.
 
 Runs in the same process as the bot, sharing the event loop.
 Receives external webhooks and publishes them as events on the bus.
+Serves a real-time dashboard for monitoring all Claude activity.
 """
 
 import uuid
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import structlog
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..config.settings import Settings
 from ..events.bus import EventBus
 from ..events.types import WebhookEvent
 from ..storage.database import DatabaseManager
+from ..storage.facade import Storage
 from .auth import verify_github_signature, verify_shared_secret
 
 logger = structlog.get_logger()
@@ -23,19 +28,115 @@ def create_api_app(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    storage: Optional[Storage] = None,
 ) -> FastAPI:
     """Create the FastAPI application."""
 
     app = FastAPI(
-        title="Claude Code Telegram - Webhook API",
-        version="0.1.0",
+        title="Claude Code Telegram - Dashboard & API",
+        version="0.2.0",
         docs_url="/docs" if settings.development_mode else None,
         redoc_url=None,
     )
 
+    # Serve static dashboard files
+    dashboard_dir = Path(__file__).parent / "dashboard"
+    if dashboard_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(dashboard_dir)), name="static")
+
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}
+
+    # ── Dashboard HTML ───────────────────────────────────────────
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard_page() -> HTMLResponse:
+        """Serve the main dashboard page."""
+        html_path = Path(__file__).parent / "dashboard" / "index.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(
+            content="<h1>Dashboard not found. Run the setup.</h1>",
+            status_code=404,
+        )
+
+    # ── Dashboard API endpoints ──────────────────────────────────
+    @app.get("/api/dashboard")
+    async def get_dashboard() -> Dict[str, Any]:
+        """Full admin dashboard data."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        return await storage.get_admin_dashboard()
+
+    @app.get("/api/dashboard/user/{user_id}")
+    async def get_user_dashboard(user_id: int) -> Dict[str, Any]:
+        """User-specific dashboard data."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        data = await storage.get_user_dashboard(user_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="User not found")
+        return data
+
+    @app.get("/api/sessions")
+    async def list_sessions(user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """List sessions, optionally filtered by user."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        if user_id:
+            sessions = await storage.sessions.get_user_sessions(
+                user_id, active_only=False
+            )
+        else:
+            # Get all users and their sessions
+            users = await storage.users.get_all_users()
+            sessions = []
+            for u in users:
+                user_sessions = await storage.sessions.get_user_sessions(
+                    u.user_id, active_only=False
+                )
+                sessions.extend(user_sessions)
+        return [s.to_dict() for s in sessions]
+
+    @app.get("/api/sessions/{session_id}")
+    async def get_session_detail(session_id: str) -> Dict[str, Any]:
+        """Detailed session history with messages and tools."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        data = await storage.get_session_history(session_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return data
+
+    @app.get("/api/messages/recent")
+    async def get_recent_messages(hours: int = 24) -> List[Dict[str, Any]]:
+        """Recent messages across all users."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        messages = await storage.messages.get_recent_messages(hours)
+        return [m.to_dict() for m in messages]
+
+    @app.get("/api/tools/stats")
+    async def get_tool_stats() -> List[Dict[str, Any]]:
+        """Tool usage statistics."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        return await storage.tools.get_tool_stats()
+
+    @app.get("/api/audit")
+    async def get_audit_log(hours: int = 24) -> List[Dict[str, Any]]:
+        """Recent audit log entries."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        entries = await storage.audit.get_recent_audit_log(hours)
+        return [e.to_dict() for e in entries]
+
+    @app.get("/api/costs")
+    async def get_costs(days: int = 30) -> List[Dict[str, Any]]:
+        """Cost tracking data."""
+        if not storage:
+            raise HTTPException(status_code=503, detail="Storage not available")
+        return await storage.costs.get_total_costs(days)
 
     @app.post("/webhooks/{provider}")
     async def receive_webhook(
@@ -176,11 +277,12 @@ async def run_api_server(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    storage: Optional[Storage] = None,
 ) -> None:
     """Run the FastAPI server using uvicorn."""
     import uvicorn
 
-    app = create_api_app(event_bus, settings, db_manager)
+    app = create_api_app(event_bus, settings, db_manager, storage)
 
     config = uvicorn.Config(
         app=app,
