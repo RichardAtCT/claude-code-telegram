@@ -59,6 +59,7 @@ class ClaudeResponse:
     error_type: Optional[str] = None
     tools_used: List[Dict[str, Any]] = field(default_factory=list)
     interrupted: bool = False
+    input_tokens: int = 0      # Total input tokens used (context window usage)
 
 
 @dataclass
@@ -362,6 +363,12 @@ class ClaudeSDKManager:
                     session_id=session_id,
                 )
 
+            # Windows fix: force UTF-8 for subprocess communication
+            # (cp1252 default crashes on Unicode in system prompts).
+            if os.name == "nt":
+                os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+                os.environ.setdefault("PYTHONUTF8", "1")
+
             # Windows fix: when cli_path is a .js file, the SDK cannot
             # execute it directly (Windows needs node.exe to run JS).
             # We patch the transport to prepend node.exe to all commands
@@ -555,11 +562,16 @@ class ClaudeSDKManager:
             tools_used: List[Dict[str, Any]] = []
             claude_session_id = None
             result_content = None
+            input_tokens = 0
             for message in messages:
                 if isinstance(message, ResultMessage):
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
                     claude_session_id = getattr(message, "session_id", None)
                     result_content = getattr(message, "result", None)
+                    # Extract token usage for context window monitoring
+                    usage = getattr(message, "usage", None) or {}
+                    if isinstance(usage, dict):
+                        input_tokens = int(usage.get("input_tokens", 0))
                     current_time = asyncio.get_event_loop().time()
                     for msg in messages:
                         if isinstance(msg, AssistantMessage):
@@ -644,6 +656,7 @@ class ClaudeSDKManager:
                 ),
                 tools_used=tools_used,
                 interrupted=interrupted,
+                input_tokens=input_tokens,
             )
 
         except asyncio.TimeoutError:

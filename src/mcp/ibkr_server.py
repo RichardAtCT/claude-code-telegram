@@ -1,19 +1,29 @@
 """MCP server exposing Interactive Brokers tools to Claude.
 
 Connects to IB Gateway via TWS API (port 4001) using ib_insync.
-Reads IBKR_ACCOUNT_ID and IBKR_PORT from environment variables.
+Falls back to a local JSON cache when the gateway is offline.
+Cache is at IBKR_CACHE_PATH (default: C:/Users/ander/Documents/GitHub/portfolio_cache.json).
 
-Requires IB Gateway or TWS to be running and authenticated.
+Reads IBKR_ACCOUNT_ID and IBKR_PORT from environment variables.
 """
 
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("ibkr")
+
+CACHE_PATH = Path(
+    os.environ.get(
+        "IBKR_CACHE_PATH",
+        "C:/Users/ander/Documents/GitHub/portfolio_cache.json",
+    )
+)
 
 
 def _get_port() -> int:
@@ -24,118 +34,124 @@ def _get_account_id() -> str:
     return os.environ.get("IBKR_ACCOUNT_ID", "U15431190")
 
 
-def _connect_ib():
-    """Create a synchronous IB connection (runs in thread for MCP)."""
+def _read_cache() -> Dict[str, Any]:
+    """Read the local portfolio cache."""
+    if CACHE_PATH.exists():
+        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def _write_cache(data: Dict[str, Any]) -> None:
+    """Write portfolio data to the local cache."""
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CACHE_PATH.write_text(
+        json.dumps(data, indent=2, default=str, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _connect_and_fetch(fetch_fn):
+    """Try to connect to IB Gateway, run fetch_fn, update cache, disconnect.
+
+    If the gateway is offline, returns cached data with last_updated timestamp.
+    """
     from ib_insync import IB
+
     ib = IB()
-    ib.connect("127.0.0.1", _get_port(), clientId=99, readonly=True, timeout=10)
-    return ib
-
-
-def _run_sync(func):
-    """Run an ib_insync function synchronously and return result."""
     try:
-        ib = _connect_ib()
-        try:
-            result = func(ib)
-            return result
-        finally:
-            ib.disconnect()
+        ib.connect("127.0.0.1", _get_port(), clientId=99, readonly=True, timeout=10)
+        result = fetch_fn(ib)
+        ib.disconnect()
+
+        # Update cache
+        now = datetime.now(timezone.utc).isoformat()
+        cache = _read_cache()
+        cache["last_updated"] = now
+        cache["account_id"] = _get_account_id()
+        cache["gateway_online"] = True
+        if isinstance(result, list):
+            cache["positions"] = result
+        elif isinstance(result, dict):
+            cache.update(result)
+        _write_cache(cache)
+
+        return {"data": result, "source": "live", "last_updated": now}
     except Exception as e:
-        return {"error": str(e)}
+        ib.disconnect() if ib.isConnected() else None
+        # Fall back to cache
+        cache = _read_cache()
+        if cache:
+            cache["gateway_online"] = False
+            return {
+                "data": cache.get("positions", cache),
+                "source": "cache",
+                "last_updated": cache.get("last_updated", "unknown"),
+                "note": f"IB Gateway offline. Mostrando datos del cache ({cache.get('last_updated', 'fecha desconocida')}). Error: {e}",
+            }
+        return {"error": f"IB Gateway no disponible y no hay cache. Arranca IB Gateway. Error: {e}"}
 
 
 @mcp.tool()
 async def check_status() -> str:
-    """Check if IB Gateway is running and connected.
+    """Check if IB Gateway is running and connected. Returns live or cached status."""
 
-    Returns connection status and account info.
-    """
     def _check(ib):
-        managed = ib.managedAccounts()
         return {
             "connected": ib.isConnected(),
-            "accounts": managed,
+            "accounts": ib.managedAccounts(),
             "server_version": ib.client.serverVersion(),
         }
 
-    result = await asyncio.to_thread(_run_sync, _check)
+    result = await asyncio.to_thread(_connect_and_fetch, _check)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @mcp.tool()
 async def get_positions() -> str:
-    """Get all open positions in the IBKR portfolio.
+    """Get all open positions. Returns live data if gateway is up, cached data if not.
 
-    Returns each position with: symbol, quantity, average cost, market price,
-    market value, unrealized P&L, and realized P&L.
+    Each position includes: symbol, quantity, avg cost, market value, unrealized P&L.
+    The response includes 'source' (live/cache) and 'last_updated' timestamp.
     """
+
     def _positions(ib):
         positions = ib.positions()
         result = []
         for pos in positions:
-            contract = pos.contract
+            c = pos.contract
             result.append({
-                "symbol": contract.symbol,
-                "secType": contract.secType,
-                "exchange": contract.exchange or contract.primaryExchange,
-                "currency": contract.currency,
+                "symbol": c.symbol,
+                "secType": c.secType,
+                "currency": c.currency,
                 "quantity": float(pos.position),
                 "avg_cost": float(pos.avgCost),
-                "market_value": round(float(pos.position) * float(pos.avgCost), 2),
-                "conId": contract.conId,
+                "conId": c.conId,
             })
         return result
 
-    result = await asyncio.to_thread(_run_sync, _positions)
-    return json.dumps(result, indent=2, ensure_ascii=False)
-
-
-@mcp.tool()
-async def get_account_summary() -> str:
-    """Get IBKR account summary: balance, buying power, total P&L, margin.
-
-    Returns key account metrics including net liquidation value,
-    available funds, total cash, and unrealized P&L.
-    """
-    def _summary(ib):
-        account_id = _get_account_id()
-        values = ib.accountSummary(account_id)
-        summary = {}
-        important_tags = [
-            "NetLiquidation", "TotalCashValue", "BuyingPower",
-            "GrossPositionValue", "UnrealizedPnL", "RealizedPnL",
-            "AvailableFunds", "MaintMarginReq", "ExcessLiquidity",
-        ]
-        for v in values:
-            if v.tag in important_tags:
-                summary[v.tag] = {
-                    "value": v.value,
-                    "currency": v.currency,
-                }
-        return summary
-
-    result = await asyncio.to_thread(_run_sync, _summary)
+    result = await asyncio.to_thread(_connect_and_fetch, _positions)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @mcp.tool()
 async def get_portfolio() -> str:
-    """Get detailed portfolio with real-time P&L for each position.
+    """Get detailed portfolio with real-time P&L. Falls back to cache if offline.
 
-    Returns positions with current market value, unrealized and realized P&L,
-    and percentage return. More detailed than get_positions.
+    Returns positions with market value, unrealized/realized P&L, and return %.
+    Includes 'source' (live/cache) and 'last_updated' timestamp.
     """
+
     def _portfolio(ib):
         account_id = _get_account_id()
         items = ib.portfolio(account_id)
         result = []
         for item in items:
-            contract = item.contract
+            c = item.contract
+            cost_basis = abs(float(item.averageCost) * float(item.position))
             result.append({
-                "symbol": contract.symbol,
-                "secType": contract.secType,
-                "currency": contract.currency,
+                "symbol": c.symbol,
+                "secType": c.secType,
+                "currency": c.currency,
                 "quantity": float(item.position),
                 "market_price": float(item.marketPrice),
                 "market_value": float(item.marketValue),
@@ -143,13 +159,34 @@ async def get_portfolio() -> str:
                 "unrealized_pnl": float(item.unrealizedPNL),
                 "realized_pnl": float(item.realizedPNL),
                 "return_pct": round(
-                    (float(item.unrealizedPNL) / (abs(float(item.averageCost) * float(item.position)))) * 100, 2
-                ) if item.averageCost and item.position else 0,
-                "conId": contract.conId,
+                    (float(item.unrealizedPNL) / cost_basis) * 100, 2
+                ) if cost_basis > 0 else 0,
+                "conId": c.conId,
             })
         return result
 
-    result = await asyncio.to_thread(_run_sync, _portfolio)
+    result = await asyncio.to_thread(_connect_and_fetch, _portfolio)
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
+@mcp.tool()
+async def get_account_summary() -> str:
+    """Get account summary: balance, buying power, P&L. Falls back to cache."""
+
+    def _summary(ib):
+        account_id = _get_account_id()
+        values = ib.accountSummary(account_id)
+        summary = {}
+        for v in values:
+            if v.tag in [
+                "NetLiquidation", "TotalCashValue", "BuyingPower",
+                "GrossPositionValue", "UnrealizedPnL", "RealizedPnL",
+                "AvailableFunds", "MaintMarginReq", "ExcessLiquidity",
+            ]:
+                summary[v.tag] = {"value": v.value, "currency": v.currency}
+        return summary
+
+    result = await asyncio.to_thread(_connect_and_fetch, _summary)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
@@ -158,66 +195,46 @@ async def search_stock(query: str) -> str:
     """Search for a stock/ETF by ticker symbol.
 
     Args:
-        query: Stock ticker symbol (e.g. 'AAPL', 'TSLA', 'SPY')
-
-    Returns:
-        Contract details including conId, exchange, and description.
+        query: Stock ticker (e.g. 'AAPL', 'TSLA', 'SPY')
     """
+
     def _search(ib):
         from ib_insync import Stock
         contract = Stock(query, "SMART", "USD")
         details = ib.reqContractDetails(contract)
-        results = []
-        for d in details[:5]:
-            c = d.contract
-            results.append({
-                "symbol": c.symbol,
-                "conId": c.conId,
-                "exchange": c.exchange,
-                "primaryExchange": c.primaryExchange,
-                "currency": c.currency,
-                "secType": c.secType,
+        return [
+            {
+                "symbol": d.contract.symbol,
+                "conId": d.contract.conId,
+                "exchange": d.contract.primaryExchange,
+                "currency": d.contract.currency,
                 "longName": d.longName,
                 "industry": d.industry,
                 "category": d.category,
-                "subcategory": d.subcategory,
-            })
-        return results
+            }
+            for d in details[:5]
+        ]
 
-    result = await asyncio.to_thread(_run_sync, _search)
+    result = await asyncio.to_thread(_connect_and_fetch, _search)
     return json.dumps(result, indent=2, ensure_ascii=False)
 
 
 @mcp.tool()
-async def get_market_data(symbol: str, currency: str = "USD") -> str:
-    """Get real-time market data snapshot for a stock.
+async def get_cached_portfolio() -> str:
+    """Read the local portfolio cache directly (no gateway needed).
 
-    Args:
-        symbol: Stock ticker (e.g. 'AAPL')
-        currency: Currency (default 'USD', use 'EUR' for European stocks)
-
-    Returns:
-        Current bid, ask, last price, volume, and other market data.
+    Returns the last saved positions with the timestamp of when they were updated.
+    Use this when you know the gateway is offline.
     """
-    def _market(ib):
-        from ib_insync import Stock
-        contract = Stock(symbol, "SMART", currency)
-        ib.qualifyContracts(contract)
-        ticker = ib.reqMktData(contract, snapshot=True)
-        ib.sleep(2)  # Wait for data
-        return {
-            "symbol": symbol,
-            "bid": float(ticker.bid) if ticker.bid else None,
-            "ask": float(ticker.ask) if ticker.ask else None,
-            "last": float(ticker.last) if ticker.last else None,
-            "close": float(ticker.close) if ticker.close else None,
-            "volume": int(ticker.volume) if ticker.volume else None,
-            "high": float(ticker.high) if ticker.high else None,
-            "low": float(ticker.low) if ticker.low else None,
-        }
-
-    result = await asyncio.to_thread(_run_sync, _market)
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    cache = _read_cache()
+    if not cache:
+        return json.dumps({"error": "No cache available. Need at least one gateway connection to create it."})
+    return json.dumps({
+        "source": "cache",
+        "last_updated": cache.get("last_updated", "unknown"),
+        "account_id": cache.get("account_id"),
+        "positions": cache.get("positions", []),
+    }, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":
