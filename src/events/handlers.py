@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 import structlog
 
+from ..bot.utils.html_format import markdown_to_telegram_html
 from ..claude.facade import ClaudeIntegration
 from .bus import Event, EventBus
 from .types import AgentResponseEvent, ScheduledEvent, WebhookEvent
@@ -63,14 +64,11 @@ class AgentHandler:
             )
 
             if response.content:
-                # We don't know which chat to send to from a webhook alone.
-                # The notification service needs configured target chats.
-                # Publish with chat_id=0 — the NotificationService
-                # will broadcast to configured notification_chat_ids.
                 await self.event_bus.publish(
                     AgentResponseEvent(
                         chat_id=0,
-                        text=response.content,
+                        text=self._to_html(response.content),
+                        parse_mode="HTML",
                         originating_event_id=event.id,
                     )
                 )
@@ -108,21 +106,45 @@ class AgentHandler:
             )
 
             if response.content:
+                html_text = self._to_html(response.content)
+
+                # Silence repetitive status messages (deposit checks, etc.)
+                _silent_phrases = [
+                    "awaiting_deposit",
+                    "waiting deposit",
+                    "no deposit",
+                    "out of extra usage",
+                    "out of usage",
+                    "resets apr",
+                    "rate limit",
+                    "usage limit",
+                ]
+                if any(
+                    p in response.content.lower() for p in _silent_phrases
+                ):
+                    logger.info(
+                        "Silenced repetitive scheduled message",
+                        job_name=event.job_name,
+                        content_preview=response.content[:100],
+                    )
+                    return
+
                 for chat_id in event.target_chat_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
                             chat_id=chat_id,
-                            text=response.content,
+                            text=html_text,
+                            parse_mode="HTML",
                             originating_event_id=event.id,
                         )
                     )
 
-                # Also broadcast to default chats if no targets specified
                 if not event.target_chat_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
                             chat_id=0,
-                            text=response.content,
+                            text=html_text,
+                            parse_mode="HTML",
                             originating_event_id=event.id,
                         )
                     )
@@ -132,6 +154,14 @@ class AgentHandler:
                 job_id=event.job_id,
                 event_id=event.id,
             )
+
+    @staticmethod
+    def _to_html(text: str) -> str:
+        """Convert Claude's markdown response to Telegram HTML."""
+        try:
+            return markdown_to_telegram_html(text)
+        except Exception:
+            return text
 
     def _build_webhook_prompt(self, event: WebhookEvent) -> str:
         """Build a Claude prompt from a webhook event."""

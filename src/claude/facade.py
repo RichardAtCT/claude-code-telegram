@@ -4,9 +4,11 @@ Provides simple interface for bot handlers.
 """
 
 import asyncio
+import os
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
+import requests
 import structlog
 
 from ..config.settings import Settings
@@ -14,6 +16,31 @@ from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
 from .session import SessionManager
 
 logger = structlog.get_logger()
+
+# Context window monitoring
+CONTEXT_WINDOW_TOKENS = 200_000   # Claude 3.5 Sonnet context window
+CONTEXT_ALERT_THRESHOLD = 0.85    # Alert at 85%
+CONTEXT_ALERT_TOKENS = int(CONTEXT_WINDOW_TOKENS * CONTEXT_ALERT_THRESHOLD)
+
+_TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+
+
+def _send_telegram(text: str) -> None:
+    """Fire-and-forget Telegram notification (non-blocking)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("NOTIFICATION_CHAT_IDS", os.environ.get("TELEGRAM_CHAT_ID", ""))
+    if not token or not chat_id:
+        return
+    # Use first chat_id if comma-separated
+    chat_id = chat_id.split(",")[0].strip()
+    try:
+        requests.post(
+            _TELEGRAM_API.format(token=token),
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=5,
+        )
+    except Exception:
+        pass  # Never block the main flow
 
 
 class ClaudeIntegration:
@@ -29,6 +56,8 @@ class ClaudeIntegration:
         self.config = config
         self.sdk_manager = sdk_manager or ClaudeSDKManager(config)
         self.session_manager = session_manager
+        # Track which sessions have already triggered the 85% alert (avoid spam)
+        self._context_alerted_sessions: Set[str] = set()
 
     async def run_command(
         self,
@@ -71,6 +100,8 @@ class ClaudeIntegration:
         session = await self.session_manager.get_or_create_session(
             user_id, working_directory, session_id
         )
+        # Capture whether this is a brand-new context window (before execution)
+        session_was_new = getattr(session, "is_new_session", False)
 
         # Execute command
         try:
@@ -125,6 +156,41 @@ class ClaudeIntegration:
 
             # Ensure response has the session's final ID
             response.session_id = session.session_id
+
+            # ── Context window monitoring ──────────────────────────────────
+            # Notify if context is at 85%+ (once per session to avoid spam)
+            if (
+                response.input_tokens >= CONTEXT_ALERT_TOKENS
+                and response.session_id
+                and response.session_id not in self._context_alerted_sessions
+            ):
+                pct = int(response.input_tokens / CONTEXT_WINDOW_TOKENS * 100)
+                self._context_alerted_sessions.add(response.session_id)
+                logger.warning(
+                    "Context window near limit",
+                    input_tokens=response.input_tokens,
+                    pct=pct,
+                    session_id=response.session_id,
+                )
+                asyncio.create_task(asyncio.to_thread(
+                    _send_telegram,
+                    f"⚠️ <b>Contexto Claude al {pct}%</b>\n"
+                    f"Tokens usados: <b>{response.input_tokens:,} / {CONTEXT_WINDOW_TOKENS:,}</b>\n"
+                    f"La sesión se renovará automáticamente en la próxima interacción.",
+                ))
+
+            # Notify when a NEW context window just started (context renewed)
+            if session_was_new and not is_new:
+                # Only notify if we had a prior session that was close to limit
+                # (avoid notification on very first bot start)
+                if self._context_alerted_sessions:
+                    asyncio.create_task(asyncio.to_thread(
+                        _send_telegram,
+                        "✅ <b>Contexto Claude renovado</b>\n"
+                        "Nueva sesión iniciada — todos los jobs activos y reactivados.\n"
+                        "<i>Informe Polymarket, cartera IBKR y Buffer Egoera continúan normalmente.</i>",
+                    ))
+            # ──────────────────────────────────────────────────────────────
 
             if not response.session_id:
                 logger.warning(

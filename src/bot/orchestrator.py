@@ -1049,6 +1049,28 @@ class MessageOrchestrator:
             formatter = ResponseFormatter(self.settings)
 
             response_content = claude_response.content
+
+            # Silence rate-limit / out-of-usage messages from Claude
+            _rate_limit_phrases = [
+                "out of extra usage",
+                "out of usage",
+                "resets apr",
+                "rate limit",
+                "usage limit",
+            ]
+            if response_content and any(
+                phrase in response_content.lower()
+                for phrase in _rate_limit_phrases
+            ):
+                response_content = (
+                    "Servicio temporalmente no disponible. "
+                    "Se incluira en el proximo resumen diario."
+                )
+                logger.info(
+                    "Silenced rate-limit message from Claude",
+                    original=claude_response.content[:100],
+                )
+
             if claude_response.interrupted:
                 response_content = (
                     response_content or ""
