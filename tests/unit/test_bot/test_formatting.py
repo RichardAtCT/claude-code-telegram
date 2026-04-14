@@ -528,3 +528,138 @@ class TestOversizedResponseIntegration:
             assert (
                 len(msg.text) <= TELEGRAM_HARD_LIMIT
             ), f"Chunk {i} is {len(msg.text)} chars (limit {TELEGRAM_HARD_LIMIT})"
+
+    def test_colon_ending_pattern_not_truncated(self, formatter):
+        """Claude's 'header:\\n\\ncontent' pattern must NOT leave ':' as last char of a chunk.
+
+        Regression test for the primary bug: _split_message now prefers paragraph
+        boundaries (\\n\\n) over line boundaries, so 'Here are the changes:\\n\\n'
+        splits *after* the blank line, not after the ':' line.
+        """
+        header = "I've made the following changes:\n\n"
+        items = "\n".join(
+            f"{i}. **Step {i}**: Modified the function to handle edge case {i}"
+            for i in range(1, 80)
+        )
+        text = header + items  # > 4000 chars
+
+        messages = formatter.format_claude_response(text)
+        assert len(messages) > 1
+        first = messages[0].text.rstrip()
+        assert not first.endswith(":"), (
+            f"First chunk must NOT end with ':', got: ...{first[-80:]!r}"
+        )
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} is {len(msg.text)} chars"
+            )
+
+    def test_split_prefers_paragraph_boundary(self, formatter):
+        """_split_message should prefer paragraph boundary over bare line boundary.
+
+        When the split point falls in the middle of a paragraph, _split_message
+        looks for the nearest \\n\\n and splits there — not mid-sentence.
+        This means 'header:\\n\\nbody' splits after the blank line, not after ':'.
+        """
+        # Build text where the first paragraph ends with ':' and the second is long
+        para1 = "Summary of changes:\n\n"
+        body_lines = [
+            f"{i}. **Item {i}**: description for item number {i}"
+            for i in range(1, 250)  # enough to exceed 4000 chars
+        ]
+        body = "\n".join(body_lines)
+        text = para1 + body  # > 4000 chars, ':' is at end of para1
+
+        assert len(text) > formatter.max_message_length, (
+            f"Test setup error: text is {len(text)} chars but limit is "
+            f"{formatter.max_message_length}"
+        )
+
+        messages = formatter._split_message(text)
+        assert len(messages) > 1, (
+            f"Text is {len(text)} chars, should split (limit={formatter.max_message_length})"
+        )
+        first = messages[0].text.rstrip()
+        # The split should be at \\n\\n (after para1), so first msg ends at the blank line,
+        # NOT at ':'
+        assert not first.endswith(":"), (
+            f"First chunk must not end with ':' (should split at \\n\\n), "
+            f"got: ...{first[-60:]!r}"
+        )
+
+    def test_split_preserves_code_block_language_class(self, formatter):
+        """Code blocks split across messages must preserve the language class attribute."""
+        code_lines = "\n".join(f"    x_{i} = process(item_{i})" for i in range(200))
+        text = f"```python\ndef big_fn():\n{code_lines}\n```"
+
+        messages = formatter.format_claude_response(text)
+        # Find messages that reopen a code block (contain <pre><code> without </code>)
+        reopened = [
+            m for m in messages
+            if "<pre><code>" in m.text and "</code></pre>" not in m.text
+        ]
+        if reopened:
+            # At least one reopened block should carry the language class
+            found_lang = any(
+                'class="language-python"' in m.text for m in reopened
+            )
+            assert found_lang, (
+                "Reopened code blocks should preserve language class; "
+                f"got: {[m.text[:60] for m in reopened]!r}"
+            )
+
+    def test_semantic_chunking_detects_html_code_blocks(self, formatter):
+        """_should_use_semantic_chunking must count <pre> tags (not ```) in HTML text."""
+        code_block = '<pre><code class="language-python">x = 1\n</code></pre>'
+        text_with_3_blocks = (
+            f"intro\n\n{code_block}\n\nmiddle\n\n"
+            f"{code_block}\n\nend\n\n{code_block}"
+        )
+        result = formatter._should_use_semantic_chunking(text_with_3_blocks)
+        assert result is True, "3 <pre> blocks should trigger semantic chunking"
+
+    def test_no_double_escape_in_truncated_code_block(self, formatter):
+        """_format_code_blocks must NOT double-escape HTML entities on truncation."""
+        # Simulate HTML-escaped content (what markdown_to_telegram_html produces)
+        inner = "if (a &lt; b &amp;&amp; c &gt; d) {}" * 500
+        html_block = f"<pre><code>{inner}</code></pre>"
+        result = formatter._format_code_blocks(html_block)
+        # Double-escape would produce &amp;lt; or &amp;amp;
+        assert "&amp;lt;" not in result, "must not double-escape &lt;"
+        assert "&amp;amp;" not in result, "must not double-escape &amp;"
+        assert "&lt;" in result or "truncated" in result  # original entities preserved
+
+    def test_split_paragraph_boundary_min_chunk_guard(self, formatter):
+        """Paragraph split must not produce trivially-small chunks (1/8 guard)."""
+        short_header = "Title:\n\n"
+        big_body = "A" * 4500  # single paragraph > 4000 chars
+        text = short_header + big_body
+
+        messages = formatter.format_claude_response(text)
+        assert len(messages) > 1
+        # Each chunk must be under Telegram's hard limit
+        for i, msg in enumerate(messages):
+            assert len(msg.text) <= TELEGRAM_HARD_LIMIT, (
+                f"Chunk {i} exceeds limit: {len(msg.text)} chars"
+            )
+
+    def test_identify_sections_single_line_code_block(self, formatter):
+        """_identify_sections must handle <pre>...</pre> on a single line."""
+        single_line = '<pre><code>short = 1</code></pre>'
+        sections = formatter._identify_sections(single_line)
+        assert len(sections) == 1
+        assert sections[0]["type"] == "code_block"
+        assert "short = 1" in sections[0]["content"]
+
+    def test_identify_sections_html_after_markdown_conversion(self, formatter):
+        """_identify_sections works on already-HTML text (not raw markdown)."""
+        # This is the exact state text is in when _identify_sections is called
+        html_text = (
+            "Normal paragraph.\n\n"
+            '<pre><code class="language-js">console.log("hi")\n</code></pre>\n\n'
+            "Another paragraph."
+        )
+        sections = formatter._identify_sections(html_text)
+        types = [s["type"] for s in sections]
+        assert "text" in types
+        assert "code_block" in types

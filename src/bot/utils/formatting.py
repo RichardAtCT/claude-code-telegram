@@ -71,7 +71,9 @@ class ResponseFormatter:
         """Determine if semantic chunking is needed."""
         # Use semantic chunking for complex content with multiple code blocks,
         # file operations, or very long text
-        code_block_count = text.count("```")
+        # NOTE: text at this point is already HTML (from _clean_text /
+        # markdown_to_telegram_html), so we count <pre> tags, not ``` fences.
+        code_block_count = text.count("<pre>")
         has_file_operations = any(
             indicator in text
             for indicator in [
@@ -211,37 +213,49 @@ class ResponseFormatter:
         return chunks
 
     def _identify_sections(self, text: str) -> List[dict]:
-        """Identify different content types in the text."""
+        """Identify different content types in the text.
+
+        At this point *text* is already HTML (converted by markdown_to_telegram_html),
+        so code blocks are identified by <pre> / </pre> tags, not ``` fences.
+        """
         sections = []
         lines = text.split("\n")
-        current_section = {"type": "text", "content": "", "start_line": 0}
+        current_section: dict = {"type": "text", "content": "", "start_line": 0}
         in_code_block = False
 
         for i, line in enumerate(lines):
-            # Check for code block markers
-            if line.strip().startswith("```"):
-                if not in_code_block:
-                    # Start of code block
-                    if current_section["content"].strip():
-                        sections.append(current_section)
-                    in_code_block = True
-                    current_section = {
-                        "type": "code_block",
-                        "content": line + "\n",
-                        "start_line": i,
-                    }
-                else:
-                    # End of code block
-                    current_section["content"] += line + "\n"
+            opens_pre = "<pre>" in line or "<pre><code" in line
+            closes_pre = "</pre>" in line
+
+            # Handle single-line code blocks: open and close on the same line
+            if opens_pre and closes_pre and not in_code_block:
+                if current_section["content"].strip():
                     sections.append(current_section)
-                    in_code_block = False
-                    current_section = {
-                        "type": "text",
-                        "content": "",
-                        "start_line": i + 1,
-                    }
+                sections.append({"type": "code_block", "content": line + "\n", "start_line": i})
+                current_section = {"type": "text", "content": "", "start_line": i + 1}
+                in_code_block = False
+
+            # Start of code block
+            elif opens_pre and not in_code_block:
+                if current_section["content"].strip():
+                    sections.append(current_section)
+                in_code_block = True
+                current_section = {
+                    "type": "code_block",
+                    "content": line + "\n",
+                    "start_line": i,
+                }
+
+            # End of code block
+            elif closes_pre and in_code_block:
+                current_section["content"] += line + "\n"
+                sections.append(current_section)
+                in_code_block = False
+                current_section = {"type": "text", "content": "", "start_line": i + 1}
+
             elif in_code_block:
                 current_section["content"] += line + "\n"
+
             else:
                 # Check for file operation patterns
                 if self._is_file_operation_line(line):
@@ -289,30 +303,42 @@ class ResponseFormatter:
         return any(indicator in line for indicator in file_indicators)
 
     def _chunk_code_block(self, section: dict) -> List[dict]:
-        """Handle code block chunking."""
+        """Handle code block chunking.
+
+        The section content is already HTML (<pre>...</pre>) at this point.
+        We chunk it by closing and reopening the <pre><code> tag at safe points.
+        """
         content = section["content"]
         if len(content) <= self.max_code_block_length:
             return [{"type": "code_block", "content": content, "format": "single"}]
 
-        # Split large code blocks
         chunks = []
         lines = content.split("\n")
-        current_chunk = lines[0] + "\n"  # Start with the ``` line
+        if not lines:
+            return [{"type": "code_block", "content": content, "format": "single"}]
 
-        for line in lines[1:-1]:  # Skip first and last ``` lines
-            if len(current_chunk + line + "\n```\n") > self.max_code_block_length:
-                current_chunk += "```"
-                chunks.append(
-                    {"type": "code_block", "content": current_chunk, "format": "split"}
-                )
-                current_chunk = "```\n" + line + "\n"
+        opening_tag = lines[0]  # e.g. '<pre><code class="language-python">'
+
+        # Collect code lines (skip opening tag line, break on closing tag)
+        code_lines: List[str] = []
+        for ln in lines[1:]:
+            stripped = ln.strip()
+            if stripped in ("</code></pre>", "</pre>"):
+                break
+            code_lines.append(ln)
+
+        current_chunk = opening_tag + "\n"
+        for line in code_lines:
+            test = current_chunk + line + "\n</code></pre>"
+            if len(test) > self.max_code_block_length and current_chunk != opening_tag + "\n":
+                current_chunk += "</code></pre>"
+                chunks.append({"type": "code_block", "content": current_chunk, "format": "split"})
+                current_chunk = "<pre><code>\n" + line + "\n"
             else:
                 current_chunk += line + "\n"
 
-        current_chunk += lines[-1]  # Add the closing ```
-        chunks.append(
-            {"type": "code_block", "content": current_chunk, "format": "split"}
-        )
+        current_chunk += "</code></pre>"
+        chunks.append({"type": "code_block", "content": current_chunk, "format": "split"})
 
         return chunks
 
@@ -456,14 +482,15 @@ class ResponseFormatter:
         """
 
         def _truncate_code(m: re.Match) -> str:  # type: ignore[type-arg]
-            full = m.group(0)
+            full: str = m.group(0)
             if len(full) > self.max_code_block_length:
-                # Re-extract and truncate the inner content
+                # Re-extract and truncate the inner content.
+                # NOTE: m.group(1) is already HTML-escaped (produced by
+                # markdown_to_telegram_html). Do NOT call escape_html() again
+                # or entities like &lt; would become &amp;lt; (double-escaped).
                 inner = m.group(1)
                 truncated = inner[: self.max_code_block_length - 80]
-                return (
-                    f"<pre><code>{escape_html(truncated)}\n... (truncated)</code></pre>"
-                )
+                return f"<pre><code>{truncated}\n... (truncated)</code></pre>"
             return full
 
         return re.sub(
@@ -474,27 +501,38 @@ class ResponseFormatter:
         )
 
     def _split_message(self, text: str) -> List[FormattedMessage]:
-        """Split long messages while preserving formatting."""
+        """Split long messages while preserving formatting.
+
+        Split strategy (Bug 1 fix):
+        - Inside a code block: close the tag, split, reopen with language class (Bug 4 fix).
+        - Outside a code block: prefer paragraph boundaries (\\n\\n) over line boundaries,
+          so messages don't end with a bare ':' on a line.
+        """
         if not text or not text.strip():
             return []
         if len(text) <= self.max_message_length:
             return [FormattedMessage(text)]
 
-        messages = []
+        messages: List[FormattedMessage] = []
         current_lines: List[str] = []
         current_length = 0
         in_code_block = False
+        current_code_lang = ""  # Bug 4: record language class for re-opening
 
         lines = text.split("\n")
 
         for line in lines:
             line_length = len(line) + 1  # +1 for newline
 
-            # Track HTML <pre> code block state
+            # Track HTML <pre> code block state AND extract language class
             if "<pre>" in line or "<pre><code" in line:
                 in_code_block = True
+                # Extract class="language-xxx" for Bug 4
+                lang_m = re.search(r'class="([^"]+)"', line)
+                current_code_lang = lang_m.group(1) if lang_m else ""
             if "</pre>" in line:
                 in_code_block = False
+                current_code_lang = ""
 
             # If this is a very long line that exceeds limit by itself, split it
             if line_length > self.max_message_length:
@@ -516,8 +554,13 @@ class ResponseFormatter:
                         current_lines = []
                         current_length = 0
                         if in_code_block:
-                            current_lines.append("<pre><code>")
-                            current_length = 12
+                            # Bug 4 fix: preserve language class when reopening
+                            if current_code_lang:
+                                reopen = f'<pre><code class="{current_code_lang}">'
+                            else:
+                                reopen = "<pre><code>"
+                            current_lines.append(reopen)
+                            current_length = len(reopen) + 1
 
                     current_lines.append(chunk)
                     current_length += chunk_length
@@ -526,16 +569,34 @@ class ResponseFormatter:
             # Check if adding this line would exceed the limit
             if current_length + line_length > self.max_message_length and current_lines:
                 if in_code_block:
+                    # Inside a code block: close the tag, split, reopen with lang
                     current_lines.append("</code></pre>")
-
-                messages.append(FormattedMessage("\n".join(current_lines)))
-
-                current_lines = []
-                current_length = 0
-
-                if in_code_block:
-                    current_lines.append("<pre><code>")
-                    current_length = 12
+                    messages.append(FormattedMessage("\n".join(current_lines)))
+                    current_lines = []
+                    current_length = 0
+                    if current_code_lang:
+                        reopen = f'<pre><code class="{current_code_lang}">'
+                    else:
+                        reopen = "<pre><code>"
+                    current_lines.append(reopen)
+                    current_length = len(reopen) + 1
+                else:
+                    # Bug 1 fix: prefer paragraph boundary (\\n\\n) for non-code splits
+                    joined = "\n".join(current_lines)
+                    para_pos = joined.rfind("\n\n")
+                    min_chunk = len(joined) // 8  # guard: don't split too early
+                    if para_pos > min_chunk:
+                        # Split at paragraph boundary
+                        first_part = joined[:para_pos]
+                        second_part = joined[para_pos:].lstrip("\n")
+                        messages.append(FormattedMessage(first_part))
+                        current_lines = second_part.split("\n") if second_part else []
+                        current_length = sum(len(l) + 1 for l in current_lines)
+                    else:
+                        # No good paragraph boundary — fall back to line boundary
+                        messages.append(FormattedMessage(joined))
+                        current_lines = []
+                        current_length = 0
 
             current_lines.append(line)
             current_length += line_length
