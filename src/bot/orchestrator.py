@@ -324,6 +324,8 @@ class MessageOrchestrator:
         handlers = [
             ("start", self.agentic_start),
             ("new", self.agentic_new),
+            ("init", self.agentic_init),
+            ("compact", self.agentic_compact),
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
@@ -457,6 +459,8 @@ class MessageOrchestrator:
             commands = [
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
+                BotCommand("init", "Initialize project context"),
+                BotCommand("compact", "Compress conversation context"),
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
@@ -1752,4 +1756,274 @@ class MessageOrchestrator:
                 command="cd",
                 args=[project_name],
                 success=True,
+            )
+
+    # --- /init and /compact commands ---
+
+    async def agentic_init(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle /init — inject project description into Claude Code context.
+
+        Unlike /new (which destroys the session), /init preserves the session
+        and sends '/init [description]' as a prompt so Claude Code processes
+        it in the current conversation.
+        """
+        user_id = update.effective_user.id
+
+        # Parse optional project description (space-separated, multi-word)
+        raw_args = update.message.text.split()[1:]
+        description = " ".join(raw_args) if raw_args else None
+        prompt = f"/init {description}" if description else "/init"
+
+        await self._run_special_command(
+            update=update,
+            context=context,
+            prompt=prompt,
+            user_id=user_id,
+            command_name="init",
+        )
+
+    async def agentic_compact(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle /compact — compress Claude Code conversation context.
+
+        Requires an active session; /compact without history is a no-op for Claude.
+        Sends '/compact [reason]' as a prompt to trigger context compression.
+        """
+        user_id = update.effective_user.id
+
+        # Require an active session — /compact without prior context is meaningless
+        session_id = context.user_data.get("claude_session_id")
+        if not session_id:
+            await update.message.reply_text(
+                "⚠️ <b>No active session</b>\n\n"
+                "/compact requires an existing conversation. "
+                "Send a message first to start a session.",
+                parse_mode="HTML",
+            )
+            return
+
+        # Parse optional reason (space-separated, multi-word)
+        raw_args = update.message.text.split()[1:]
+        reason = " ".join(raw_args) if raw_args else None
+        prompt = f"/compact {reason}" if reason else "/compact"
+
+        await self._run_special_command(
+            update=update,
+            context=context,
+            prompt=prompt,
+            user_id=user_id,
+            command_name="compact",
+        )
+
+    async def _run_special_command(
+        self,
+        *,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        prompt: str,
+        user_id: int,
+        command_name: str,
+    ) -> None:
+        """Execute a special command (/init, /compact) with streaming UI.
+
+        Reuses the streaming, progress, and response formatting from
+        agentic_text(), but sends a verbatim prompt so '/init' or '/compact'
+        reaches Claude Code unchanged.
+        """
+        # Rate limit check
+        rate_limiter = context.bot_data.get("rate_limiter")
+        if rate_limiter:
+            allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.001)
+            if not allowed:
+                await update.message.reply_text(f"⏱️ {limit_message}")
+                return
+
+        chat = update.message.chat
+        await chat.send_action("typing")
+
+        verbose_level = self._get_verbose_level(context)
+
+        interrupt_event = asyncio.Event()
+        stop_kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Stop", callback_data=f"stop:{user_id}")]]
+        )
+        progress_msg = await update.message.reply_text(
+            "Working...", reply_markup=stop_kb
+        )
+
+        active_request = ActiveRequest(
+            user_id=user_id,
+            interrupt_event=interrupt_event,
+            progress_msg=progress_msg,
+        )
+        self._active_requests[user_id] = active_request
+
+        claude_integration = context.bot_data.get("claude_integration")
+        if not claude_integration:
+            self._active_requests.pop(user_id, None)
+            await progress_msg.edit_text(
+                "Claude integration not available. Check configuration.",
+                reply_markup=None,
+            )
+            return
+
+        current_dir = context.user_data.get(
+            "current_directory", self.settings.approved_directory
+        )
+        session_id = context.user_data.get("claude_session_id")
+
+        tool_log: List[Dict[str, Any]] = []
+        start_time = time.time()
+        mcp_images: List[ImageAttachment] = []
+
+        draft_streamer: Optional[DraftStreamer] = None
+        if self.settings.enable_stream_drafts and chat.type == "private":
+            draft_streamer = DraftStreamer(
+                bot=context.bot,
+                chat_id=chat.id,
+                draft_id=generate_draft_id(),
+                message_thread_id=update.message.message_thread_id,
+                throttle_interval=self.settings.stream_draft_interval,
+            )
+
+        on_stream = self._make_stream_callback(
+            verbose_level,
+            progress_msg,
+            tool_log,
+            start_time,
+            reply_markup=stop_kb,
+            mcp_images=mcp_images,
+            approved_directory=self.settings.approved_directory,
+            draft_streamer=draft_streamer,
+            interrupt_event=interrupt_event,
+        )
+
+        heartbeat = self._start_typing_heartbeat(chat)
+        success = True
+
+        try:
+            claude_response = await claude_integration.run_command(
+                prompt=prompt,
+                working_directory=current_dir,
+                user_id=user_id,
+                session_id=session_id,
+                on_stream=on_stream,
+                force_new=False,  # Preserve existing session
+                interrupt_event=interrupt_event,
+            )
+
+            context.user_data["claude_session_id"] = claude_response.session_id
+
+            from .handlers.message import _update_working_directory_from_claude_response
+
+            _update_working_directory_from_claude_response(
+                claude_response, context, self.settings, user_id
+            )
+
+            storage = context.bot_data.get("storage")
+            if storage:
+                try:
+                    await storage.save_claude_interaction(
+                        user_id=user_id,
+                        session_id=claude_response.session_id,
+                        prompt=prompt,
+                        response=claude_response,
+                        ip_address=None,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to log interaction", error=str(e))
+
+            from .utils.formatting import ResponseFormatter
+
+            formatter = ResponseFormatter(self.settings)
+            formatted_messages = formatter.format_claude_response(claude_response.content)
+
+        except Exception as e:
+            success = False
+            logger.error(
+                f"Claude {command_name} failed", error=str(e), user_id=user_id
+            )
+            from .handlers.message import _format_error_message
+            from .utils.formatting import FormattedMessage
+
+            formatted_messages = [
+                FormattedMessage(_format_error_message(e), parse_mode="HTML")
+            ]
+        finally:
+            heartbeat.cancel()
+            self._active_requests.pop(user_id, None)
+            if draft_streamer:
+                try:
+                    await draft_streamer.flush()
+                except Exception:
+                    logger.debug("Draft flush failed", user_id=user_id)
+
+        try:
+            await progress_msg.delete()
+        except Exception:
+            logger.debug("Failed to delete progress message")
+
+        # Send formatted response(s)
+        images: List[ImageAttachment] = mcp_images
+        caption_sent = False
+        if images and len(formatted_messages) == 1:
+            msg = formatted_messages[0]
+            if msg.text and len(msg.text) <= 1024:
+                try:
+                    caption_sent = await self._send_images(
+                        update,
+                        images,
+                        reply_to_message_id=update.message.message_id,
+                        caption=msg.text,
+                        caption_parse_mode=msg.parse_mode,
+                    )
+                except Exception as img_err:
+                    logger.warning("Image+caption send failed", error=str(img_err))
+
+        if not caption_sent:
+            for i, message in enumerate(formatted_messages):
+                if not message.text or not message.text.strip():
+                    continue
+                try:
+                    await update.message.reply_text(
+                        message.text,
+                        parse_mode=message.parse_mode,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+                    if i < len(formatted_messages) - 1:
+                        await asyncio.sleep(0.5)
+                except Exception:
+                    # Fallback: plain text
+                    await update.message.reply_text(
+                        message.text,
+                        reply_markup=None,
+                        reply_to_message_id=(
+                            update.message.message_id if i == 0 else None
+                        ),
+                    )
+
+            if images:
+                try:
+                    await self._send_images(
+                        update,
+                        images,
+                        reply_to_message_id=update.message.message_id,
+                    )
+                except Exception as img_err:
+                    logger.warning("Image send failed", error=str(img_err))
+
+        # Audit log
+        audit_logger = context.bot_data.get("audit_logger")
+        if audit_logger:
+            await audit_logger.log_command(
+                user_id=user_id,
+                command=command_name,
+                args=[prompt[:100]],
+                success=success,
             )

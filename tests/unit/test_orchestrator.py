@@ -83,7 +83,7 @@ def deps():
 
 
 def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, restart commands."""
+    """Agentic mode registers start, new, init, compact, status, verbose, repo, restart commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,9 +100,11 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
+    assert len(cmd_handlers) == 8
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
+    assert frozenset({"init"}) in commands
+    assert frozenset({"compact"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
     assert frozenset({"repo"}) in commands
@@ -156,13 +158,13 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns 8 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
+    assert len(commands) == 8
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    assert cmd_names == ["start", "new", "init", "compact", "status", "verbose", "repo", "restart"]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
@@ -990,3 +992,359 @@ async def test_bot_suffixed_command_not_forwarded(agentic_settings, deps):
     ) as mock_claude:
         await orchestrator._handle_unknown_command(update, context)
         mock_claude.assert_not_called()
+
+
+# --- /init and /compact command tests ---
+
+
+def test_agentic_registers_8_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, init, compact, status, verbose, repo, restart."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    app = MagicMock()
+    app.add_handler = MagicMock()
+
+    orchestrator.register_handlers(app)
+
+    from telegram.ext import CommandHandler
+
+    cmd_handlers = [
+        call
+        for call in app.add_handler.call_args_list
+        if isinstance(call[0][0], CommandHandler)
+    ]
+    commands = [h[0][0].commands for h in cmd_handlers]
+
+    assert len(cmd_handlers) == 8
+    assert frozenset({"start"}) in commands
+    assert frozenset({"new"}) in commands
+    assert frozenset({"init"}) in commands
+    assert frozenset({"compact"}) in commands
+    assert frozenset({"status"}) in commands
+    assert frozenset({"verbose"}) in commands
+    assert frozenset({"repo"}) in commands
+    assert frozenset({"restart"}) in commands
+
+
+async def test_agentic_bot_commands_includes_init_and_compact(agentic_settings, deps):
+    """Agentic bot command list includes /init and /compact."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    commands = await orchestrator.get_bot_commands()
+
+    assert len(commands) == 8
+    cmd_names = [c.command for c in commands]
+    assert "init" in cmd_names
+    assert "compact" in cmd_names
+    assert cmd_names == [
+        "start",
+        "new",
+        "init",
+        "compact",
+        "status",
+        "verbose",
+        "repo",
+        "restart",
+    ]
+
+
+async def _mock_special_command(orchestrator, update, context, prompt_prefix):
+    """Helper: capture kwargs passed to run_command and check the prompt."""
+    claude_integration = context.bot_data["claude_integration"]
+
+    # Set up mock response
+    mock_response = MagicMock()
+    mock_response.session_id = "test-session-123"
+    mock_response.content = "Claude processed the command."
+    mock_response.tools_used = []
+    mock_response.interrupted = False
+
+    async def run_command_side_effect(**kwargs):
+        # Store call kwargs for assertion below
+        run_command_call_kwargs.update(kwargs)
+        return mock_response
+
+    run_command_call_kwargs: dict = {}
+
+    claude_integration.run_command = AsyncMock(side_effect=run_command_side_effect)
+
+    # We need the handler to call _run_special_command which uses the real
+    # _run_special_command. We patch run_command to capture the kwargs.
+    return run_command_call_kwargs
+
+
+class TestAgenticSpecialCommands:
+    """Tests for /init and /compact handlers."""
+
+    async def test_init_command_no_args(self, agentic_settings, deps):
+        """Send /init without arguments → prompt is exactly '/init'."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+        mock_response = MagicMock()
+        mock_response.session_id = "session-abc"
+        mock_response.content = "Initialized."
+        mock_response.tools_used = []
+        mock_response.interrupted = False
+
+        run_command_kwargs: dict = {}
+
+        claude_integration = AsyncMock()
+        claude_integration.run_command = AsyncMock(
+            side_effect=lambda **kw: (
+                run_command_kwargs.update(kw) or run_command_kwargs,
+                mock_response,
+            )[-1]
+        )
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.message.text = "/init"
+        update.message.message_id = 1
+        update.message.chat.type = "private"
+        update.message.chat.send_action = AsyncMock()
+        update.message.reply_text = AsyncMock()
+
+        progress_msg = AsyncMock()
+        progress_msg.delete = AsyncMock()
+        update.message.reply_text.return_value = progress_msg
+
+        context = MagicMock()
+        context.user_data = {}
+        context.bot_data = {
+            "settings": agentic_settings,
+            "claude_integration": claude_integration,
+            "storage": None,
+            "rate_limiter": None,
+            "audit_logger": None,
+        }
+
+        await orchestrator.agentic_init(update, context)
+
+        claude_integration.run_command.assert_called_once()
+        assert run_command_kwargs["prompt"] == "/init"
+        assert run_command_kwargs["force_new"] is False
+
+    async def test_init_command_with_description(self, agentic_settings, deps):
+        """Send /init with description → description is appended after /init."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+        mock_response = MagicMock()
+        mock_response.session_id = "session-abc"
+        mock_response.content = "Initialized."
+        mock_response.tools_used = []
+        mock_response.interrupted = False
+
+        run_command_kwargs: dict = {}
+
+        claude_integration = AsyncMock()
+        claude_integration.run_command = AsyncMock(
+            side_effect=lambda **kw: (
+                run_command_kwargs.update(kw) or run_command_kwargs,
+                mock_response,
+            )[-1]
+        )
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.message.text = "/init My awesome project"
+        update.message.message_id = 1
+        update.message.chat.type = "private"
+        update.message.chat.send_action = AsyncMock()
+        update.message.reply_text = AsyncMock()
+
+        progress_msg = AsyncMock()
+        progress_msg.delete = AsyncMock()
+        update.message.reply_text.return_value = progress_msg
+
+        context = MagicMock()
+        context.user_data = {}
+        context.bot_data = {
+            "settings": agentic_settings,
+            "claude_integration": claude_integration,
+            "storage": None,
+            "rate_limiter": None,
+            "audit_logger": None,
+        }
+
+        await orchestrator.agentic_init(update, context)
+
+        claude_integration.run_command.assert_called_once()
+        assert "/init My awesome project" == run_command_kwargs["prompt"]
+
+    async def test_compact_requires_active_session(self, agentic_settings, deps):
+        """Send /compact without active session → reply warns user, Claude not called."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+        claude_integration = AsyncMock()
+        claude_integration.run_command = AsyncMock()
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.message.text = "/compact"
+        update.message.reply_text = AsyncMock()
+
+        context = MagicMock()
+        context.user_data = {}  # No claude_session_id
+        context.bot_data = {
+            "claude_integration": claude_integration,
+        }
+
+        await orchestrator.agentic_compact(update, context)
+
+        claude_integration.run_command.assert_not_awaited()
+        update.message.reply_text.assert_called_once()
+        assert "No active session" in update.message.reply_text.call_args.args[0]
+
+    async def test_compact_command_no_args(self, agentic_settings, deps):
+        """Send /compact with active session → prompt is '/compact', session preserved."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+        mock_response = MagicMock()
+        mock_response.session_id = "session-abc"
+        mock_response.content = "Context compressed."
+        mock_response.tools_used = []
+        mock_response.interrupted = False
+
+        run_command_kwargs: dict = {}
+
+        claude_integration = AsyncMock()
+        claude_integration.run_command = AsyncMock(
+            side_effect=lambda **kw: (
+                run_command_kwargs.update(kw) or run_command_kwargs,
+                mock_response,
+            )[-1]
+        )
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.message.text = "/compact"
+        update.message.message_id = 1
+        update.message.chat.type = "private"
+        update.message.chat.send_action = AsyncMock()
+        update.message.reply_text = AsyncMock()
+
+        progress_msg = AsyncMock()
+        progress_msg.delete = AsyncMock()
+        update.message.reply_text.return_value = progress_msg
+
+        context = MagicMock()
+        context.user_data = {"claude_session_id": "existing-session-xyz"}
+        context.bot_data = {
+            "settings": agentic_settings,
+            "claude_integration": claude_integration,
+            "storage": None,
+            "rate_limiter": None,
+            "audit_logger": None,
+        }
+
+        await orchestrator.agentic_compact(update, context)
+
+        claude_integration.run_command.assert_called_once()
+        assert run_command_kwargs["prompt"] == "/compact"
+        assert run_command_kwargs["session_id"] == "existing-session-xyz"
+        assert run_command_kwargs["force_new"] is False
+
+    async def test_compact_command_with_reason(self, agentic_settings, deps):
+        """Send /compact with reason → reason appended after /compact."""
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+        mock_response = MagicMock()
+        mock_response.session_id = "session-abc"
+        mock_response.content = "Context compressed."
+        mock_response.tools_used = []
+        mock_response.interrupted = False
+
+        run_command_kwargs: dict = {}
+
+        claude_integration = AsyncMock()
+        claude_integration.run_command = AsyncMock(
+            side_effect=lambda **kw: (
+                run_command_kwargs.update(kw) or run_command_kwargs,
+                mock_response,
+            )[-1]
+        )
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.message.text = "/compact too much history"
+        update.message.message_id = 1
+        update.message.chat.type = "private"
+        update.message.chat.send_action = AsyncMock()
+        update.message.reply_text = AsyncMock()
+
+        progress_msg = AsyncMock()
+        progress_msg.delete = AsyncMock()
+        update.message.reply_text.return_value = progress_msg
+
+        context = MagicMock()
+        context.user_data = {"claude_session_id": "existing-session-xyz"}
+        context.bot_data = {
+            "settings": agentic_settings,
+            "claude_integration": claude_integration,
+            "storage": None,
+            "rate_limiter": None,
+            "audit_logger": None,
+        }
+
+        await orchestrator.agentic_compact(update, context)
+
+        claude_integration.run_command.assert_called_once()
+        assert "/compact too much history" == run_command_kwargs["prompt"]
+
+    async def test_compact_preserves_session_id_across_calls(self, agentic_settings, deps):
+        """Two consecutive /compact calls each use the session_id active at call time.
+
+        The first call uses the pre-existing session_id. After the first call,
+        context.user_data is updated with the response session_id (if different),
+        so the second call uses the updated value. Both calls remain in the same
+        conversation — only the reference in user_data changes.
+        """
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+        mock_response = MagicMock()
+        mock_response.session_id = "session-abc"
+        mock_response.content = "Context compressed."
+        mock_response.tools_used = []
+        mock_response.interrupted = False
+
+        session_ids: list = []
+
+        claude_integration = AsyncMock()
+        claude_integration.run_command = AsyncMock(
+            side_effect=lambda **kw: (
+                session_ids.append(kw.get("session_id")),
+                mock_response,
+            )[-1]
+        )
+
+        update = MagicMock()
+        update.effective_user.id = 123
+        update.message.message_id = 1
+        update.message.chat.type = "private"
+        update.message.chat.send_action = AsyncMock()
+        update.message.reply_text = AsyncMock()
+
+        progress_msg = AsyncMock()
+        progress_msg.delete = AsyncMock()
+        update.message.reply_text.return_value = progress_msg
+
+        context = MagicMock()
+        context.user_data = {"claude_session_id": "existing-session-xyz"}
+        context.bot_data = {
+            "settings": agentic_settings,
+            "claude_integration": claude_integration,
+            "storage": None,
+            "rate_limiter": None,
+            "audit_logger": None,
+        }
+
+        # First call — uses the pre-existing session_id from user_data
+        update.message.text = "/compact"
+        await orchestrator.agentic_compact(update, context)
+
+        # Second call — uses the session_id that was set by the first response
+        update.message.text = "/compact summarize"
+        await orchestrator.agentic_compact(update, context)
+
+        assert claude_integration.run_command.call_count == 2
+        # First call uses original session, second call uses what first response set
+        assert session_ids[0] == "existing-session-xyz"
+        assert session_ids[1] == "session-abc"
