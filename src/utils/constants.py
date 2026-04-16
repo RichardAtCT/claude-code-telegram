@@ -91,5 +91,9 @@ DEFAULT_RETRY_BASE_DELAY = 1.0
 DEFAULT_RETRY_BACKOFF_FACTOR = 3.0
 DEFAULT_RETRY_MAX_DELAY = 30.0
 
+# Message chunk buffering (multi-part paste detection)
+DEFAULT_CHUNK_BUFFER_TIMEOUT = 0.5
+DEFAULT_CHUNK_BUFFER_THRESHOLD = 4000
+
 # Logging
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
