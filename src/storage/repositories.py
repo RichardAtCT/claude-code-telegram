@@ -841,8 +841,24 @@ class TokenRepository:
     async def store_token(
         self, user_id: int, token_hash: str, expires_at: datetime
     ) -> None:
-        """Store (or replace) the active token for a user."""
+        """Store (or replace) the active token for a user.
+
+        Auto-creates a minimal ``users`` row if the target user has never
+        interacted with the bot — the ``user_tokens.user_id`` foreign key
+        requires it, and admins need to be able to generate tokens for
+        brand-new users before they ever send a message.
+        """
+        now = datetime.now(UTC)
         async with self.db.get_connection() as conn:
+            # Ensure the user exists so the FK constraint is satisfied.
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO users
+                    (user_id, first_seen, last_active, is_allowed)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, now, now, False),
+            )
             # Deactivate any existing tokens for this user first
             await conn.execute(
                 "UPDATE user_tokens SET is_active = 0 WHERE user_id = ?",

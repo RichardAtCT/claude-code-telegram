@@ -12,18 +12,15 @@ from src.storage.repositories import TokenRepository
 
 @pytest.fixture
 async def db_manager():
-    """Create a fresh in-memory database with schema."""
+    """Create a fresh database with schema.
+
+    Users are *not* pre-created — the fix for the FK constraint issue
+    is that ``store_token`` auto-creates a user stub when needed, so
+    tests should verify that path works.
+    """
     with tempfile.NamedTemporaryFile(suffix=".db") as f:
         mgr = DatabaseManager(f"sqlite:///{f.name}")
         await mgr.initialize()
-        # Pre-create test users so FK constraints pass.
-        async with mgr.get_connection() as conn:
-            for uid in (1, 42, 100, 999):
-                await conn.execute(
-                    "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-                    (uid,),
-                )
-            await conn.commit()
         yield mgr
         await mgr.close()
 
@@ -128,6 +125,43 @@ class TestTokenAuthE2E:
 
         assert await provider.authenticate(100, {"token": token}) is True
         assert await provider.authenticate(100, {"token": "wrong"}) is False
+
+    async def test_generate_for_new_user_without_users_row(self, db_manager, storage):
+        """Regression: admin can generate a token for a user who has never
+        interacted with the bot (i.e. has no ``users`` row yet).
+        """
+        provider = TokenAuthProvider("secret", storage)
+        # User 7777 is NOT in the users table.
+        async with db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT 1 FROM users WHERE user_id = ?", (7777,)
+            )
+            assert await cursor.fetchone() is None
+
+        # Should not raise a FK violation — the fix auto-creates a stub row.
+        token = await provider.generate_token(7777)
+        assert token
+
+        # And authentication should work end-to-end.
+        assert await provider.authenticate(7777, {"token": token}) is True
+
+        # User stub should now exist.
+        async with db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT 1 FROM users WHERE user_id = ?", (7777,)
+            )
+            assert await cursor.fetchone() is not None
+
+    async def test_regenerate_same_user(self, storage):
+        """Regression: admin can re-generate a token for the same user."""
+        provider = TokenAuthProvider("secret", storage)
+        token1 = await provider.generate_token(42)
+        token2 = await provider.generate_token(42)
+
+        # Old token rejected, new token accepted.
+        assert token1 != token2
+        assert await provider.authenticate(42, {"token": token1}) is False
+        assert await provider.authenticate(42, {"token": token2}) is True
 
     async def test_revoke_prevents_auth(self, storage):
         provider = TokenAuthProvider("secret", storage)

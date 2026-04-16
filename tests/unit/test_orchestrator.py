@@ -20,12 +20,20 @@ def tmp_dir():
 
 @pytest.fixture
 def agentic_settings(tmp_dir):
-    return create_test_config(approved_directory=str(tmp_dir), agentic_mode=True)
+    return create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=True,
+        enable_token_auth=False,
+    )
 
 
 @pytest.fixture
 def classic_settings(tmp_dir):
-    return create_test_config(approved_directory=str(tmp_dir), agentic_mode=False)
+    return create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=False,
+        enable_token_auth=False,
+    )
 
 
 @pytest.fixture
