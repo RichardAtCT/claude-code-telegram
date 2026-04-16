@@ -139,6 +139,36 @@ class InMemoryTokenStorage(TokenStorage):
         self._tokens.pop(user_id, None)
 
 
+class SqliteTokenStorage(TokenStorage):
+    """SQLite-backed token storage using the existing ``user_tokens`` table.
+
+    Wraps a :class:`TokenRepository` (from ``src.storage.repositories``)
+    so that it satisfies the :class:`TokenStorage` interface expected by
+    :class:`TokenAuthProvider`.
+    """
+
+    def __init__(self, token_repo: Any) -> None:
+        self._repo = token_repo
+
+    async def store_token(
+        self, user_id: int, token_hash: str, expires_at: datetime
+    ) -> None:
+        await self._repo.store_token(user_id, token_hash, expires_at)
+
+    async def get_user_token(self, user_id: int) -> Optional[Dict[str, Any]]:
+        model = await self._repo.get_active_token(user_id)
+        if model is None:
+            return None
+        return {
+            "hash": model.token_hash,
+            "expires_at": model.expires_at,
+            "created_at": model.created_at,
+        }
+
+    async def revoke_token(self, user_id: int) -> None:
+        await self._repo.revoke_token(user_id)
+
+
 class TokenAuthProvider(AuthProvider):
     """Token-based authentication."""
 

@@ -331,6 +331,8 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
+        if self.settings.enable_token_auth:
+            handlers.append(("auth", self.agentic_auth))
 
         # Derive known commands dynamically — avoids drift when new commands are added
         self._known_commands: frozenset[str] = frozenset(cmd for cmd, _ in handlers)
@@ -420,6 +422,8 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
+        if self.settings.enable_token_auth:
+            handlers.append(("auth", self.agentic_auth))
 
         for cmd, handler in handlers:
             app.add_handler(CommandHandler(cmd, self._inject_deps(handler)))
@@ -464,6 +468,8 @@ class MessageOrchestrator:
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
+            if self.settings.enable_token_auth:
+                commands.append(BotCommand("auth", "Token authentication"))
             return commands
         else:
             commands = [
@@ -484,6 +490,8 @@ class MessageOrchestrator:
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
+            if self.settings.enable_token_auth:
+                commands.append(BotCommand("auth", "Token authentication"))
             return commands
 
     # --- Agentic handlers ---
@@ -1668,6 +1676,138 @@ class MessageOrchestrator:
             "<b>Repos</b>\n\n" + "\n".join(lines),
             parse_mode="HTML",
             reply_markup=reply_markup,
+        )
+
+    # --- Token auth command ---
+
+    def _is_admin(self, user_id: int) -> bool:
+        """Return True if *user_id* is in the whitelist (admin)."""
+        return bool(
+            self.settings.allowed_users and user_id in self.settings.allowed_users
+        )
+
+    async def agentic_auth(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle /auth — token authentication management.
+
+        /auth <token>             — authenticate with a token
+        /auth generate <user_id>  — (admin) generate token for a user
+        /auth revoke <user_id>    — (admin) revoke a user's token
+        /auth status              — show own authentication info
+        """
+        user_id = update.effective_user.id
+        args = update.message.text.split()[1:] if update.message.text else []
+
+        token_provider = context.bot_data.get("token_auth_provider")
+        if not token_provider:
+            await update.message.reply_text("Token authentication is not enabled.")
+            return
+
+        # /auth status
+        if not args or (len(args) == 1 and args[0] == "status"):
+            auth_manager = context.bot_data.get("auth_manager")
+            if auth_manager and auth_manager.is_authenticated(user_id):
+                session = auth_manager.get_session(user_id)
+                provider = session.auth_provider if session else "unknown"
+                await update.message.reply_text(
+                    f"\U0001f513 Authenticated via <b>{escape_html(provider)}</b>",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(
+                    "\U0001f512 Not authenticated.\n"
+                    "Use <code>/auth &lt;token&gt;</code> to log in.",
+                    parse_mode="HTML",
+                )
+            return
+
+        sub = args[0].lower()
+
+        # /auth generate <user_id>
+        if sub == "generate":
+            if not self._is_admin(user_id):
+                await update.message.reply_text("\U0001f512 Admin access required.")
+                return
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: <code>/auth generate &lt;user_id&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                target_id = int(args[1])
+            except ValueError:
+                await update.message.reply_text("Invalid user ID.")
+                return
+
+            token = await token_provider.generate_token(target_id)
+            # Send the token privately — it's sensitive.
+            await update.message.reply_text(
+                f"\U0001f511 Token generated for user "
+                f"<code>{target_id}</code>:\n\n"
+                f"<pre>{escape_html(token)}</pre>\n\n"
+                f"The user should send:\n"
+                f"<code>/auth {escape_html(token)}</code>\n\n"
+                f"Expires in {token_provider.token_lifetime.days} days.",
+                parse_mode="HTML",
+            )
+
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=user_id,
+                    command="auth_generate",
+                    args=[str(target_id)],
+                    success=True,
+                )
+            return
+
+        # /auth revoke <user_id>
+        if sub == "revoke":
+            if not self._is_admin(user_id):
+                await update.message.reply_text("\U0001f512 Admin access required.")
+                return
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: <code>/auth revoke &lt;user_id&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                target_id = int(args[1])
+            except ValueError:
+                await update.message.reply_text("Invalid user ID.")
+                return
+
+            await token_provider.revoke_token(target_id)
+
+            # Also end the user's session if active
+            auth_manager = context.bot_data.get("auth_manager")
+            if auth_manager:
+                auth_manager.end_session(target_id)
+
+            await update.message.reply_text(
+                f"Token revoked for user <code>{target_id}</code>.",
+                parse_mode="HTML",
+            )
+
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=user_id,
+                    command="auth_revoke",
+                    args=[str(target_id)],
+                    success=True,
+                )
+            return
+
+        # /auth <token> — token authentication is handled by the auth
+        # middleware (it extracts the token from the message text and
+        # passes it as credentials).  If we reach this point the user
+        # is already authenticated (middleware let the message through).
+        await update.message.reply_text(
+            "\U0001f513 Authenticated successfully.",
         )
 
     async def _handle_stop_callback(

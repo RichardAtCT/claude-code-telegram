@@ -61,8 +61,23 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
         "Attempting authentication for user", user_id=user_id, username=username
     )
 
+    # If the message is an /auth <token> command, pass the token as
+    # credentials so that TokenAuthProvider can verify it.
+    credentials: Dict[str, Any] = {}
+    msg_text = getattr(event.effective_message, "text", "") or ""
+    if msg_text.startswith("/auth "):
+        parts = msg_text.split(maxsplit=1)
+        if len(parts) == 2:
+            candidate = parts[1].strip()
+            # Only treat as a raw token if it doesn't look like a
+            # sub-command (generate, revoke, status).
+            if candidate and not candidate.startswith(("generate", "revoke", "status")):
+                credentials = {"token": candidate}
+
     # Try to authenticate (providers will check whitelist and tokens)
-    authentication_successful = await auth_manager.authenticate_user(user_id)
+    authentication_successful = await auth_manager.authenticate_user(
+        user_id, credentials
+    )
 
     # Log authentication attempt
     if audit_logger:

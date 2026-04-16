@@ -24,6 +24,7 @@ from .repositories import (
     MessageRepository,
     ProjectThreadRepository,
     SessionRepository,
+    TokenRepository,
     ToolUsageRepository,
     UserRepository,
 )
@@ -44,6 +45,7 @@ class Storage:
         self.tools = ToolUsageRepository(self.db_manager)
         self.audit = AuditLogRepository(self.db_manager)
         self.costs = CostTrackingRepository(self.db_manager)
+        self.tokens = TokenRepository(self.db_manager)
         self.analytics = AnalyticsRepository(self.db_manager)
 
     async def initialize(self):
