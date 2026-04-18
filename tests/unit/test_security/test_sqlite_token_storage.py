@@ -170,3 +170,82 @@ class TestTokenAuthE2E:
         await provider.revoke_token(100)
 
         assert await provider.authenticate(100, {"token": token}) is False
+
+    async def test_empty_credentials_accepted_when_active_token_exists(self, storage):
+        """After first auth, user_id alone suffices while token is active."""
+        provider = TokenAuthProvider("secret", storage)
+        await provider.generate_token(100)
+
+        # No credentials at all — should still succeed because user_id has
+        # an active stored token.
+        assert await provider.authenticate(100, {}) is True
+
+    async def test_empty_credentials_rejected_when_no_stored_token(self, storage):
+        """User without a stored token can't slip through with empty creds."""
+        provider = TokenAuthProvider("secret", storage)
+        assert await provider.authenticate(999, {}) is False
+
+    async def test_wrong_raw_token_still_fails(self, storage):
+        """Empty-creds path must NOT be reachable by sending a wrong token."""
+        provider = TokenAuthProvider("secret", storage)
+        await provider.generate_token(100)
+
+        # Wrong token → hard fail, do NOT silently fall back to "active
+        # stored token" path.
+        assert await provider.authenticate(100, {"token": "wrong"}) is False
+
+    async def test_successful_auth_slides_expiration(self, storage, db_manager):
+        """Every successful authenticate() pushes expires_at forward."""
+        from datetime import timedelta
+
+        provider = TokenAuthProvider(
+            "secret", storage, token_lifetime=timedelta(days=30)
+        )
+        token = await provider.generate_token(100)
+
+        # Manually move expires_at close to expiration
+        soon = datetime.now(UTC) + timedelta(days=1)
+        async with db_manager.get_connection() as conn:
+            await conn.execute(
+                "UPDATE user_tokens SET expires_at = ? WHERE user_id = ?",
+                (soon, 100),
+            )
+            await conn.commit()
+
+        # Authenticate — should slide expires_at back to ~30 days out
+        assert await provider.authenticate(100, {"token": token}) is True
+
+        async with db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT expires_at FROM user_tokens WHERE user_id = ? "
+                "AND is_active = 1",
+                (100,),
+            )
+            row = await cursor.fetchone()
+
+        new_expires = row[0]
+        # Should be ~30 days away, definitely more than the 1-day window
+        assert new_expires - datetime.now(UTC) > timedelta(days=29)
+
+    async def test_touch_updates_last_used(self, storage, db_manager):
+        """touch_token bumps last_used."""
+        provider = TokenAuthProvider("secret", storage)
+        await provider.generate_token(100)
+
+        # last_used should be None initially
+        async with db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT last_used FROM user_tokens WHERE user_id = ?", (100,)
+            )
+            assert (await cursor.fetchone())[0] is None
+
+        # Successful auth should set it
+        assert await provider.authenticate(100, {}) is True
+
+        async with db_manager.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT last_used FROM user_tokens WHERE user_id = ? "
+                "AND is_active = 1",
+                (100,),
+            )
+            assert (await cursor.fetchone())[0] is not None

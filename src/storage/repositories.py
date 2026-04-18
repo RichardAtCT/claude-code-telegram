@@ -909,3 +909,21 @@ class TokenRepository:
                 (datetime.now(UTC), user_id),
             )
             await conn.commit()
+
+    async def extend_token(self, user_id: int, new_expires_at: datetime) -> None:
+        """Slide ``expires_at`` forward and bump ``last_used`` atomically.
+
+        Used for rolling-expiration auth: every successful authentication
+        pushes the expiry forward so active users never have to re-paste
+        their token.  Admins can still force a cut-off with /auth revoke.
+        """
+        async with self.db.get_connection() as conn:
+            await conn.execute(
+                """
+                UPDATE user_tokens
+                SET expires_at = ?, last_used = ?
+                WHERE user_id = ? AND is_active = 1
+                """,
+                (new_expires_at, datetime.now(UTC), user_id),
+            )
+            await conn.commit()

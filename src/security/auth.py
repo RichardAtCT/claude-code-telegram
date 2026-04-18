@@ -141,6 +141,15 @@ class TokenStorage(ABC):
     async def revoke_token(self, user_id: int) -> None:
         """Revoke token for user."""
 
+    @abstractmethod
+    async def touch_token(self, user_id: int, new_expires_at: datetime) -> None:
+        """Slide ``expires_at`` and bump ``last_used`` for the active token.
+
+        Called on every successful authentication to implement rolling
+        expiration: the token stays alive as long as the user keeps using
+        the bot.  No-op if the user has no active token.
+        """
+
 
 class InMemoryTokenStorage(TokenStorage):
     """In-memory token storage for development/testing."""
@@ -172,6 +181,13 @@ class InMemoryTokenStorage(TokenStorage):
         """Remove token from memory."""
         self._tokens.pop(user_id, None)
 
+    async def touch_token(self, user_id: int, new_expires_at: datetime) -> None:
+        """Slide expiration in-memory."""
+        token_data = self._tokens.get(user_id)
+        if token_data is not None:
+            token_data["expires_at"] = new_expires_at
+            token_data["last_used"] = datetime.now(UTC)
+
 
 class SqliteTokenStorage(TokenStorage):
     """SQLite-backed token storage using the existing ``user_tokens`` table.
@@ -202,6 +218,9 @@ class SqliteTokenStorage(TokenStorage):
     async def revoke_token(self, user_id: int) -> None:
         await self._repo.revoke_token(user_id)
 
+    async def touch_token(self, user_id: int, new_expires_at: datetime) -> None:
+        await self._repo.extend_token(user_id, new_expires_at)
+
 
 class TokenAuthProvider(AuthProvider):
     """Token-based authentication."""
@@ -218,14 +237,25 @@ class TokenAuthProvider(AuthProvider):
         logger.info("Token auth provider initialized")
 
     async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
-        """Authenticate using token."""
-        token = credentials.get("token")
-        if not token:
-            logger.warning(
-                "Token authentication failed: no token provided", user_id=user_id
-            )
-            return False
+        """Authenticate using token (with rolling expiration).
 
+        Two acceptance paths:
+
+        1. **Raw token provided**: verify SHA256 hash against the stored
+           hash for *user_id*.  This is the initial handshake after
+           ``/auth generate`` → ``/auth <token>``.
+
+        2. **No raw token, but user_id has an active stored token**:
+           accept based on user_id alone.  Telegram guarantees the
+           sender's identity, and the presence of a non-expired token
+           in the DB means an admin previously authorised this user.
+           This removes the need to re-submit the token after every
+           24-hour session timeout.
+
+        On every success the token's ``expires_at`` is slid forward by
+        ``token_lifetime`` so active users never hit the 30-day wall.
+        Admins retain full control via ``/auth revoke``.
+        """
         stored_token = await self.storage.get_user_token(user_id)
         if not stored_token:
             logger.warning(
@@ -233,9 +263,39 @@ class TokenAuthProvider(AuthProvider):
             )
             return False
 
-        is_valid = self._verify_token(token, stored_token["hash"])
-        logger.info("Token authentication attempt", user_id=user_id, success=is_valid)
-        return is_valid
+        raw_token = credentials.get("token")
+        if raw_token:
+            if not self._verify_token(raw_token, stored_token["hash"]):
+                logger.info(
+                    "Token authentication attempt",
+                    user_id=user_id,
+                    success=False,
+                    reason="hash_mismatch",
+                )
+                return False
+            auth_path = "raw_token"
+        else:
+            # No raw token — rely on the active stored token.
+            auth_path = "active_stored_token"
+
+        # Slide expiration forward on every successful auth.
+        new_expires_at = datetime.now(UTC) + self.token_lifetime
+        try:
+            await self.storage.touch_token(user_id, new_expires_at)
+        except Exception as e:
+            logger.warning(
+                "Failed to slide token expiration (auth still succeeded)",
+                user_id=user_id,
+                error=str(e),
+            )
+
+        logger.info(
+            "Token authentication successful",
+            user_id=user_id,
+            path=auth_path,
+            new_expires_at=new_expires_at.isoformat(),
+        )
+        return True
 
     async def generate_token(self, user_id: int) -> str:
         """Generate new authentication token."""
