@@ -292,10 +292,16 @@ class Settings(BaseSettings):
         le=3.0,
     )
     chunk_buffer_threshold: int = Field(
-        4000,
+        3000,
         description=(
             "Minimum message length (chars) to trigger chunk buffering. "
-            "Messages shorter than this are never buffered."
+            "Messages shorter than this are never buffered. "
+            "Telegram clients often split long pastes at paragraph/line "
+            "boundaries rather than at the 4096-char hard limit, so chunks "
+            "can arrive well below 4000 chars — the default of 3000 catches "
+            "those splits. Lower this further if you see multi-part pastes "
+            "slipping through; raise it if you often send single long "
+            "messages that don't need buffering."
         ),
         ge=2000,
         le=4096,

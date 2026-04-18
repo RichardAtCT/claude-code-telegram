@@ -76,7 +76,7 @@ class MessageBuffer:
     def __init__(
         self,
         chunk_timeout: float = 0.5,
-        chunk_threshold: int = 4000,
+        chunk_threshold: int = 3000,
         on_flush: Optional[FlushCallback] = None,
     ) -> None:
         self._buffers: Dict[BufferKey, _BufferEntry] = {}

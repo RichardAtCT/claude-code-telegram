@@ -93,7 +93,11 @@ DEFAULT_RETRY_MAX_DELAY = 30.0
 
 # Message chunk buffering (multi-part paste detection)
 DEFAULT_CHUNK_BUFFER_TIMEOUT = 0.5
-DEFAULT_CHUNK_BUFFER_THRESHOLD = 4000
+# Telegram clients often split long pastes at paragraph/line boundaries
+# rather than at the 4096-char hard limit, so chunks can land well below
+# 4096. 3000 catches the common split points while still being well above
+# normal chat messages.
+DEFAULT_CHUNK_BUFFER_THRESHOLD = 3000
 
 # Logging
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
