@@ -83,6 +83,7 @@ Control verbosity with `/verbose`:
 | `/verbose 0` | Final response only (typing indicator stays active) |
 | `/verbose 1` | Tool names + reasoning snippets (default) |
 | `/verbose 2` | Tool names with input details + longer reasoning text |
+| `/verbose 3` | Same as 2, and the progress message is kept visible after the final response (Stop button stripped, text preserved as a read-only log) |
 
 ## Configuration
 

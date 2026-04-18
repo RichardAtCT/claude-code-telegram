@@ -121,13 +121,14 @@ You: /verbose 0
 Bot: Verbosity set to 0 (quiet)
 ```
 
-Use `/verbose 0|1|2` to control how much background activity is shown:
+Use `/verbose 0|1|2|3` to control how much background activity is shown:
 
 | Level | Shows |
 |-------|-------|
 | **0** (quiet) | Final response only (typing indicator stays active) |
 | **1** (normal, default) | Tool names + reasoning snippets in real-time |
 | **2** (detailed) | Tool names with inputs + longer reasoning text |
+| **3** (detailed + keep log) | Same as 2, but the progress log is **preserved** after the final response as a read-only audit trail |
 
 #### GitHub Workflow
 
@@ -235,7 +236,7 @@ CLAUDE_TIMEOUT_SECONDS=300       # Operation timeout
 
 # Mode
 AGENTIC_MODE=true                # Agentic (default) or classic mode
-VERBOSE_LEVEL=1                  # 0=quiet, 1=normal (default), 2=detailed
+VERBOSE_LEVEL=1                  # 0=quiet, 1=normal (default), 2=detailed, 3=detailed+keep-log
 
 # Rate Limiting
 RATE_LIMIT_REQUESTS=10           # Requests per window

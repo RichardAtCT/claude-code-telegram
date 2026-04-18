@@ -257,16 +257,19 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Output verbosity (0=quiet, 1=normal, 2=detailed)
+    # Output verbosity (0=quiet, 1=normal, 2=detailed, 3=detailed+keep-log)
     verbose_level: int = Field(
         1,
         description=(
             "Bot output verbosity: 0=quiet (final response only), "
             "1=normal (tool names + reasoning), "
-            "2=detailed (tool inputs + longer reasoning)"
+            "2=detailed (tool inputs + longer reasoning), "
+            "3=detailed and keep the progress message visible after "
+            "the final response (Stop button stripped, text preserved "
+            "as a read-only log)"
         ),
         ge=0,
-        le=2,
+        le=3,
     )
 
     # Streaming drafts (Telegram sendMessageDraft)

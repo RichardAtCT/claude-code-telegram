@@ -322,6 +322,98 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
         assert call.kwargs.get("reply_markup") is None
 
 
+async def test_verbose_level_3_preserves_log(tmp_dir, deps):
+    """At verbose_level=3 the progress message is kept (Stop button stripped)."""
+    settings = create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=True,
+        verbose_level=3,
+    )
+    orchestrator = MessageOrchestrator(settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "session-abc"
+    mock_response.content = "Done!"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "hi"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    progress_msg.edit_reply_markup = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    # Progress message was NOT deleted; Stop button was stripped.
+    progress_msg.delete.assert_not_called()
+    progress_msg.edit_reply_markup.assert_called_once_with(reply_markup=None)
+
+
+async def test_verbose_level_2_still_deletes_progress(tmp_dir, deps):
+    """At verbose_level<=2 the progress message is deleted (original behavior)."""
+    settings = create_test_config(
+        approved_directory=str(tmp_dir),
+        agentic_mode=True,
+        verbose_level=2,
+    )
+    orchestrator = MessageOrchestrator(settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "session-abc"
+    mock_response.content = "Done!"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "hi"
+    update.message.message_id = 1
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    progress_msg.edit_reply_markup = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {}
+    context.bot_data = {
+        "settings": settings,
+        "claude_integration": claude_integration,
+        "storage": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    # At verbose_level<3 the progress msg is deleted.
+    progress_msg.delete.assert_called_once()
+    progress_msg.edit_reply_markup.assert_not_called()
+
+
 async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
     """Agentic callback handler is registered with cd: pattern filter."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)

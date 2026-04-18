@@ -458,7 +458,7 @@ class MessageOrchestrator:
                 BotCommand("start", "Start the bot"),
                 BotCommand("new", "Start a fresh session"),
                 BotCommand("status", "Show session status"),
-                BotCommand("verbose", "Set output verbosity (0/1/2)"),
+                BotCommand("verbose", "Set output verbosity (0/1/2/3)"),
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("restart", "Restart the bot"),
             ]
@@ -587,36 +587,62 @@ class MessageOrchestrator:
             return int(user_override)
         return self.settings.verbose_level
 
+    async def _finalize_progress_msg(
+        self, progress_msg: Any, verbose_level: int
+    ) -> None:
+        """Delete the progress message, or keep it (sans Stop button) as a log.
+
+        At verbose_level 3 the progress text is preserved as a read-only
+        record of Claude's tool calls and reasoning (the Stop button is
+        stripped). At levels 0-2 the message is deleted (the original
+        behavior).
+        """
+        if verbose_level >= 3:
+            try:
+                await progress_msg.edit_reply_markup(reply_markup=None)
+            except Exception:
+                logger.debug("Failed to clear progress reply markup, ignoring")
+            return
+        try:
+            await progress_msg.delete()
+        except Exception:
+            logger.debug("Failed to delete progress message, ignoring")
+
     async def agentic_verbose(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Set output verbosity: /verbose [0|1|2]."""
+        """Set output verbosity: /verbose [0|1|2|3]."""
         args = update.message.text.split()[1:] if update.message.text else []
+        labels = {
+            0: "quiet",
+            1: "normal",
+            2: "detailed",
+            3: "detailed+keep-log",
+        }
         if not args:
             current = self._get_verbose_level(context)
-            labels = {0: "quiet", 1: "normal", 2: "detailed"}
             await update.message.reply_text(
                 f"Verbosity: <b>{current}</b> ({labels.get(current, '?')})\n\n"
-                "Usage: <code>/verbose 0|1|2</code>\n"
+                "Usage: <code>/verbose 0|1|2|3</code>\n"
                 "  0 = quiet (final response only)\n"
                 "  1 = normal (tools + reasoning)\n"
-                "  2 = detailed (tools with inputs + reasoning)",
+                "  2 = detailed (tools with inputs + reasoning)\n"
+                "  3 = detailed, keep progress log visible",
                 parse_mode="HTML",
             )
             return
 
         try:
             level = int(args[0])
-            if level not in (0, 1, 2):
+            if level not in (0, 1, 2, 3):
                 raise ValueError
         except ValueError:
             await update.message.reply_text(
-                "Please use: /verbose 0, /verbose 1, or /verbose 2"
+                "Please use: /verbose 0, /verbose 1, /verbose 2, or /verbose 3"
             )
             return
 
         context.user_data["verbose_level"] = level
-        labels = {0: "quiet", 1: "normal", 2: "detailed"}
         await update.message.reply_text(
             f"Verbosity set to <b>{level}</b> ({labels[level]})",
             parse_mode="HTML",
@@ -1074,10 +1100,7 @@ class MessageOrchestrator:
                 except Exception:
                     logger.debug("Draft flush failed in finally block", user_id=user_id)
 
-        try:
-            await progress_msg.delete()
-        except Exception:
-            logger.debug("Failed to delete progress message, ignoring")
+        await self._finalize_progress_msg(progress_msg, verbose_level)
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
@@ -1284,10 +1307,7 @@ class MessageOrchestrator:
                 claude_response.content
             )
 
-            try:
-                await progress_msg.delete()
-            except Exception:
-                logger.debug("Failed to delete progress message, ignoring")
+            await self._finalize_progress_msg(progress_msg, verbose_level)
 
             # Use MCP-collected images (from send_image_to_user tool calls)
             images: List[ImageAttachment] = mcp_images_doc
@@ -1494,10 +1514,7 @@ class MessageOrchestrator:
         formatter = ResponseFormatter(self.settings)
         formatted_messages = formatter.format_claude_response(claude_response.content)
 
-        try:
-            await progress_msg.delete()
-        except Exception:
-            logger.debug("Failed to delete progress message, ignoring")
+        await self._finalize_progress_msg(progress_msg, verbose_level)
 
         # Use MCP-collected images (from send_image_to_user tool calls).
         images: List[ImageAttachment] = mcp_images_media
