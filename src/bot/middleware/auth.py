@@ -97,8 +97,15 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
             auth_provider=session.auth_provider if session else None,
         )
 
-        # Welcome message for new session
-        if event.effective_message:
+        # Welcome message for new session — but skip it when the
+        # message is an /auth command: the command handler will send
+        # its own, operation-specific response (e.g. "Token revoked
+        # for user 123"). Otherwise the admin sees a confusing mix
+        # of "Welcome!" + the actual result.
+        is_auth_command = msg_text.startswith("/auth") and (
+            msg_text == "/auth" or msg_text.startswith("/auth ")
+        )
+        if event.effective_message and not is_auth_command:
             await event.effective_message.reply_text(
                 f"🔓 Welcome! You are now authenticated.\n"
                 f"Session started at {datetime.now(UTC).strftime('%H:%M:%S UTC')}"

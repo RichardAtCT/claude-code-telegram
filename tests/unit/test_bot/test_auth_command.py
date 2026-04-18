@@ -192,16 +192,43 @@ class TestAuthRevoke:
 
 
 class TestAuthToken:
-    async def test_token_passthrough(self, settings, deps):
-        """When /auth <token> reaches the handler, user is already authed."""
+    async def test_token_user_gets_token_specific_message(self, settings, deps):
+        """External user authenticated via token sees a token-specific message."""
         orch = MessageOrchestrator(settings, deps)
-        update = _make_update(text="/auth some_random_token_value")
-        ctx = _make_context(deps, settings)
+        update = _make_update(user_id=99999, text="/auth some_random_token_value")
 
+        session = MagicMock()
+        session.auth_provider = "TokenAuthProvider"
+        deps["auth_manager"].get_session.return_value = session
+
+        ctx = _make_context(deps, settings)
         await orch.agentic_auth(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
-        assert "Authenticated" in text
+        assert "token" in text.lower()
+        assert "Welcome" in text or "Authenticated" in text
+
+    async def test_admin_garbage_shows_help_not_success(self, settings, deps):
+        """Admin typing an unknown subcommand sees help, not a misleading success."""
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0],
+            text="/auth deny 123",  # "deny" is not a known subcommand
+        )
+
+        session = MagicMock()
+        session.auth_provider = "WhitelistAuthProvider"
+        deps["auth_manager"].get_session.return_value = session
+
+        ctx = _make_context(deps, settings)
+        await orch.agentic_auth(update, ctx)
+
+        text = update.message.reply_text.call_args[0][0]
+        # Should NOT claim success
+        assert "Authenticated successfully" not in text
+        # Should hint at known subcommands
+        assert "generate" in text
+        assert "revoke" in text
 
 
 # ---------------------------------------------------------------------------

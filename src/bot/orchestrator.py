@@ -1802,13 +1802,38 @@ class MessageOrchestrator:
                 )
             return
 
-        # /auth <token> — token authentication is handled by the auth
-        # middleware (it extracts the token from the message text and
-        # passes it as credentials).  If we reach this point the user
-        # is already authenticated (middleware let the message through).
-        await update.message.reply_text(
-            "\U0001f513 Authenticated successfully.",
-        )
+        # /auth <something> — reached when `something` isn't a known
+        # subcommand.  Either the user successfully authenticated via
+        # token (middleware let them through), or the admin typed a
+        # typo / unknown subcommand.  Disambiguate via session provider.
+        auth_manager = context.bot_data.get("auth_manager")
+        session = auth_manager.get_session(user_id) if auth_manager else None
+        provider_name = session.auth_provider if session else None
+
+        if provider_name == "TokenAuthProvider":
+            # External user presented a valid token — middleware already
+            # created the session.  Confirm it clearly.
+            await update.message.reply_text(
+                "\U0001f513 Authenticated via token. Welcome!",
+            )
+        elif provider_name == "WhitelistAuthProvider":
+            # Admin typed something that isn't a known subcommand.
+            # Show a help hint instead of a misleading success message.
+            await update.message.reply_text(
+                "\u2139\ufe0f You're already authenticated as admin — "
+                "no token needed for your account.\n\n"
+                "Did you mean one of:\n"
+                "<code>/auth generate &lt;user_id&gt;</code>\n"
+                "<code>/auth revoke &lt;user_id&gt;</code>\n"
+                "<code>/auth status</code>",
+                parse_mode="HTML",
+            )
+        else:
+            # Should not reach here — middleware would have rejected
+            # an unauthenticated user.  Fall back to a safe message.
+            await update.message.reply_text(
+                "\U0001f512 Invalid or expired token.",
+            )
 
     async def _handle_stop_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
