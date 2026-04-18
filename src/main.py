@@ -29,7 +29,8 @@ from src.scheduler.scheduler import JobScheduler
 from src.security.audit import AuditLogger, InMemoryAuditStorage
 from src.security.auth import (
     AuthenticationManager,
-    InMemoryTokenStorage,
+    DatabaseAllowlistAuthProvider,
+    SqliteTokenStorage,
     TokenAuthProvider,
     WhitelistAuthProvider,
 )
@@ -105,15 +106,20 @@ async def create_application(config: Settings) -> Dict[str, Any]:
 
     # Create security components
     providers = []
+    token_provider: Optional[TokenAuthProvider] = None
 
-    # Add whitelist provider if users are configured
+    # Add whitelist provider if users are configured.
+    # Also add the DB-backed dynamic allowlist so admins can add users
+    # at runtime via /auth allow <user_id>.
     if config.allowed_users:
         providers.append(WhitelistAuthProvider(config.allowed_users))
+        providers.append(DatabaseAllowlistAuthProvider(storage.users))
 
     # Add token provider if enabled
     if config.enable_token_auth:
-        token_storage = InMemoryTokenStorage()  # TODO: Use database storage
-        providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
+        token_storage = SqliteTokenStorage(storage.tokens)
+        token_provider = TokenAuthProvider(config.auth_secret_str, token_storage)
+        providers.append(token_provider)
 
     # Fall back to allowing all users in development mode
     if not providers and config.development_mode:
@@ -173,6 +179,7 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     # Create bot with all dependencies
     dependencies = {
         "auth_manager": auth_manager,
+        "token_auth_provider": token_provider,
         "security_validator": security_validator,
         "rate_limiter": rate_limiter,
         "audit_logger": audit_logger,
