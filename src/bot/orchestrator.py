@@ -331,7 +331,7 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
-        if self.settings.enable_token_auth:
+        if self.settings.enable_token_auth or self.settings.allowed_users:
             handlers.append(("auth", self.agentic_auth))
 
         # Derive known commands dynamically — avoids drift when new commands are added
@@ -422,7 +422,7 @@ class MessageOrchestrator:
         ]
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
-        if self.settings.enable_token_auth:
+        if self.settings.enable_token_auth or self.settings.allowed_users:
             handlers.append(("auth", self.agentic_auth))
 
         for cmd, handler in handlers:
@@ -468,8 +468,8 @@ class MessageOrchestrator:
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
-            if self.settings.enable_token_auth:
-                commands.append(BotCommand("auth", "Token authentication"))
+            if self.settings.enable_token_auth or self.settings.allowed_users:
+                commands.append(BotCommand("auth", "Authentication management"))
             return commands
         else:
             commands = [
@@ -490,8 +490,8 @@ class MessageOrchestrator:
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
-            if self.settings.enable_token_auth:
-                commands.append(BotCommand("auth", "Token authentication"))
+            if self.settings.enable_token_auth or self.settings.allowed_users:
+                commands.append(BotCommand("auth", "Authentication management"))
             return commands
 
     # --- Agentic handlers ---
@@ -1689,22 +1689,21 @@ class MessageOrchestrator:
     async def agentic_auth(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle /auth — token authentication management.
+        """Handle /auth — authentication management.
 
         /auth <token>             — authenticate with a token
+        /auth status              — show own authentication info
+        /auth add <user_id>       — (admin) add user to persistent allowlist
+        /auth remove <user_id>    — (admin) remove user from allowlist
         /auth generate <user_id>  — (admin) generate token for a user
         /auth revoke <user_id>    — (admin) revoke a user's token
-        /auth status              — show own authentication info
         """
         user_id = update.effective_user.id
         args = update.message.text.split()[1:] if update.message.text else []
-
         token_provider = context.bot_data.get("token_auth_provider")
-        if not token_provider:
-            await update.message.reply_text("Token authentication is not enabled.")
-            return
+        storage = context.bot_data.get("storage")
 
-        # /auth status
+        # /auth or /auth status — always available
         if not args or (len(args) == 1 and args[0] == "status"):
             auth_manager = context.bot_data.get("auth_manager")
             if auth_manager and auth_manager.is_authenticated(user_id):
@@ -1723,6 +1722,116 @@ class MessageOrchestrator:
             return
 
         sub = args[0].lower()
+
+        # /auth add <user_id>  — admin adds user to DB allowlist
+        if sub == "add":
+            if not self._is_admin(user_id):
+                await update.message.reply_text("\U0001f512 Admin access required.")
+                return
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: <code>/auth add &lt;user_id&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                target_id = int(args[1])
+            except ValueError:
+                await update.message.reply_text("Invalid user ID.")
+                return
+            if not storage:
+                await update.message.reply_text(
+                    "Storage unavailable \u2014 cannot update allowlist."
+                )
+                return
+
+            # Ensure user row exists, check current state.
+            user = await storage.get_or_create_user(target_id)
+            if user.is_allowed:
+                await update.message.reply_text(
+                    f"\u2139\ufe0f User <code>{target_id}</code> is already "
+                    f"in the allowlist.",
+                    parse_mode="HTML",
+                )
+                return
+
+            await storage.users.set_user_allowed(target_id, True)
+            await update.message.reply_text(
+                f"\u2705 User <code>{target_id}</code> added to the allowlist. "
+                f"They can now write to the bot.",
+                parse_mode="HTML",
+            )
+
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=user_id,
+                    command="auth_add",
+                    args=[str(target_id)],
+                    success=True,
+                )
+            return
+
+        # /auth remove <user_id>  — admin removes user from DB allowlist
+        if sub == "remove":
+            if not self._is_admin(user_id):
+                await update.message.reply_text("\U0001f512 Admin access required.")
+                return
+            if len(args) < 2:
+                await update.message.reply_text(
+                    "Usage: <code>/auth remove &lt;user_id&gt;</code>",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                target_id = int(args[1])
+            except ValueError:
+                await update.message.reply_text("Invalid user ID.")
+                return
+            if not storage:
+                await update.message.reply_text(
+                    "Storage unavailable \u2014 cannot update allowlist."
+                )
+                return
+
+            user = await storage.users.get_user(target_id)
+            if not user or not user.is_allowed:
+                await update.message.reply_text(
+                    f"\u2139\ufe0f User <code>{target_id}</code> is not in "
+                    f"the allowlist \u2014 nothing to remove.",
+                    parse_mode="HTML",
+                )
+                return
+
+            await storage.users.set_user_allowed(target_id, False)
+            # End their session so the change takes effect immediately
+            auth_manager = context.bot_data.get("auth_manager")
+            if auth_manager:
+                auth_manager.end_session(target_id)
+
+            await update.message.reply_text(
+                f"\u2705 User <code>{target_id}</code> removed from the allowlist.",
+                parse_mode="HTML",
+            )
+
+            audit_logger = context.bot_data.get("audit_logger")
+            if audit_logger:
+                await audit_logger.log_command(
+                    user_id=user_id,
+                    command="auth_remove",
+                    args=[str(target_id)],
+                    success=True,
+                )
+            return
+
+        # All remaining sub-commands require token auth to be enabled.
+        if not token_provider:
+            await update.message.reply_text(
+                "Token authentication is not enabled. "
+                "Set <code>ENABLE_TOKEN_AUTH=true</code> to use token commands.",
+                parse_mode="HTML",
+            )
+            return
 
         # /auth generate <user_id>
         if sub == "generate":
@@ -1838,13 +1947,23 @@ class MessageOrchestrator:
         elif provider_name == "WhitelistAuthProvider":
             # Admin typed something that isn't a known subcommand.
             # Show a help hint instead of a misleading success message.
+            lines = [
+                "\u2139\ufe0f You're already authenticated as admin \u2014 "
+                "no token needed for your account.\n",
+                "Did you mean one of:",
+                "<code>/auth add &lt;user_id&gt;</code>",
+                "<code>/auth remove &lt;user_id&gt;</code>",
+            ]
+            if token_provider:
+                lines.extend(
+                    [
+                        "<code>/auth generate &lt;user_id&gt;</code>",
+                        "<code>/auth revoke &lt;user_id&gt;</code>",
+                    ]
+                )
+            lines.append("<code>/auth status</code>")
             await update.message.reply_text(
-                "\u2139\ufe0f You're already authenticated as admin — "
-                "no token needed for your account.\n\n"
-                "Did you mean one of:\n"
-                "<code>/auth generate &lt;user_id&gt;</code>\n"
-                "<code>/auth revoke &lt;user_id&gt;</code>\n"
-                "<code>/auth status</code>",
+                "\n".join(lines),
                 parse_mode="HTML",
             )
         else:

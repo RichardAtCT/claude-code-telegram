@@ -90,6 +90,40 @@ class WhitelistAuthProvider(AuthProvider):
         return None
 
 
+class DatabaseAllowlistAuthProvider(AuthProvider):
+    """Dynamic allowlist backed by the ``users.is_allowed`` column.
+
+    Works alongside :class:`WhitelistAuthProvider` — the env-based list is
+    for permanent admins, this provider is for dynamic entries admins
+    add via ``/auth allow <user_id>``.
+    """
+
+    def __init__(self, user_repo: Any) -> None:
+        self._repo = user_repo
+        logger.info("Database allowlist auth provider initialized")
+
+    async def authenticate(self, user_id: int, credentials: Dict[str, Any]) -> bool:
+        """Return True if the user's ``is_allowed`` flag is set."""
+        user = await self._repo.get_user(user_id)
+        is_allowed = bool(user and user.is_allowed)
+        logger.info(
+            "Database allowlist authentication attempt",
+            user_id=user_id,
+            success=is_allowed,
+        )
+        return is_allowed
+
+    async def get_user_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+        user = await self._repo.get_user(user_id)
+        if user and user.is_allowed:
+            return {
+                "user_id": user_id,
+                "auth_type": "db_allowlist",
+                "permissions": ["basic"],
+            }
+        return None
+
+
 class TokenStorage(ABC):
     """Abstract token storage interface."""
 

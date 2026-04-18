@@ -232,7 +232,7 @@ class TestAuthToken:
         orch = MessageOrchestrator(settings, deps)
         update = _make_update(
             user_id=settings.allowed_users[0],
-            text="/auth deny 123",  # "deny" is not a known subcommand
+            text="/auth xyz 123",  # "xyz" is not a known subcommand
         )
 
         session = MagicMock()
@@ -245,7 +245,10 @@ class TestAuthToken:
         text = update.message.reply_text.call_args[0][0]
         # Should NOT claim success
         assert "Authenticated successfully" not in text
-        # Should hint at known subcommands
+        # Should hint at known subcommands — primary ones (add/remove) always listed
+        assert "add" in text
+        assert "remove" in text
+        # Token commands listed because token_provider is enabled in this test
         assert "generate" in text
         assert "revoke" in text
 
@@ -256,8 +259,24 @@ class TestAuthToken:
 
 
 class TestAuthDisabled:
-    async def test_no_provider(self, settings, deps):
+    async def test_no_provider_for_generate(self, settings, deps):
+        """Generate should fail clearly when token auth is disabled."""
         deps["token_auth_provider"] = None
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0], text="/auth generate 123"
+        )
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert "not enabled" in text.lower()
+
+    async def test_status_still_works_without_token_auth(self, settings, deps):
+        """Status must work even if token auth is disabled."""
+        deps["token_auth_provider"] = None
+        deps["auth_manager"].is_authenticated.return_value = False
         orch = MessageOrchestrator(settings, deps)
         update = _make_update(text="/auth status")
         ctx = _make_context(deps, settings)
@@ -265,4 +284,179 @@ class TestAuthDisabled:
         await orch.agentic_auth(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
-        assert "not enabled" in text.lower()
+        # Should be status message, not "not enabled"
+        assert "not enabled" not in text.lower()
+        assert "Not authenticated" in text
+
+
+# ---------------------------------------------------------------------------
+# /auth add / /auth remove
+# ---------------------------------------------------------------------------
+
+
+class TestAuthAdd:
+    async def test_add_as_admin(self, settings, deps):
+        storage = MagicMock()
+        user = MagicMock()
+        user.is_allowed = False
+        storage.get_or_create_user = AsyncMock(return_value=user)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(user_id=settings.allowed_users[0], text="/auth add 555")
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        storage.get_or_create_user.assert_awaited_once_with(555)
+        storage.users.set_user_allowed.assert_awaited_once_with(555, True)
+        text = update.message.reply_text.call_args[0][0]
+        assert "added" in text.lower() or "allow" in text.lower()
+
+    async def test_add_already_allowed(self, settings, deps):
+        """Allowing an already-allowed user should say so, not double-add."""
+        storage = MagicMock()
+        user = MagicMock()
+        user.is_allowed = True
+        storage.get_or_create_user = AsyncMock(return_value=user)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(user_id=settings.allowed_users[0], text="/auth add 555")
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        storage.users.set_user_allowed.assert_not_called()
+        text = update.message.reply_text.call_args[0][0]
+        assert "already" in text.lower()
+
+    async def test_add_rejected_for_non_admin(self, settings, deps):
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(user_id=77777, text="/auth add 555")
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert "Admin" in text
+
+    async def test_add_missing_user_id(self, settings, deps):
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(user_id=settings.allowed_users[0], text="/auth add")
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert "Usage" in text
+
+    async def test_add_works_without_token_auth(self, settings, deps):
+        """allow/deny must work even when token auth is disabled."""
+        deps["token_auth_provider"] = None
+        storage = MagicMock()
+        user = MagicMock()
+        user.is_allowed = False
+        storage.get_or_create_user = AsyncMock(return_value=user)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(user_id=settings.allowed_users[0], text="/auth add 555")
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        storage.users.set_user_allowed.assert_awaited_once_with(555, True)
+
+
+class TestAuthRemove:
+    async def test_remove_as_admin(self, settings, deps):
+        storage = MagicMock()
+        user = MagicMock()
+        user.is_allowed = True
+        storage.users.get_user = AsyncMock(return_value=user)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0], text="/auth remove 555"
+        )
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        storage.users.set_user_allowed.assert_awaited_once_with(555, False)
+        text = update.message.reply_text.call_args[0][0]
+        assert "removed" in text.lower()
+
+    async def test_remove_user_not_in_allowlist(self, settings, deps):
+        storage = MagicMock()
+        user = MagicMock()
+        user.is_allowed = False
+        storage.users.get_user = AsyncMock(return_value=user)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0], text="/auth remove 555"
+        )
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        storage.users.set_user_allowed.assert_not_called()
+        text = update.message.reply_text.call_args[0][0]
+        assert "not in" in text.lower() or "nothing" in text.lower()
+
+    async def test_remove_unknown_user(self, settings, deps):
+        """Deny for a user that doesn't exist in DB at all."""
+        storage = MagicMock()
+        storage.users.get_user = AsyncMock(return_value=None)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0], text="/auth remove 999"
+        )
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        storage.users.set_user_allowed.assert_not_called()
+        text = update.message.reply_text.call_args[0][0]
+        assert "not in" in text.lower() or "nothing" in text.lower()
+
+    async def test_remove_ends_session(self, settings, deps):
+        """Denying a user must end their active session."""
+        storage = MagicMock()
+        user = MagicMock()
+        user.is_allowed = True
+        storage.users.get_user = AsyncMock(return_value=user)
+        storage.users.set_user_allowed = AsyncMock()
+        deps["storage"] = storage
+
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0], text="/auth remove 555"
+        )
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        deps["auth_manager"].end_session.assert_called_once_with(555)
+
+    async def test_remove_rejected_for_non_admin(self, settings, deps):
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(user_id=77777, text="/auth remove 555")
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert "Admin" in text

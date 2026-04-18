@@ -90,8 +90,8 @@ def deps():
     }
 
 
-def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, restart commands."""
+def test_agentic_registers_commands(agentic_settings, deps):
+    """Agentic mode registers the expected command handlers."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -108,17 +108,19 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
     assert frozenset({"repo"}) in commands
     assert frozenset({"restart"}) in commands
+    # /auth is registered because test config has allowed_users
+    assert frozenset({"auth"}) in commands
+    assert len(cmd_handlers) == 7
 
 
-def test_classic_registers_14_commands(classic_settings, deps):
-    """Classic mode registers all 14 commands."""
+def test_classic_registers_commands(classic_settings, deps):
+    """Classic mode registers the expected command handlers."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -133,7 +135,8 @@ def test_classic_registers_14_commands(classic_settings, deps):
         if isinstance(call[0][0], CommandHandler)
     ]
 
-    assert len(cmd_handlers) == 14
+    # 14 classic commands + /auth (test config has allowed_users)
+    assert len(cmd_handlers) == 15
 
 
 def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
@@ -164,21 +167,27 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns bot commands including /auth (allowed_users set)."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    assert "start" in cmd_names
+    assert "new" in cmd_names
+    assert "status" in cmd_names
+    assert "verbose" in cmd_names
+    assert "repo" in cmd_names
+    assert "restart" in cmd_names
+    assert "auth" in cmd_names
+    assert len(commands) == 7
 
 
 async def test_classic_bot_commands(classic_settings, deps):
-    """Classic mode returns 14 bot commands."""
+    """Classic mode returns bot commands including /auth (allowed_users set)."""
     orchestrator = MessageOrchestrator(classic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 14
+    assert len(commands) == 15
     cmd_names = [c.command for c in commands]
     assert "start" in cmd_names
     assert "help" in cmd_names

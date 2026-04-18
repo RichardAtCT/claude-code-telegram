@@ -29,6 +29,7 @@ from src.scheduler.scheduler import JobScheduler
 from src.security.audit import AuditLogger, InMemoryAuditStorage
 from src.security.auth import (
     AuthenticationManager,
+    DatabaseAllowlistAuthProvider,
     SqliteTokenStorage,
     TokenAuthProvider,
     WhitelistAuthProvider,
@@ -107,9 +108,12 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     providers = []
     token_provider: Optional[TokenAuthProvider] = None
 
-    # Add whitelist provider if users are configured
+    # Add whitelist provider if users are configured.
+    # Also add the DB-backed dynamic allowlist so admins can add users
+    # at runtime via /auth allow <user_id>.
     if config.allowed_users:
         providers.append(WhitelistAuthProvider(config.allowed_users))
+        providers.append(DatabaseAllowlistAuthProvider(storage.users))
 
     # Add token provider if enabled
     if config.enable_token_auth:

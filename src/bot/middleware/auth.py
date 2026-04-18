@@ -70,8 +70,10 @@ async def auth_middleware(handler: Callable, event: Any, data: Dict[str, Any]) -
         if len(parts) == 2:
             candidate = parts[1].strip()
             # Only treat as a raw token if it doesn't look like a
-            # sub-command (generate, revoke, status).
-            if candidate and not candidate.startswith(("generate", "revoke", "status")):
+            # sub-command (generate, revoke, status, add, remove).
+            if candidate and not candidate.startswith(
+                ("generate", "revoke", "status", "add", "remove")
+            ):
                 credentials = {"token": candidate}
 
     # Try to authenticate (providers will check whitelist and tokens)
