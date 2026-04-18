@@ -1780,6 +1780,25 @@ class MessageOrchestrator:
                 await update.message.reply_text("Invalid user ID.")
                 return
 
+            # Check whether the target actually has an active token
+            # before claiming we revoked anything.
+            stored = await token_provider.storage.get_user_token(target_id)
+            if stored is None:
+                await update.message.reply_text(
+                    f"\u2139\ufe0f User <code>{target_id}</code> has no active "
+                    f"token \u2014 nothing to revoke.",
+                    parse_mode="HTML",
+                )
+                audit_logger = context.bot_data.get("audit_logger")
+                if audit_logger:
+                    await audit_logger.log_command(
+                        user_id=user_id,
+                        command="auth_revoke",
+                        args=[str(target_id), "no_active_token"],
+                        success=False,
+                    )
+                return
+
             await token_provider.revoke_token(target_id)
 
             # Also end the user's session if active
@@ -1788,7 +1807,7 @@ class MessageOrchestrator:
                 auth_manager.end_session(target_id)
 
             await update.message.reply_text(
-                f"Token revoked for user <code>{target_id}</code>.",
+                f"\u2705 Token revoked for user <code>{target_id}</code>.",
                 parse_mode="HTML",
             )
 

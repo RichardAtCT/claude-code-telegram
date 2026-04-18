@@ -156,8 +156,10 @@ class TestAuthGenerate:
 
 
 class TestAuthRevoke:
-    async def test_revoke_as_admin(self, settings, deps, token_provider):
-        # Pre-generate a token
+    async def test_revoke_as_admin_with_active_token(
+        self, settings, deps, token_provider
+    ):
+        """Revoke when the target actually has an active token."""
         await token_provider.generate_token(999)
 
         orch = MessageOrchestrator(settings, deps)
@@ -171,9 +173,26 @@ class TestAuthRevoke:
 
         text = update.message.reply_text.call_args[0][0]
         assert "revoked" in text.lower()
+        assert "no active token" not in text.lower()
 
         # Verify token is actually revoked
         assert await token_provider.authenticate(999, {"token": "any"}) is False
+
+    async def test_revoke_user_without_token(self, settings, deps, token_provider):
+        """Revoke for a user who has no token should report it clearly."""
+        orch = MessageOrchestrator(settings, deps)
+        update = _make_update(
+            user_id=settings.allowed_users[0],
+            text="/auth revoke 12345",  # Never had a token
+        )
+        ctx = _make_context(deps, settings)
+
+        await orch.agentic_auth(update, ctx)
+
+        text = update.message.reply_text.call_args[0][0]
+        assert "no active token" in text.lower()
+        # Must NOT claim it was revoked
+        assert "revoked" not in text.lower()
 
     async def test_revoke_rejected_for_non_admin(self, settings, deps):
         orch = MessageOrchestrator(settings, deps)
