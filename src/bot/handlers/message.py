@@ -1,6 +1,7 @@
 """Message handlers for non-command inputs."""
 
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 import structlog
@@ -725,6 +726,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode="HTML",
         )
 
+        # current_dir is needed by the document branch of file_handler to
+        # persist binary uploads (PDF etc.) into <current_dir>/.uploads/ where
+        # Claude can reach them via its Read tool.
+        current_dir = Path(
+            context.user_data.get("current_directory", settings.approved_directory)
+        )
+
         # Check if enhanced file handler is available
         features = context.bot_data.get("features")
         file_handler = features.get_file_handler() if features else None
@@ -736,6 +744,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     document,
                     user_id,
                     update.message.caption or "Please review this file:",
+                    current_dir=current_dir,
                 )
                 prompt = processed_file.prompt
 
@@ -781,6 +790,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     "• Source code files (.py, .js, .ts, etc.)\n"
                     "• Text files (.txt, .md)\n"
                     "• Configuration files (.json, .yaml, .toml)\n"
+                    "• Documents (.pdf)\n"
                     "• Documentation files",
                     parse_mode="HTML",
                 )
@@ -805,10 +815,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return
 
-        # Get current directory and session
-        current_dir = context.user_data.get(
-            "current_directory", settings.approved_directory
-        )
+        # current_dir was already resolved above for the file_handler call.
         session_id = context.user_data.get("claude_session_id")
 
         # Process with Claude

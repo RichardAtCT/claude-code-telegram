@@ -146,4 +146,5 @@ data/
 sessions/
 backups/
 uploads/
+.uploads/
 config/mcp.json

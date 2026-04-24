@@ -86,6 +86,23 @@ class SecurityValidator:
         ".vue",
         ".svelte",
         ".lock",
+        # Text-compatible document formats (UTF-8, handled inline)
+        ".csv",
+        ".tsv",
+        ".log",
+        ".ics",
+        ".eml",
+        # Binary document formats (persisted to .uploads/ for Claude to read
+        # via the appropriate tool — Read for PDF, Bash with converters for
+        # Office and OpenDocument formats)
+        ".pdf",
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".odt",
+        ".ods",
+        ".odp",
+        ".rtf",
     }
 
     # Forbidden filenames and patterns

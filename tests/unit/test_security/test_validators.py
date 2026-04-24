@@ -139,12 +139,24 @@ class TestSecurityValidator:
             "style.css",
             "data.sql",
             "build.sh",
+            "report.pdf",
+            "contract.docx",
+            "budget.xlsx",
+            "data.csv",
+            "access.log",
+            "invite.ics",
         ]
 
         for filename in valid_filenames:
             valid, error = validator.validate_filename(filename)
             assert valid is True
             assert error is None
+
+    def test_filename_pdf_exe_suffix_blocked(self, validator):
+        """Regression: `.pdf.exe` trap name is still blocked by dangerous patterns."""
+        valid, error = validator.validate_filename("ticket.pdf.exe")
+        assert valid is False
+        assert "not allowed" in error
 
     def test_filename_validation_invalid_extensions(self, validator):
         """Test rejection of invalid file extensions."""

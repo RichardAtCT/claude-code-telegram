@@ -14,8 +14,9 @@ import uuid
 import zipfile
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from telegram import Document
 
@@ -131,12 +132,23 @@ class FileHandler:
         }
 
     async def handle_document_upload(
-        self, document: Document, user_id: int, context: str = ""
+        self,
+        document: Document,
+        user_id: int,
+        context: str = "",
+        current_dir: Optional[Path] = None,
     ) -> ProcessedFile:
-        """Process uploaded document"""
+        """Process uploaded document.
+
+        current_dir is used by the "document" branch to persist binary files
+        (PDF, etc.) into <current_dir>/.uploads/ where Claude can read them via
+        the Read tool. Defaults to approved_directory when omitted.
+        """
 
         # Download file
         file_path = await self._download_file(document)
+        original_name = document.file_name or file_path.name
+        persist_root = current_dir or Path(self.config.approved_directory)
 
         try:
             # Detect file type
@@ -145,6 +157,10 @@ class FileHandler:
             # Process based on type
             if file_type == "archive":
                 return await self._process_archive(file_path, context)
+            elif file_type == "document":
+                return await self._process_document_file(
+                    file_path, context, persist_root, original_name
+                )
             elif file_type == "code":
                 return await self._process_code_file(file_path, context)
             elif file_type == "text":
@@ -153,7 +169,8 @@ class FileHandler:
                 raise ValueError(f"Unsupported file type: {file_type}")
 
         finally:
-            # Cleanup
+            # Cleanup temp download. Document branch has already copied the
+            # payload to <persist_root>/.uploads/ — that copy survives.
             file_path.unlink(missing_ok=True)
 
     async def _download_file(self, document: Document) -> Path:
@@ -170,6 +187,20 @@ class FileHandler:
 
         return file_path
 
+    # Binary document formats: saved to disk for Claude to read via the
+    # appropriate tool (Read for PDF; Bash with pandoc/python-docx/openpyxl/
+    # unzip for Office and OpenDocument formats).
+    document_extensions = {
+        ".pdf",
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".odt",
+        ".ods",
+        ".odp",
+        ".rtf",
+    }
+
     def _detect_file_type(self, file_path: Path) -> str:
         """Detect file type based on extension and content"""
         ext = file_path.suffix.lower()
@@ -177,6 +208,10 @@ class FileHandler:
         # Check if archive
         if ext in {".zip", ".tar", ".gz", ".bz2", ".xz", ".7z"}:
             return "archive"
+
+        # Check if document (binary — saved to disk, read by Claude tools)
+        if ext in self.document_extensions:
+            return "document"
 
         # Check if code
         if ext in self.code_extensions:
@@ -280,6 +315,46 @@ class FileHandler:
                 "language": language,
                 "lines": len(content.splitlines()),
                 "size": file_path.stat().st_size,
+            },
+        )
+
+    async def _process_document_file(
+        self,
+        file_path: Path,
+        context: str,
+        persist_root: Path,
+        original_name: str,
+    ) -> ProcessedFile:
+        """Persist a binary document to <persist_root>/.uploads/ and return a
+        prompt telling Claude to read it via the Read tool.
+
+        The copy survives this call (the caller's `finally` cleans up only the
+        temp download), so Claude can read the file during the conversation and
+        even in follow-up turns.
+        """
+        uploads_dir = persist_root / ".uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")[:-3]
+        safe_name = f"{timestamp}-{original_name}"
+        target = uploads_dir / safe_name
+
+        shutil.copy2(file_path, target)
+
+        prompt = (
+            f"{context or 'User uploaded a file:'}\n\n"
+            f"Path: `{target}`\n\n"
+            "Read the file using the appropriate tool for its format "
+            "and answer the user's question."
+        )
+
+        return ProcessedFile(
+            type="document",
+            prompt=prompt,
+            metadata={
+                "saved_path": str(target),
+                "original_name": original_name,
+                "size": target.stat().st_size,
             },
         )
 

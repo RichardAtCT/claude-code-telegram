@@ -1192,6 +1192,13 @@ class MessageOrchestrator:
         await chat.send_action("typing")
         progress_msg = await update.message.reply_text("Working...")
 
+        # current_dir is needed by the document branch of file_handler to persist
+        # binary uploads (PDF etc.) into <current_dir>/.uploads/ where Claude
+        # can reach them via its Read tool.
+        current_dir = Path(
+            context.user_data.get("current_directory", self.settings.approved_directory)
+        )
+
         # Try enhanced file handler, fall back to basic
         features = context.bot_data.get("features")
         file_handler = features.get_file_handler() if features else None
@@ -1203,6 +1210,7 @@ class MessageOrchestrator:
                     document,
                     user_id,
                     update.message.caption or "Please review this file:",
+                    current_dir=current_dir,
                 )
                 prompt = processed_file.prompt
             except Exception:
@@ -1233,10 +1241,6 @@ class MessageOrchestrator:
                 "Claude integration not available. Check configuration."
             )
             return
-
-        current_dir = context.user_data.get(
-            "current_directory", self.settings.approved_directory
-        )
         session_id = context.user_data.get("claude_session_id")
 
         # Check if /new was used — skip auto-resume for this first message.
