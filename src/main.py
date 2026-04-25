@@ -1,6 +1,7 @@
 """Main entry point for Claude Code Telegram Bot."""
 
 import argparse
+import os
 import asyncio
 import logging
 import signal
@@ -17,6 +18,7 @@ from src.claude import (
     SessionManager,
 )
 from src.claude.sdk_integration import ClaudeSDKManager
+from src.claude.cli_manager import CLIManager
 from src.config.features import FeatureFlags
 from src.config.settings import Settings
 from src.events.bus import EventBus
@@ -26,6 +28,7 @@ from src.exceptions import ConfigurationError
 from src.notifications.service import NotificationService
 from src.projects import ProjectThreadManager, load_project_registry
 from src.scheduler.scheduler import JobScheduler
+from src.scheduler.support_engineer import SupportEngineer, set_bot_and_owner
 from src.security.audit import AuditLogger, InMemoryAuditStorage
 from src.security.auth import (
     AuthenticationManager,
@@ -140,15 +143,24 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     session_storage = SQLiteSessionStorage(storage.db_manager)
     session_manager = SessionManager(config, session_storage)
 
-    # Create Claude SDK manager and integration facade
-    logger.info("Using Claude Python SDK integration")
-    sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
-
-    claude_integration = ClaudeIntegration(
-        config=config,
-        sdk_manager=sdk_manager,
-        session_manager=session_manager,
-    )
+    # Create Claude manager based on integration mode
+    integration_mode = os.getenv("CLAUDE_INTEGRATION_MODE", "sdk").lower()
+    if integration_mode == "cli":
+        logger.info("Using Claude CLI subprocess integration")
+        cli_manager = CLIManager(config, security_validator=security_validator)
+        claude_integration = ClaudeIntegration(
+            config=config,
+            cli_manager=cli_manager,
+            session_manager=session_manager,
+        )
+    else:
+        logger.info("Using Claude Python SDK integration")
+        sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
+        claude_integration = ClaudeIntegration(
+            config=config,
+            sdk_manager=sdk_manager,
+            session_manager=session_manager,
+        )
 
     # --- Event bus and agentic platform components ---
     event_bus = EventBus()
@@ -315,6 +327,17 @@ async def run_application(app: Dict[str, Any]) -> None:
             )
             await scheduler.start()
             logger.info("Job scheduler enabled")
+
+        # Support Engineer - automatic error detection and repair
+        if features.support_engineer_enabled:
+            owner_chat_id = config.allowed_users[0] if config.allowed_users else None
+            if owner_chat_id:
+                set_bot_and_owner(bot=telegram_bot, owner_chat_id=owner_chat_id)
+                support_engineer = SupportEngineer()
+                support_engineer.start()
+                logger.info("support_engineer.enabled", owner_chat_id=owner_chat_id)
+            else:
+                logger.warning("support_engineer.skipped_no_owner")
 
         # Shutdown task
         shutdown_task = asyncio.create_task(shutdown_event.wait())
