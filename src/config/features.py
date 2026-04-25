@@ -65,6 +65,10 @@ class FeatureFlags:
     def scheduler_enabled(self) -> bool:
         """Check if the job scheduler is enabled."""
         return self.settings.enable_scheduler
+    @property
+    def support_engineer_enabled(self) -> bool:
+        return self.settings.enable_support_engineer
+
 
     @property
     def agentic_mode_enabled(self) -> bool:
@@ -100,6 +104,7 @@ class FeatureFlags:
             "development": self.development_features_enabled,
             "api_server": self.api_server_enabled,
             "scheduler": self.scheduler_enabled,
+            "support_engineer": self.support_engineer_enabled,
             "agentic_mode": self.agentic_mode_enabled,
             "voice_messages": self.voice_messages_enabled,
             "stream_drafts": self.stream_drafts_enabled,

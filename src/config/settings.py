@@ -299,6 +299,11 @@ class Settings(BaseSettings):
     enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
     api_server_port: int = Field(8080, description="Webhook API server port")
     enable_scheduler: bool = Field(False, description="Enable job scheduler")
+    enable_support_engineer: bool = Field(
+        False,
+        description="Enable Support Engineer (auto error detection)",
+    )
+
     github_webhook_secret: Optional[str] = Field(
         None, description="GitHub webhook HMAC secret"
     )
