@@ -212,8 +212,10 @@ class ClaudeCodeBot:
             self.is_running = True
 
             if self.settings.webhook_url:
-                # Webhook mode
-                await self.app.run_webhook(
+                # Webhook mode - use start/start_webhook instead of run_webhook
+                # to avoid "Cannot close a running event loop" in async context
+                await self.app.start()
+                await self.app.updater.start_webhook(
                     listen="0.0.0.0",
                     port=self.settings.webhook_port,
                     url_path=self.settings.webhook_path,
@@ -221,6 +223,10 @@ class ClaudeCodeBot:
                     drop_pending_updates=True,
                     allowed_updates=Update.ALL_TYPES,
                 )
+
+                # Keep running until manually stopped
+                while self.is_running:
+                    await asyncio.sleep(1)
             else:
                 # Polling mode - initialize and start polling manually
                 await self.app.initialize()
