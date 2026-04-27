@@ -86,6 +86,19 @@ class SecurityValidator:
         ".vue",
         ".svelte",
         ".lock",
+        # Image formats (document uploads; native photos go through image_handler.py)
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".heic",
+        ".heif",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        # Document formats
+        ".pdf",
     }
 
     # Forbidden filenames and patterns
