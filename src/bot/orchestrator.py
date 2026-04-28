@@ -716,12 +716,15 @@ class MessageOrchestrator:
 
         # Render summary as plain text *outside* the blockquote so it's
         # always visible, and place tool lines *inside* the expandable
-        # blockquote so they stay folded by default. Telegram doesn't
-        # expose a "show only first line collapsed" knob for blockquote
-        # expandable, so this is the cleanest way to keep the closed
-        # state minimal.
+        # blockquote so they stay folded by default. Telegram only
+        # collapses an expandable blockquote when its content occupies
+        # more than 3 lines — short chunks (1-2 tool calls) would render
+        # fully expanded and leak tool detail into the chat. Pad the
+        # blockquote body to at least 4 lines with invisible separators
+        # (U+2063) so the fold always engages.
         wrapped: List[str] = []
         n = len(chunks_text)
+        invisible_pad_line = "⁣"
         for i, chunk_body in enumerate(chunks_text):
             if n == 1:
                 summary = summary_total
@@ -729,6 +732,12 @@ class MessageOrchestrator:
                 summary = f"{summary_total} · part 1/{n}"
             else:
                 summary = f"part {i + 1}/{n}"
+
+            line_count = chunk_body.count("\n") + 1 if chunk_body else 0
+            if line_count < 4:
+                pad_needed = 4 - line_count
+                chunk_body = chunk_body + ("\n" + invisible_pad_line) * pad_needed
+
             wrapped.append(
                 f"{summary}\n<blockquote expandable>{chunk_body}</blockquote>"
             )
