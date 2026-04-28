@@ -664,18 +664,18 @@ class MessageOrchestrator:
         activity_log: List[Dict[str, Any]],
         elapsed: float,
     ) -> str:
-        """Render the full activity log inside a Telegram HTML tg-spoiler.
+        """Render the activity log as a collapsed expandable blockquote.
 
-        Used to replace the live "Working..." progress message after the run
-        completes, so the operator can still tap to expand and audit what
-        happened, but the final response remains visually clean.
+        Telegram's <blockquote expandable> renders as a ~1-line preview with
+        a "Show more" link — exactly the see-more dropdown shape we want.
+        Final reply lands below as its own bubble; the audit trail is one
+        tap away without bloating the chat.
         """
         from html import escape as _esc
 
         if not activity_log:
             return ""
 
-        header = f"⏱ {elapsed:.0f}s · {len(activity_log)} steps"
         body_lines: List[str] = []
         for entry in activity_log:
             kind = entry.get("kind", "tool")
@@ -693,12 +693,13 @@ class MessageOrchestrator:
                     body_lines.append(f"{icon} {_esc(entry['name'])}")
 
         body = "\n".join(body_lines)
-        # Telegram caps a single message at 4096 chars; cap the spoiler body
-        # generously and let _send_message split if needed elsewhere.
         if len(body) > 3500:
             body = body[:3500] + "\n…(truncated)"
 
-        return f"{header}\n<tg-spoiler>{body}</tg-spoiler>"
+        # First line of the blockquote is the only thing visible until the
+        # operator taps "Show more", so make it the run summary.
+        summary = f"⏱ {elapsed:.0f}s · {len(activity_log)} steps"
+        return f"<blockquote expandable>{summary}\n{body}</blockquote>"
 
     @staticmethod
     def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
