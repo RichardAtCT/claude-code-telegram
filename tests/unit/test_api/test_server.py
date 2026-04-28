@@ -210,3 +210,140 @@ class TestWebhookAPI:
         )
 
         assert response.status_code == 401
+
+
+class TestWebhookFilterIntegration:
+    """The pre-bus filter should drop noise without publishing."""
+
+    def _signed(self, secret: str, payload: bytes) -> str:  # pragma: no cover - helper
+        return (
+            "sha256=" + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        )
+
+    def test_workflow_run_queued_dropped(self) -> None:
+        bus = EventBus()
+        published: list = []
+
+        async def capture(event):  # type: ignore[no-untyped-def]
+            published.append(event)
+
+        original_publish = bus.publish
+        bus.publish = capture  # type: ignore[assignment]
+
+        secret = "gh-secret"
+        settings = make_settings(github_webhook_secret=secret)
+        app = create_api_app(bus, settings)
+        client = TestClient(app)
+
+        body = b'{"action": "queued", "workflow_run": {"name": "ci"}}'
+        sig = self._signed(secret, body)
+        response = client.post(
+            "/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Event": "workflow_run",
+                "X-GitHub-Delivery": "drop-1",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "dropped"
+        assert response.json()["reason"] == "workflow_run.queued"
+        assert published == []  # nothing reached the bus
+
+        bus.publish = original_publish  # type: ignore[assignment]
+
+    def test_workflow_run_failure_escalates(self) -> None:
+        bus = EventBus()
+        published: list = []
+
+        async def capture(event):  # type: ignore[no-untyped-def]
+            published.append(event)
+
+        bus.publish = capture  # type: ignore[assignment]
+
+        secret = "gh-secret"
+        settings = make_settings(github_webhook_secret=secret)
+        app = create_api_app(bus, settings)
+        client = TestClient(app)
+
+        body = (
+            b'{"action": "completed", "workflow_run": '
+            b'{"name": "ci", "conclusion": "failure"}}'
+        )
+        sig = self._signed(secret, body)
+        response = client.post(
+            "/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig,
+                "X-GitHub-Event": "workflow_run",
+                "X-GitHub-Delivery": "esc-1",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "accepted"
+        assert len(published) == 1
+
+    def test_webhook_health_endpoint(self) -> None:
+        bus = EventBus()
+        secret = "gh-secret"
+        settings = make_settings(github_webhook_secret=secret)
+        app = create_api_app(bus, settings)
+        client = TestClient(app)
+
+        # Cold start
+        response = client.get("/webhooks/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["events_seen_total"] == 0
+        assert data["events_dropped_total"] == 0
+        assert data["events_escalated_total"] == 0
+        assert data["last_event_at"] is None
+
+        # Drive one drop and one escalate
+        async def noop(event):  # type: ignore[no-untyped-def]
+            pass
+
+        bus.publish = noop  # type: ignore[assignment]
+
+        body_drop = b'{"action": "queued", "workflow_run": {"name": "ci"}}'
+        client.post(
+            "/webhooks/github",
+            content=body_drop,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": "sha256="
+                + hmac.new(secret.encode(), body_drop, hashlib.sha256).hexdigest(),
+                "X-GitHub-Event": "workflow_run",
+                "X-GitHub-Delivery": "h-1",
+            },
+        )
+        body_esc = (
+            b'{"action": "completed", "workflow_run": '
+            b'{"name": "ci", "conclusion": "failure"}}'
+        )
+        client.post(
+            "/webhooks/github",
+            content=body_esc,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": "sha256="
+                + hmac.new(secret.encode(), body_esc, hashlib.sha256).hexdigest(),
+                "X-GitHub-Event": "workflow_run",
+                "X-GitHub-Delivery": "h-2",
+            },
+        )
+
+        response = client.get("/webhooks/health")
+        data = response.json()
+        assert data["events_seen_total"] == 2
+        assert data["events_dropped_total"] == 1
+        assert data["events_escalated_total"] == 1
+        assert data["last_event_type"] == "workflow_run"
+        assert data["last_event_at"] is not None
