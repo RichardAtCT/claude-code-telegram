@@ -1,0 +1,15 @@
+# Repo-local gitleaks config. Extends (does not replace) the default ruleset.
+title = "claude-code-telegram"
+
+[extend]
+# Pull in gitleaks' baked-in ruleset; we only ADD allowlists.
+useDefault = true
+
+[allowlist]
+description = "False positives in test fixtures and example/setup docs."
+paths = [
+  '''tests/.*''',                       # Pytest fixtures using fake bearer tokens
+  '''docs/.*''',                        # Setup docs include illustrative curl commands
+  '''.*\.env\.example$''',              # Documented env shape, not real values
+  '''config/.*\.example\.ya?ml$'''      # Example project registry
+]

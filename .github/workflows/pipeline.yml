@@ -3,12 +3,14 @@ name: Pipeline
 # Push to main reinstalls the bot at HEAD SHA and restarts every
 # aphrollo-bot@<persona> unit. Deploy script + sudoers grant live in
 # aphrollo-infra.
+#
+# All jobs on self-hosted to match aphrollo-api / aphrollo-web pipeline
+# (no GitHub-hosted minutes, single runner = serial). Volume is fine.
 
 on:
-  push:
-    branches: [main]
-    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
+  push:
     branches: [main]
     paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
   workflow_dispatch:
@@ -18,9 +20,9 @@ permissions:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -38,9 +40,9 @@ jobs:
       - run: poetry run flake8 src tests
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -55,8 +57,39 @@ jobs:
       - run: poetry lock && poetry install
       - run: make test
 
+  vulncheck:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+      - uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
+      - run: poetry lock && poetry install
+      - run: poetry run pip install pip-audit
+      - run: poetry run pip-audit
+
+  secret-scan:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0   # full history so gitleaks scans every commit
+      - name: gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            | tar xz gitleaks
+          ./gitleaks detect --no-banner --redact -v --exit-code 1
+
   deploy:
-    needs: [lint, test]
+    needs: [lint, test, vulncheck, secret-scan]
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: self-hosted
     timeout-minutes: 10
