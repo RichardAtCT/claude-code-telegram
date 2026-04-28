@@ -309,11 +309,14 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
-            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
-            # tools so the SDK does not restrict tool usage (e.g. MCP tools).
+            # When DISABLE_TOOL_VALIDATION=true, pass empty lists for
+            # allowed/disallowed tools so the SDK does not restrict tool usage
+            # (e.g. MCP tools). claude-agent-sdk 0.1.69's
+            # _apply_skills_defaults calls list(allowed_tools) without None
+            # guard, so None crashes; [] is the safe equivalent.
             if self.config.disable_tool_validation:
-                sdk_allowed_tools = None
-                sdk_disallowed_tools = None
+                sdk_allowed_tools = []
+                sdk_disallowed_tools = []
             else:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
@@ -334,8 +337,13 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["project"],
+                setting_sources=["user", "project", "local"],
                 stderr=_stderr_callback,
+                permission_mode=(
+                    "bypassPermissions"
+                    if self.config.disable_tool_validation
+                    else "default"
+                ),
             )
 
             # Pass MCP server configuration if enabled
@@ -676,10 +684,12 @@ class ClaudeSDKManager:
                     f"Claude SDK task error: {exceptions[0] if exceptions else e}"
                 )
 
+            import traceback as _tb
             logger.error(
                 "Unexpected error in Claude SDK",
                 error=str(e),
                 error_type=type(e).__name__,
+                traceback=_tb.format_exc(),
             )
             raise ClaudeProcessError(f"Unexpected error: {str(e)}")
 
