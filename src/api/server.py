@@ -12,6 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 
 from ..config.settings import Settings
 from ..events.bus import EventBus
+from ..events.middleware import WebhookFilter
 from ..events.types import WebhookEvent
 from ..storage.database import DatabaseManager
 from .auth import verify_github_signature, verify_shared_secret
@@ -23,6 +24,7 @@ def create_api_app(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    webhook_filter: Optional[WebhookFilter] = None,
 ) -> FastAPI:
     """Create the FastAPI application."""
 
@@ -33,9 +35,25 @@ def create_api_app(
         redoc_url=None,
     )
 
+    # Per-app filter+stats. The filter is always on with hardcoded rules
+    # tuned for the pager; tests can inject a custom one for coverage.
+    if webhook_filter is None:
+        webhook_filter = WebhookFilter()
+    app.state.webhook_filter = webhook_filter
+    app.state.webhook_stats = webhook_filter.stats
+
     @app.get("/health")
     async def health_check() -> Dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/webhooks/health")
+    async def webhook_health() -> Dict[str, Any]:
+        """Webhook subsystem health + drop/escalate counters.
+
+        Counters are process-lifetime and in-memory (reset on restart).
+        Loopback-only by default (see api_server_host doc); no auth.
+        """
+        return app.state.webhook_stats.snapshot()
 
     @app.post("/webhooks/{provider}")
     async def receive_webhook(
@@ -45,7 +63,7 @@ def create_api_app(
         x_github_event: Optional[str] = Header(None),
         x_github_delivery: Optional[str] = Header(None),
         authorization: Optional[str] = Header(None),
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Receive and validate webhook from an external provider."""
         body = await request.body()
 
@@ -107,6 +125,26 @@ def create_api_app(
             payload: Dict[str, Any] = await request.json()
         except Exception:
             payload = {"raw_body": body.decode("utf-8", errors="replace")[:5000]}
+
+        # Pre-bus noise filter. Drops housekeeping events (queued runs,
+        # branch deletes, ping handshakes, retries) before they wake the
+        # agent. See src/events/middleware.py for rules.
+        escalate, reason = webhook_filter.should_escalate(
+            event_type_name, payload, delivery_id
+        )
+        if not escalate:
+            logger.info(
+                "Webhook dropped by filter",
+                provider=provider,
+                event_type=event_type_name,
+                delivery_id=delivery_id,
+                reason=reason,
+            )
+            return {
+                "status": "dropped",
+                "reason": reason,
+                "delivery_id": delivery_id,
+            }
 
         # Atomic dedupe: attempt INSERT first, only publish if new
         if db_manager and delivery_id:

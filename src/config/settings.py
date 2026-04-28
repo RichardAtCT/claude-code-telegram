@@ -317,6 +317,12 @@ class Settings(BaseSettings):
     notification_chat_ids: Optional[List[int]] = Field(
         None, description="Default Telegram chat IDs for proactive notifications"
     )
+
+    # Webhook noise filter is always on with hardcoded rules tuned for the
+    # rusty pager. See src/events/middleware.py. No env-var plumbing —
+    # only one bot consumes raw webhooks today; revisit when a second one
+    # appears.
+
     enable_project_threads: bool = Field(
         False,
         description="Enable strict routing by Telegram forum project threads",
