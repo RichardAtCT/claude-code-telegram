@@ -660,6 +660,47 @@ class MessageOrchestrator:
         return "\n".join(lines)
 
     @staticmethod
+    def _format_progress_spoiler(
+        activity_log: List[Dict[str, Any]],
+        elapsed: float,
+    ) -> str:
+        """Render the full activity log inside a Telegram HTML tg-spoiler.
+
+        Used to replace the live "Working..." progress message after the run
+        completes, so the operator can still tap to expand and audit what
+        happened, but the final response remains visually clean.
+        """
+        from html import escape as _esc
+
+        if not activity_log:
+            return ""
+
+        header = f"⏱ {elapsed:.0f}s · {len(activity_log)} steps"
+        body_lines: List[str] = []
+        for entry in activity_log:
+            kind = entry.get("kind", "tool")
+            if kind == "text":
+                snippet = entry.get("detail", "")
+                body_lines.append(f"💬 {_esc(snippet)}")
+            else:
+                icon = _tool_icon(entry["name"])
+                detail = entry.get("detail") or ""
+                if detail:
+                    body_lines.append(
+                        f"{icon} {_esc(entry['name'])} · {_esc(detail)}"
+                    )
+                else:
+                    body_lines.append(f"{icon} {_esc(entry['name'])}")
+
+        body = "\n".join(body_lines)
+        # Telegram caps a single message at 4096 chars; cap the spoiler body
+        # generously and let _send_message split if needed elsewhere.
+        if len(body) > 3500:
+            body = body[:3500] + "\n…(truncated)"
+
+        return f"{header}\n<tg-spoiler>{body}</tg-spoiler>"
+
+    @staticmethod
     def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
         """Return an informative summary of tool input for verbose level 2.
 
@@ -1187,10 +1228,34 @@ class MessageOrchestrator:
                 except Exception:
                     logger.debug("Draft flush failed in finally block", user_id=user_id)
 
+        # Convert the live "Working..." message into a collapsed spoiler
+        # carrying the full activity log. Operators can tap to expand and
+        # audit the run; final response stays visually clean. If we have no
+        # log (verbose 0, or zero steps) fall back to deleting the bubble.
         try:
-            await progress_msg.delete()
-        except Exception:
-            logger.debug("Failed to delete progress message, ignoring")
+            elapsed = time.time() - start_time
+            spoiler_text = (
+                self._format_progress_spoiler(tool_log, elapsed)
+                if tool_log
+                else ""
+            )
+            if spoiler_text:
+                await progress_msg.edit_text(
+                    spoiler_text,
+                    parse_mode="HTML",
+                    reply_markup=None,
+                )
+            else:
+                await progress_msg.delete()
+        except Exception as _spoiler_err:
+            logger.debug(
+                "Failed to convert progress message to spoiler, deleting",
+                error=str(_spoiler_err),
+            )
+            try:
+                await progress_msg.delete()
+            except Exception:
+                logger.debug("Failed to delete progress message, ignoring")
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
