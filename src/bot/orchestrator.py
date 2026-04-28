@@ -722,7 +722,6 @@ class MessageOrchestrator:
         #     [i/n  if multi-chunk, else nbsp]  line 3
         #     <tool 1>                          line 4  hidden
         #     <tool 2..N>
-        #     <nbsp pad>                        to >=30 lines so fold engages
         #   </blockquote>
         #
         # Telegram's collapsed preview always shows ~3 lines. We use
@@ -732,7 +731,6 @@ class MessageOrchestrator:
         wrapped: List[str] = []
         n = len(chunks_text)
         nbsp_line = " "  # U+00A0
-        pad_target = 30
         for i, chunk_body in enumerate(chunks_text):
             header = "Tools log"
             stats_line = summary_total
@@ -747,11 +745,6 @@ class MessageOrchestrator:
             full_body = head
             if body_lines:
                 full_body = head + "\n" + "\n".join(body_lines)
-
-            line_count = full_body.count("\n") + 1
-            if line_count < pad_target:
-                pad_needed = pad_target - line_count
-                full_body = full_body + ("\n" + nbsp_line) * pad_needed
 
             wrapped.append(
                 f"<blockquote expandable>{full_body}</blockquote>"
