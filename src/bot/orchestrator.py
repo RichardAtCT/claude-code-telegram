@@ -729,9 +729,9 @@ class MessageOrchestrator:
             if n == 1:
                 summary = summary_total
             elif i == 0:
-                summary = f"{summary_total} · part 1/{n}"
+                summary = f"{summary_total} · 1/{n}"
             else:
-                summary = f"part {i + 1}/{n}"
+                summary = f"{i + 1}/{n}"
 
             line_count = chunk_body.count("\n") + 1 if chunk_body else 0
             if line_count < 4:
