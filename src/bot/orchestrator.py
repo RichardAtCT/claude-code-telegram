@@ -635,57 +635,168 @@ class MessageOrchestrator:
         elapsed = time.time() - start_time
         lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
 
-        for entry in activity_log[-15:]:  # Show last 15 entries max
+        # Show last 25 entries — bigger window than before so the operator
+        # can actually follow a multi-step run. Telegram's 4096-char message
+        # ceiling is the real limit; _summarize_tool_input caps each line.
+        window = 25
+        for entry in activity_log[-window:]:
             kind = entry.get("kind", "tool")
             if kind == "text":
-                # Claude's intermediate reasoning/commentary
                 snippet = entry.get("detail", "")
                 if verbose_level >= 2:
                     lines.append(f"\U0001f4ac {snippet}")
                 else:
-                    # Level 1: one short line
-                    lines.append(f"\U0001f4ac {snippet[:80]}")
+                    lines.append(f"\U0001f4ac {snippet[:120]}")
             else:
-                # Tool call
                 icon = _tool_icon(entry["name"])
                 if verbose_level >= 2 and entry.get("detail"):
-                    lines.append(f"{icon} {entry['name']}: {entry['detail']}")
+                    lines.append(f"{icon} {entry['name']} · {entry['detail']}")
                 else:
                     lines.append(f"{icon} {entry['name']}")
 
-        if len(activity_log) > 15:
-            lines.insert(1, f"... ({len(activity_log) - 15} earlier entries)\n")
+        if len(activity_log) > window:
+            lines.insert(1, f"... ({len(activity_log) - window} earlier entries)\n")
 
         return "\n".join(lines)
 
     @staticmethod
     def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
-        """Return a short summary of tool input for verbose level 2."""
+        """Return an informative summary of tool input for verbose level 2.
+
+        Designed to give the operator real visibility into what the bot is
+        doing — actual bash commands, file paths with parent dir, edit
+        snippets, web URLs — rather than just the tool name. Caps individual
+        fields and the overall string so progress messages still fit in
+        Telegram's 4096-char limit when 15 entries are rendered.
+        """
         if not tool_input:
             return ""
-        if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
-            path = tool_input.get("file_path") or tool_input.get("path", "")
-            if path:
-                # Show just the filename, not the full path
-                return path.rsplit("/", 1)[-1]
-        if tool_name in ("Glob", "Grep"):
-            pattern = tool_input.get("pattern", "")
-            if pattern:
-                return pattern[:60]
+
+        def _short_path(p: str) -> str:
+            # Last two path segments: keeps useful context without leaking
+            # /home/debian/<repo>/.../ noise.
+            parts = p.rstrip("/").split("/")
+            return "/".join(parts[-2:]) if len(parts) > 1 else p
+
+        def _clip(s: str, n: int) -> str:
+            s = s.replace("\n", " ").strip()
+            return s if len(s) <= n else s[: n - 1] + "…"
+
         if tool_name == "Bash":
             cmd = tool_input.get("command", "")
             if cmd:
-                return _redact_secrets(cmd[:100])[:80]
-        if tool_name in ("WebFetch", "WebSearch"):
-            return (tool_input.get("url", "") or tool_input.get("query", ""))[:60]
-        if tool_name == "Task":
+                return _clip(_redact_secrets(cmd), 300)
+
+        if tool_name == "Read":
+            path = tool_input.get("file_path") or tool_input.get("path", "")
+            offset = tool_input.get("offset")
+            limit = tool_input.get("limit")
+            if path:
+                suffix = ""
+                if offset is not None and limit is not None:
+                    suffix = f" L{offset}-{int(offset) + int(limit)}"
+                elif limit is not None:
+                    suffix = f" first {limit}L"
+                return _clip(_short_path(path) + suffix, 200)
+
+        if tool_name == "Write":
+            path = tool_input.get("file_path", "")
+            content = tool_input.get("content", "")
+            if path:
+                size = f" ({len(content)}B)" if content else ""
+                return _clip(_short_path(path) + size, 200)
+
+        if tool_name in ("Edit", "MultiEdit"):
+            path = tool_input.get("file_path", "")
+            old = tool_input.get("old_string", "")
+            new = tool_input.get("new_string", "")
+            if tool_name == "MultiEdit":
+                edits = tool_input.get("edits") or []
+                if edits and isinstance(edits, list):
+                    old = edits[0].get("old_string", old)
+                    new = edits[0].get("new_string", new)
+                    multi = f" (+{len(edits) - 1} more)" if len(edits) > 1 else ""
+                else:
+                    multi = ""
+            else:
+                multi = ""
+            head = _short_path(path) if path else ""
+            if old or new:
+                snippet = f" · {_clip(old, 60)} → {_clip(new, 60)}"
+                return _clip(head + snippet + multi, 280)
+            return _clip(head + multi, 200)
+
+        if tool_name in ("Glob", "Grep"):
+            pattern = tool_input.get("pattern", "")
+            path = tool_input.get("path", "")
+            include = tool_input.get("glob") or tool_input.get("include", "")
+            parts = [pattern]
+            if include:
+                parts.append(f"in {include}")
+            if path:
+                parts.append(f"@ {_short_path(path)}")
+            return _clip(" ".join(p for p in parts if p), 200)
+
+        if tool_name in ("LS", "ls"):
+            path = tool_input.get("path", "")
+            if path:
+                return _clip(_short_path(path), 200)
+
+        if tool_name == "WebFetch":
+            url = tool_input.get("url", "")
+            prompt = tool_input.get("prompt", "")
+            if url and prompt:
+                return _clip(f"{url} · {prompt}", 250)
+            return _clip(url or prompt, 250)
+
+        if tool_name == "WebSearch":
+            query = tool_input.get("query", "")
+            return _clip(query, 250)
+
+        if tool_name in ("Task", "Agent"):
+            agent = tool_input.get("subagent_type", "")
             desc = tool_input.get("description", "")
-            if desc:
-                return desc[:60]
-        # Generic: show first key's value
+            prompt = tool_input.get("prompt", "")
+            head = f"[{agent}] " if agent else ""
+            body = desc or prompt
+            return _clip(head + body, 250)
+
+        if tool_name == "TodoWrite":
+            todos = tool_input.get("todos") or []
+            if isinstance(todos, list) and todos:
+                in_prog = next(
+                    (t for t in todos if t.get("status") == "in_progress"), None
+                )
+                if in_prog:
+                    label = in_prog.get("activeForm") or in_prog.get("content", "")
+                    return _clip(f"{len(todos)} todos · {label}", 250)
+                return _clip(f"{len(todos)} todos", 80)
+
+        if tool_name == "Skill":
+            skill = tool_input.get("skill", "")
+            args = tool_input.get("args", "")
+            head = skill
+            if args:
+                head += f" · {args}"
+            return _clip(head, 200)
+
+        if tool_name in ("NotebookRead", "NotebookEdit"):
+            path = tool_input.get("notebook_path") or tool_input.get("path", "")
+            if path:
+                return _clip(_short_path(path), 200)
+
+        # MCP-namespaced tools: mcp__<server>__<tool> — show first stringy arg
+        if tool_name.startswith("mcp__"):
+            for v in tool_input.values():
+                if isinstance(v, str) and v:
+                    return _clip(v, 200)
+
+        # Generic: show first stringy / non-trivial value
         for v in tool_input.values():
             if isinstance(v, str) and v:
-                return v[:60]
+                return _clip(v, 200)
+            if isinstance(v, (list, dict)) and v:
+                return _clip(str(v), 200)
         return ""
 
     @staticmethod
@@ -785,7 +896,9 @@ class MessageOrchestrator:
                         )
                         await draft_streamer.append_tool(line)
 
-            # Capture assistant text (reasoning / commentary)
+            # Capture assistant text (reasoning / commentary). Bumped from
+            # 120 to 280 chars so detailed mode actually shows a sentence,
+            # not an aborted fragment.
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
                 if text:
@@ -793,11 +906,11 @@ class MessageOrchestrator:
                     if first_line:
                         if verbose_level >= 1:
                             tool_log.append(
-                                {"kind": "text", "detail": first_line[:120]}
+                                {"kind": "text", "detail": first_line[:280]}
                             )
                         if draft_streamer:
                             await draft_streamer.append_tool(
-                                f"\U0001f4ac {first_line[:120]}"
+                                f"\U0001f4ac {first_line[:280]}"
                             )
 
             # Stream text to user via draft (prefer token deltas;
