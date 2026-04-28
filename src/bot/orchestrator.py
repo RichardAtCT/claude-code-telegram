@@ -714,40 +714,56 @@ class MessageOrchestrator:
         if cur:
             chunks_text.append("\n".join(cur))
 
-        # Layout per chunk — every visible line lives INSIDE the
-        # blockquote so the quote bar wraps the summary too:
+        # Layout per chunk: 3 useful lines visible in the collapsed
+        # preview, real tool lines start below the preview floor.
         #
         #   <blockquote expandable>
-        #     <summary>          line 1   visible in collapsed preview
-        #     <nbsp>             line 2   visible-empty
-        #     <nbsp>             line 3   visible-empty
-        #     <tool 1>           line 4   below preview boundary
+        #     Tool log [· i/n]                  line 1  header
+        #     ⏱ Ns · N steps                    line 2  stats
+        #     🔧 Bash×5 · Read×2 · Edit×1       line 3  composition
+        #     <tool 1>                          line 4  hidden until expanded
         #     <tool 2..N>
-        #     <nbsp pad>         to >=30 lines so fold engages
+        #     <nbsp pad>                        to >=30 lines so fold engages
         #   </blockquote>
         #
-        # Why this shape: Telegram's expandable blockquote always
-        # renders ~3 lines of preview when collapsed; there is no API
-        # to reduce that to 1. Best we can do is keep lines 2-3
-        # visually empty (U+00A0) so the operator only reads the
-        # summary, then place actual tool lines on line 4+ where the
-        # collapsed preview cuts them off.
+        # Telegram's collapsed preview always shows ~3 lines; we fill
+        # all 3 with information instead of padding them empty.
+        from collections import Counter
+
+        # Build the tool composition string from tool_entries (top names
+        # by count, capped so line 3 stays under ~80 chars).
+        comp_counter: Counter = Counter(
+            e["name"] for e in tool_entries if e.get("kind") != "text"
+        )
+        comp_parts: List[str] = []
+        comp_budget = 80
+        comp_len = 0
+        ordered = comp_counter.most_common()
+        for idx, (name, count) in enumerate(ordered):
+            piece = f"{name}×{count}"
+            extra = (3 if comp_parts else 0) + len(piece)  # " · " separator
+            if comp_parts and comp_len + extra > comp_budget:
+                remaining = len(ordered) - idx
+                if remaining:
+                    comp_parts.append(f"+{remaining}")
+                break
+            comp_parts.append(piece)
+            comp_len += extra
+        composition_line = "🔧 " + " · ".join(comp_parts) if comp_parts else "🔧"
+
         wrapped: List[str] = []
         n = len(chunks_text)
-        nbsp_line = " "
+        nbsp_line = " "  # U+00A0
         pad_target = 30
-        preview_blanks = 2  # lines 2 and 3 of the blockquote
         for i, chunk_body in enumerate(chunks_text):
             if n == 1:
-                summary = summary_total
-            elif i == 0:
-                summary = f"{summary_total} · 1/{n}"
+                header = "Tool log"
             else:
-                summary = f"{i + 1}/{n}"
+                header = f"Tool log · {i + 1}/{n}"
+            stats_line = summary_total
 
-            # Top of blockquote: summary + N blank lines so the 3-line
-            # collapsed preview reads as "summary + blank + blank".
-            head = summary + ("\n" + nbsp_line) * preview_blanks
+            preview_lines = [header, stats_line, composition_line]
+            head = "\n".join(preview_lines)
             body_lines = chunk_body.split("\n") if chunk_body else []
             full_body = head
             if body_lines:
