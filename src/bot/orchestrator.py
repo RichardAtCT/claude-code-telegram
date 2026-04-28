@@ -1229,34 +1229,34 @@ class MessageOrchestrator:
                 except Exception:
                     logger.debug("Draft flush failed in finally block", user_id=user_id)
 
-        # Convert the live "Working..." message into a collapsed spoiler
-        # carrying the full activity log. Operators can tap to expand and
-        # audit the run; final response stays visually clean. If we have no
-        # log (verbose 0, or zero steps) fall back to deleting the bubble.
-        try:
+        # Build the activity log as an HTML expandable blockquote so it can
+        # be embedded inside the final reply (no extra message bubble).
+        activity_html = ""
+        if tool_log:
             elapsed = time.time() - start_time
-            spoiler_text = (
-                self._format_progress_spoiler(tool_log, elapsed)
-                if tool_log
-                else ""
-            )
-            if spoiler_text:
-                await progress_msg.edit_text(
-                    spoiler_text,
-                    parse_mode="HTML",
-                    reply_markup=None,
-                )
-            else:
-                await progress_msg.delete()
-        except Exception as _spoiler_err:
-            logger.debug(
-                "Failed to convert progress message to spoiler, deleting",
-                error=str(_spoiler_err),
-            )
-            try:
-                await progress_msg.delete()
-            except Exception:
-                logger.debug("Failed to delete progress message, ignoring")
+            activity_html = self._format_progress_spoiler(tool_log, elapsed)
+
+        # Drop the live "Working..." bubble; the activity log will ride
+        # along with the final answer message instead of taking its own.
+        try:
+            await progress_msg.delete()
+        except Exception:
+            logger.debug("Failed to delete progress message, ignoring")
+
+        # Prepend the expandable activity log to the first formatted text
+        # message so the operator gets one combined bubble: collapsed log
+        # on top, answer below. Telegram caps a single message at 4096
+        # chars; if the combined size would overflow, we attach the log to
+        # the response only when there's room, otherwise drop it (the run
+        # produced a long enough answer that the log isn't the priority).
+        if activity_html and formatted_messages:
+            from .utils.formatting import FormattedMessage as _FM
+
+            first = formatted_messages[0]
+            if first.parse_mode == "HTML" and first.text:
+                combined = f"{activity_html}\n\n{first.text}"
+                if len(combined) <= 4096:
+                    formatted_messages[0] = _FM(combined, parse_mode="HTML")
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
