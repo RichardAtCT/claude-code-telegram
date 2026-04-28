@@ -1,33 +1,16 @@
 name: Pipeline
 
-# Push-to-deploy for the bot binary. On push to main, after lint passes,
-# the self-hosted runner reinstalls the bot at this exact commit and
-# restarts every aphrollo-bot@<persona>.service unit on the host.
-#
-# Host-side mechanics live in aphrollo-infra:
-#   scripts/aphrollo-claude-code-telegram-deploy
-#   sudoers.d/github-runner-aphrollo-claude-code-telegram
-#
-# Bots ARE auto-restarted as part of the deploy: a binary update is
-# pointless without it. The bot's long-poll loop reconnects cleanly
-# (Telegram replays missed updates from the offset), so a quick restart
-# does not lose messages.
+# Push to main reinstalls the bot at HEAD SHA and restarts every
+# aphrollo-bot@<persona> unit. Deploy script + sudoers grant live in
+# aphrollo-infra.
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE*'
-      - '.gitignore'
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE*'
-      - '.gitignore'
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
   workflow_dispatch:
 
 permissions:
@@ -50,19 +33,12 @@ jobs:
           path: .venv
           key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
       - run: poetry lock && poetry install
-      - name: Check formatting (black)
-        run: poetry run black --check src tests
-      - name: Check import order (isort)
-        run: poetry run isort --check-only src tests
-      - name: Lint (flake8)
-        run: poetry run flake8 src tests
+      - run: poetry run black --check src tests
+      - run: poetry run isort --check-only src tests
+      - run: poetry run flake8 src tests
 
   test:
-    # Advisory for now — there are pre-existing failures on main unrelated
-    # to any active feature work. Deploy doesn't gate on this until those
-    # are cleaned up. Tighten by adding `test` to deploy.needs once green.
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -77,11 +53,10 @@ jobs:
           path: .venv
           key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
       - run: poetry lock && poetry install
-      - name: Test
-        run: make test
+      - run: make test
 
   deploy:
-    needs: [lint]
+    needs: [lint, test]
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: self-hosted
     timeout-minutes: 10
@@ -89,5 +64,4 @@ jobs:
       group: deploy-prod-claude-code-telegram
       cancel-in-progress: false
     steps:
-      - name: Reinstall bot at HEAD SHA and restart all bots
-        run: sudo /usr/local/bin/aphrollo-claude-code-telegram-deploy "${{ github.sha }}"
+      - run: sudo /usr/local/bin/aphrollo-claude-code-telegram-deploy "${{ github.sha }}"
