@@ -618,13 +618,21 @@ class TestRedactSecrets:
         assert "mysupersecrettoken123" not in result
         assert "***" in result
 
-    def test_summarize_tool_input_non_bash_unchanged(self, agentic_settings, deps):
-        """Non-Bash tools don't go through redaction."""
+    def test_summarize_tool_input_non_bash_keeps_parent_dir(
+        self, agentic_settings, deps
+    ):
+        """Non-Bash tool summaries keep the last two path segments.
+
+        _short_path trims the head ("/home/debian/<repo>/...") but keeps the
+        immediate parent so the operator sees enough context to identify the
+        file. .env in the home dir vs .env in a project dir matter for
+        redaction triage.
+        """
         orchestrator = MessageOrchestrator(agentic_settings, deps)
         result = orchestrator._summarize_tool_input(
             "Read", {"file_path": "/home/user/.env"}
         )
-        assert result == ".env"
+        assert result == "user/.env"
 
 
 # --- Typing heartbeat tests ---

@@ -189,7 +189,7 @@ def _fmt_issues(p: Dict[str, Any]) -> str:
     num = issue.get("number") or "?"
     title = issue.get("title") or ""
     user = (issue.get("user") or {}).get("login") or "?"
-    labels = [l.get("name") for l in (issue.get("labels") or []) if l.get("name")]
+    labels = [lbl.get("name") for lbl in (issue.get("labels") or []) if lbl.get("name")]
     lines = [f"issues {action} {repo} #{num} by {user}"]
     if title:
         lines.append(f'"{_first_line(title)}"')

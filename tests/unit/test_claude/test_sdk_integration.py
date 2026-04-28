@@ -180,8 +180,15 @@ class TestClaudeSDKManager:
         assert not response.is_error
         assert response.cost == 0.05
 
-    async def test_execute_command_uses_result_content(self, sdk_manager):
-        """Test that ResultMessage.result is used for content when available."""
+    async def test_execute_command_prefers_last_assistant_text(self, sdk_manager):
+        """The last AssistantMessage is the user-facing answer.
+
+        ResultMessage.result is only a fallback when no assistant text
+        exists. In long runs the SDK occasionally surfaces an intermediate
+        snippet in result (e.g. mid-turn commentary before more tool work)
+        instead of the closing summary, so trusting it exclusively dropped
+        the actual final answer.
+        """
         mock_factory = _mock_client_factory(
             _make_assistant_message("Assistant text"),
             _make_result_message(result="Final result from ResultMessage"),
@@ -195,7 +202,7 @@ class TestClaudeSDKManager:
                 working_directory=Path("/test"),
             )
 
-        assert response.content == "Final result from ResultMessage"
+        assert response.content == "Assistant text"
 
     async def test_execute_command_falls_back_to_messages(self, sdk_manager):
         """Test fallback to message extraction when result is None."""
@@ -601,8 +608,14 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].allowed_tools == ["Read", "Write", "Bash"]
 
-    async def test_disable_tool_validation_sets_allowed_tools_none(self, tmp_path):
-        """allowed_tools=None when DISABLE_TOOL_VALIDATION=true."""
+    async def test_disable_tool_validation_clears_tool_lists(self, tmp_path):
+        """allowed_tools and disallowed_tools become empty lists when
+        DISABLE_TOOL_VALIDATION=true.
+
+        We use [] rather than None because claude-agent-sdk 0.1.69's
+        _apply_skills_defaults calls list(allowed_tools) without a None
+        guard. permission_mode=bypassPermissions does the actual unlocking.
+        """
         config = Settings(
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
@@ -630,8 +643,9 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        assert captured_options[0].allowed_tools is None
-        assert captured_options[0].disallowed_tools is None
+        assert captured_options[0].allowed_tools == []
+        assert captured_options[0].disallowed_tools == []
+        assert captured_options[0].permission_mode == "bypassPermissions"
 
     async def test_tool_validation_enabled_passes_configured_tools(self, tmp_path):
         """allowed/disallowed_tools passed when DISABLE_TOOL_VALIDATION=false."""
@@ -1168,8 +1182,10 @@ class TestClaudeMdLoading:
         assert "Use relative paths." in opts.system_prompt
         assert "# Project Rules" not in opts.system_prompt
 
-    async def test_setting_sources_includes_project(self, sdk_manager, tmp_path):
-        """setting_sources=['project'] is passed to ClaudeAgentOptions."""
+    async def test_setting_sources_loads_user_project_local(
+        self, sdk_manager, tmp_path
+    ):
+        """All three CLAUDE settings scopes are loaded."""
         captured: list = []
         mock_factory = _mock_client_factory(
             _make_assistant_message("ok"),
@@ -1183,4 +1199,4 @@ class TestClaudeMdLoading:
             await sdk_manager.execute_command(prompt="test", working_directory=tmp_path)
 
         opts = captured[0]
-        assert opts.setting_sources == ["project"]
+        assert opts.setting_sources == ["user", "project", "local"]

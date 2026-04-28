@@ -296,8 +296,11 @@ class TestMarkdownToTelegramHtml:
         assert "<i>" not in result
 
     def test_inline_code(self):
+        # Inline backticks render as single-quoted plain text — Telegram's
+        # <code> chip looks broken on mobile. Multi-line fences still go
+        # through <pre><code>; see test_fenced_code_block.
         result = markdown_to_telegram_html("`code here`")
-        assert "<code>code here</code>" in result
+        assert "'code here'" in result
 
     def test_fenced_code_block(self):
         result = markdown_to_telegram_html("```python\nprint('hi')\n```")
@@ -330,7 +333,7 @@ class TestMarkdownToTelegramHtml:
         text = "**Bold** and `code` and *italic*"
         result = markdown_to_telegram_html(text)
         assert "<b>Bold</b>" in result
-        assert "<code>code</code>" in result
+        assert "'code'" in result
         assert "<i>italic</i>" in result
 
 

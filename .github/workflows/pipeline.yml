@@ -1,0 +1,67 @@
+name: Pipeline
+
+# Push to main reinstalls the bot at HEAD SHA and restarts every
+# aphrollo-bot@<persona> unit. Deploy script + sudoers grant live in
+# aphrollo-infra.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE*', '.gitignore']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+      - uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
+      - run: poetry lock && poetry install
+      - run: poetry run black --check src tests
+      - run: poetry run isort --check-only src tests
+      - run: poetry run flake8 src tests
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+      - uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
+      - run: poetry lock && poetry install
+      - run: make test
+
+  deploy:
+    needs: [lint, test]
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: self-hosted
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-prod-claude-code-telegram
+      cancel-in-progress: false
+    steps:
+      - run: sudo /usr/local/bin/aphrollo-claude-code-telegram-deploy "${{ github.sha }}"

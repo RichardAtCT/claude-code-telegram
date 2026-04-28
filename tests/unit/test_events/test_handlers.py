@@ -141,7 +141,12 @@ class TestAgentHandler:
         await agent_handler.handle_webhook(event)
 
     def test_build_webhook_prompt(self, agent_handler: AgentHandler) -> None:
-        """Webhook prompt includes provider and event info."""
+        """Webhook prompt includes provider, event type, and a per-event summary.
+
+        Per-event-type formatters (see src/events/handlers.py _fmt_*) replace
+        the old generic "key: value" dump. For pull_request, the summary line
+        shape is "pull_request <action> <repo> #<num>".
+        """
         event = WebhookEvent(
             provider="github",
             event_type_name="pull_request",
@@ -151,7 +156,8 @@ class TestAgentHandler:
         prompt = agent_handler._build_webhook_prompt(event)
         assert "github" in prompt.lower()
         assert "pull_request" in prompt
-        assert "action: opened" in prompt
+        assert "opened" in prompt
+        assert "#42" in prompt
 
     def test_payload_summary_truncation(self, agent_handler: AgentHandler) -> None:
         """Large payloads are truncated in the summary."""
