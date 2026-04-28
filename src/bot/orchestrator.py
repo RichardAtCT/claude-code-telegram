@@ -676,21 +676,28 @@ class MessageOrchestrator:
         if not activity_log:
             return ""
 
+        # Skip "text" entries (assistant reasoning/commentary) — they
+        # duplicate the actual answer that follows the blockquote, which
+        # made short replies render twice in the chat. Only keep tool
+        # calls in the audit trail.
+        tool_entries = [e for e in activity_log if e.get("kind") != "text"]
+
+        # If the run produced no tool calls (model just emitted text), the
+        # blockquote would be empty noise. Drop it entirely so the answer
+        # rides alone.
+        if not tool_entries:
+            return ""
+
         body_lines: List[str] = []
-        for entry in activity_log:
-            kind = entry.get("kind", "tool")
-            if kind == "text":
-                snippet = entry.get("detail", "")
-                body_lines.append(f"💬 {_esc(snippet)}")
+        for entry in tool_entries:
+            icon = _tool_icon(entry["name"])
+            detail = entry.get("detail") or ""
+            if detail:
+                body_lines.append(
+                    f"{icon} {_esc(entry['name'])} · {_esc(detail)}"
+                )
             else:
-                icon = _tool_icon(entry["name"])
-                detail = entry.get("detail") or ""
-                if detail:
-                    body_lines.append(
-                        f"{icon} {_esc(entry['name'])} · {_esc(detail)}"
-                    )
-                else:
-                    body_lines.append(f"{icon} {_esc(entry['name'])}")
+                body_lines.append(f"{icon} {_esc(entry['name'])}")
 
         body = "\n".join(body_lines)
         if len(body) > 3500:
@@ -698,7 +705,7 @@ class MessageOrchestrator:
 
         # First line of the blockquote is the only thing visible until the
         # operator taps "Show more", so make it the run summary.
-        summary = f"⏱ {elapsed:.0f}s · {len(activity_log)} steps"
+        summary = f"⏱ {elapsed:.0f}s · {len(tool_entries)} steps"
         return f"<blockquote expandable>{summary}\n{body}</blockquote>"
 
     @staticmethod
