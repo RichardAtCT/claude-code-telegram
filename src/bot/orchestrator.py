@@ -714,28 +714,29 @@ class MessageOrchestrator:
         if cur:
             chunks_text.append("\n".join(cur))
 
-        # Layout per chunk:
+        # Layout per chunk — every visible line lives INSIDE the
+        # blockquote so the quote bar wraps the summary too:
         #
-        #   <summary line, plain text>
         #   <blockquote expandable>
-        #     <tool lines>
-        #     <U+00A0 pad lines>
+        #     <summary>          line 1   visible in collapsed preview
+        #     <nbsp>             line 2   visible-empty
+        #     <nbsp>             line 3   visible-empty
+        #     <tool 1>           line 4   below preview boundary
+        #     <tool 2..N>
+        #     <nbsp pad>         to >=30 lines so fold engages
         #   </blockquote>
         #
-        # Summary stays OUTSIDE the blockquote so it's always visible
-        # regardless of fold state. Tool lines go INSIDE only. The
-        # blockquote is padded to >=30 lines with U+00A0 visible-empty
-        # lines so Telegram's height-based collapse threshold reliably
-        # engages on every client. Closed view is exactly:
-        #
-        #   summary
-        #   | Show more
-        #
-        # No tool peek-through.
+        # Why this shape: Telegram's expandable blockquote always
+        # renders ~3 lines of preview when collapsed; there is no API
+        # to reduce that to 1. Best we can do is keep lines 2-3
+        # visually empty (U+00A0) so the operator only reads the
+        # summary, then place actual tool lines on line 4+ where the
+        # collapsed preview cuts them off.
         wrapped: List[str] = []
         n = len(chunks_text)
         nbsp_line = " "
         pad_target = 30
+        preview_blanks = 2  # lines 2 and 3 of the blockquote
         for i, chunk_body in enumerate(chunks_text):
             if n == 1:
                 summary = summary_total
@@ -744,15 +745,21 @@ class MessageOrchestrator:
             else:
                 summary = f"{i + 1}/{n}"
 
-            body = chunk_body or ""
-            line_count = (body.count("\n") + 1) if body else 0
+            # Top of blockquote: summary + N blank lines so the 3-line
+            # collapsed preview reads as "summary + blank + blank".
+            head = summary + ("\n" + nbsp_line) * preview_blanks
+            body_lines = chunk_body.split("\n") if chunk_body else []
+            full_body = head
+            if body_lines:
+                full_body = head + "\n" + "\n".join(body_lines)
+
+            line_count = full_body.count("\n") + 1
             if line_count < pad_target:
                 pad_needed = pad_target - line_count
-                pad_block = "\n".join([nbsp_line] * pad_needed)
-                body = (body + "\n" + pad_block) if body else pad_block
+                full_body = full_body + ("\n" + nbsp_line) * pad_needed
 
             wrapped.append(
-                f"{summary}\n<blockquote expandable>{body}</blockquote>"
+                f"<blockquote expandable>{full_body}</blockquote>"
             )
         return wrapped
 
