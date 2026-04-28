@@ -663,7 +663,7 @@ class MessageOrchestrator:
     def _format_progress_spoiler(
         activity_log: List[Dict[str, Any]],
         elapsed: float,
-    ) -> str:
+    ) -> List[str]:
         """Render the activity log as a collapsed expandable blockquote.
 
         Telegram's <blockquote expandable> renders as a ~1-line preview with
@@ -674,19 +674,12 @@ class MessageOrchestrator:
         from html import escape as _esc
 
         if not activity_log:
-            return ""
+            return []
 
-        # Skip "text" entries (assistant reasoning/commentary) — they
-        # duplicate the actual answer that follows the blockquote, which
-        # made short replies render twice in the chat. Only keep tool
-        # calls in the audit trail.
+        # Skip text entries — they duplicate the actual answer below.
         tool_entries = [e for e in activity_log if e.get("kind") != "text"]
-
-        # If the run produced no tool calls (model just emitted text), the
-        # blockquote would be empty noise. Drop it entirely so the answer
-        # rides alone.
         if not tool_entries:
-            return ""
+            return []
 
         body_lines: List[str] = []
         for entry in tool_entries:
@@ -699,14 +692,43 @@ class MessageOrchestrator:
             else:
                 body_lines.append(f"{icon} {_esc(entry['name'])}")
 
-        body = "\n".join(body_lines)
-        if len(body) > 3500:
-            body = body[:3500] + "\n…(truncated)"
+        # Chunk by character budget so nothing gets truncated. Each chunk is
+        # its own expandable blockquote — when a run has 60 tool calls we'd
+        # rather emit two collapsed bubbles than drop the tail with
+        # "…(truncated)". Telegram caps a message at 4096; budget at 3800
+        # to leave headroom for the summary line and HTML tags.
+        chunk_budget = 3800
+        summary_total = f"⏱ {elapsed:.0f}s · {len(tool_entries)} steps"
 
-        # First line of the blockquote is the only thing visible until the
-        # operator taps "Show more", so make it the run summary.
-        summary = f"⏱ {elapsed:.0f}s · {len(tool_entries)} steps"
-        return f"<blockquote expandable>{summary}\n{body}</blockquote>"
+        chunks_text: List[str] = []
+        cur: List[str] = []
+        cur_len = 0
+        for line in body_lines:
+            line_len = len(line) + 1  # +1 for the join newline
+            if cur and cur_len + line_len > chunk_budget:
+                chunks_text.append("\n".join(cur))
+                cur = []
+                cur_len = 0
+            cur.append(line)
+            cur_len += line_len
+        if cur:
+            chunks_text.append("\n".join(cur))
+
+        # Wrap each chunk; first chunk carries the run summary, follow-up
+        # chunks get an indexed header so the operator knows the order.
+        wrapped: List[str] = []
+        n = len(chunks_text)
+        for i, chunk_body in enumerate(chunks_text):
+            if n == 1:
+                header = summary_total
+            elif i == 0:
+                header = f"{summary_total} · part 1/{n}"
+            else:
+                header = f"part {i + 1}/{n}"
+            wrapped.append(
+                f"<blockquote expandable>{header}\n{chunk_body}</blockquote>"
+            )
+        return wrapped
 
     @staticmethod
     def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
@@ -1236,48 +1258,53 @@ class MessageOrchestrator:
                 except Exception:
                     logger.debug("Draft flush failed in finally block", user_id=user_id)
 
-        # Build the activity log as an HTML expandable blockquote so it can
-        # be embedded inside the final reply (no extra message bubble).
-        activity_html = ""
+        # Build the activity log as a list of HTML expandable blockquote
+        # chunks. Each chunk holds up to ~3800 chars of tool lines so a
+        # large run gets multiple collapsed bubbles instead of a truncated
+        # one.
+        activity_chunks: List[str] = []
         if tool_log:
             elapsed = time.time() - start_time
-            activity_html = self._format_progress_spoiler(tool_log, elapsed)
+            activity_chunks = self._format_progress_spoiler(tool_log, elapsed)
 
-        # Drop the live "Working..." bubble; the activity log will ride
-        # along with the final answer message instead of taking its own.
+        # Drop the live "Working..." bubble; the activity log rides along
+        # with the final reply as its own collapsed blockquote(s).
         try:
             await progress_msg.delete()
         except Exception:
             logger.debug("Failed to delete progress message, ignoring")
 
-        # Prepend the expandable activity log to the first formatted text
-        # message so the operator gets one combined bubble: collapsed log
-        # on top, answer below. Telegram caps a single message at 4096
-        # chars; if the combined size would overflow, we attach the log to
-        # the response only when there's room, otherwise drop it (the run
-        # produced a long enough answer that the log isn't the priority).
-        if activity_html and formatted_messages:
+        # Inject activity-log chunks as their own messages before the
+        # answer. When there's exactly one chunk and it fits with the
+        # first answer message under 4096 chars, merge them into a single
+        # bubble so a small run doesn't cost two messages.
+        if activity_chunks and formatted_messages:
             from .utils.formatting import FormattedMessage as _FM
 
             first = formatted_messages[0]
-            if first.parse_mode == "HTML" and first.text:
-                combined = f"{activity_html}\n\n{first.text}"
-                if len(combined) <= 4096:
-                    # Single bubble: log + answer together.
-                    formatted_messages[0] = _FM(combined, parse_mode="HTML")
-                else:
-                    # Combined would overflow. Send the activity log as its
-                    # own bubble before the answer — two messages, but only
-                    # when the answer is too large to ride along.
-                    formatted_messages.insert(
-                        0, _FM(activity_html, parse_mode="HTML")
-                    )
+            if (
+                len(activity_chunks) == 1
+                and first.parse_mode == "HTML"
+                and first.text
+                and len(activity_chunks[0]) + len(first.text) + 2 <= 4096
+            ):
+                combined = f"{activity_chunks[0]}\n\n{first.text}"
+                formatted_messages[0] = _FM(combined, parse_mode="HTML")
+            else:
+                # Multiple chunks (or merge wouldn't fit): send each chunk
+                # as its own message, in order, before the answer.
+                for i, chunk in enumerate(activity_chunks):
+                    formatted_messages.insert(i, _FM(chunk, parse_mode="HTML"))
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
 
         # Try to combine text + images in one message when possible
         caption_sent = False
+        # Final-reply messages are sent as plain new bubbles (no
+        # reply-to-original). The blockquote already conveys "this is the
+        # bot's response to your prompt"; reply-quoting on top duplicated
+        # the user's text inside every reply and added visual noise.
         if images and len(formatted_messages) == 1:
             msg = formatted_messages[0]
             if msg.text and len(msg.text) <= 1024:
@@ -1285,14 +1312,12 @@ class MessageOrchestrator:
                     caption_sent = await self._send_images(
                         update,
                         images,
-                        reply_to_message_id=update.message.message_id,
                         caption=msg.text,
                         caption_parse_mode=msg.parse_mode,
                     )
                 except Exception as img_err:
                     logger.warning("Image+caption send failed", error=str(img_err))
 
-        # Send text messages (skip if caption was already embedded in photos)
         if not caption_sent:
             for i, message in enumerate(formatted_messages):
                 if not message.text or not message.text.strip():
@@ -1301,10 +1326,7 @@ class MessageOrchestrator:
                     await update.message.reply_text(
                         message.text,
                         parse_mode=message.parse_mode,
-                        reply_markup=None,  # No keyboards in agentic mode
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
+                        reply_markup=None,
                     )
                     if i < len(formatted_messages) - 1:
                         await asyncio.sleep(0.5)
@@ -1318,28 +1340,17 @@ class MessageOrchestrator:
                         await update.message.reply_text(
                             message.text,
                             reply_markup=None,
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
                         )
                     except Exception as plain_err:
                         await update.message.reply_text(
                             f"Failed to deliver response "
                             f"(Telegram error: {str(plain_err)[:150]}). "
-                            f"Please try again.",
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
+                            f"Please try again."
                         )
 
-            # Send images separately if caption wasn't used
             if images:
                 try:
-                    await self._send_images(
-                        update,
-                        images,
-                        reply_to_message_id=update.message.message_id,
-                    )
+                    await self._send_images(update, images)
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
 
