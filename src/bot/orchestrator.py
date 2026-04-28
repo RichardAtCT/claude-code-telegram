@@ -714,24 +714,28 @@ class MessageOrchestrator:
         if cur:
             chunks_text.append("\n".join(cur))
 
-        # Telegram's <blockquote expandable> only collapses when the
-        # block has enough content to "exceed" the preview threshold;
-        # the threshold is fuzzier than the docs suggest (varies by
-        # client, often closer to ~10 lines visible than 3). To force
-        # the fold deterministically:
-        #   • The summary is the FIRST line *inside* the blockquote.
-        #     Telegram's collapsed-preview always shows the first line,
-        #     so the summary is the part the operator sees by default.
-        #   • Tool lines follow on subsequent lines.
-        #   • The body is padded to ≥30 lines with U+00A0 (non-breaking
-        #     space) lines — these render as visible-but-empty lines,
-        #     reliably pushing every chunk past the fold threshold on
-        #     all clients.
-        # No text outside the blockquote — the summary lives on the
-        # collapsed preview line.
+        # Layout per chunk:
+        #
+        #   <summary line, plain text>
+        #   <blockquote expandable>
+        #     <tool lines>
+        #     <U+00A0 pad lines>
+        #   </blockquote>
+        #
+        # Summary stays OUTSIDE the blockquote so it's always visible
+        # regardless of fold state. Tool lines go INSIDE only. The
+        # blockquote is padded to >=30 lines with U+00A0 visible-empty
+        # lines so Telegram's height-based collapse threshold reliably
+        # engages on every client. Closed view is exactly:
+        #
+        #   summary
+        #   | Show more
+        #
+        # No tool peek-through.
         wrapped: List[str] = []
         n = len(chunks_text)
         nbsp_line = " "
+        pad_target = 30
         for i, chunk_body in enumerate(chunks_text):
             if n == 1:
                 summary = summary_total
@@ -740,13 +744,16 @@ class MessageOrchestrator:
             else:
                 summary = f"{i + 1}/{n}"
 
-            inner = f"{summary}\n{chunk_body}" if chunk_body else summary
-            line_count = inner.count("\n") + 1
-            if line_count < 30:
-                pad_needed = 30 - line_count
-                inner = inner + ("\n" + nbsp_line) * pad_needed
+            body = chunk_body or ""
+            line_count = (body.count("\n") + 1) if body else 0
+            if line_count < pad_target:
+                pad_needed = pad_target - line_count
+                pad_block = "\n".join([nbsp_line] * pad_needed)
+                body = (body + "\n" + pad_block) if body else pad_block
 
-            wrapped.append(f"<blockquote expandable>{inner}</blockquote>")
+            wrapped.append(
+                f"{summary}\n<blockquote expandable>{body}</blockquote>"
+            )
         return wrapped
 
     @staticmethod
