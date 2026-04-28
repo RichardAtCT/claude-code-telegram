@@ -714,19 +714,23 @@ class MessageOrchestrator:
         if cur:
             chunks_text.append("\n".join(cur))
 
-        # Wrap each chunk; first chunk carries the run summary, follow-up
-        # chunks get an indexed header so the operator knows the order.
+        # Render summary as plain text *outside* the blockquote so it's
+        # always visible, and place tool lines *inside* the expandable
+        # blockquote so they stay folded by default. Telegram doesn't
+        # expose a "show only first line collapsed" knob for blockquote
+        # expandable, so this is the cleanest way to keep the closed
+        # state minimal.
         wrapped: List[str] = []
         n = len(chunks_text)
         for i, chunk_body in enumerate(chunks_text):
             if n == 1:
-                header = summary_total
+                summary = summary_total
             elif i == 0:
-                header = f"{summary_total} · part 1/{n}"
+                summary = f"{summary_total} · part 1/{n}"
             else:
-                header = f"part {i + 1}/{n}"
+                summary = f"part {i + 1}/{n}"
             wrapped.append(
-                f"<blockquote expandable>{header}\n{chunk_body}</blockquote>"
+                f"{summary}\n<blockquote expandable>{chunk_body}</blockquote>"
             )
         return wrapped
 
