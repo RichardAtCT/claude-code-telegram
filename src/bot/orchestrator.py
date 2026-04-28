@@ -744,7 +744,7 @@ class MessageOrchestrator:
             if body_lines:
                 full_body = head + "\n" + "\n".join(body_lines)
 
-            wrapped.append(f"<blockquote expandable>{full_body}</blockquote>")
+            wrapped.append(f"<blockquote expandable>{full_body}</blockquote>\n")
         return wrapped
 
     @staticmethod
