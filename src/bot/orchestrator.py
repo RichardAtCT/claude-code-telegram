@@ -714,55 +714,34 @@ class MessageOrchestrator:
         if cur:
             chunks_text.append("\n".join(cur))
 
-        # Layout per chunk: 3 useful lines visible in the collapsed
-        # preview, real tool lines start below the preview floor.
+        # Layout per chunk:
         #
         #   <blockquote expandable>
-        #     Tool log [· i/n]                  line 1  header
-        #     ⏱ Ns · N steps                    line 2  stats
-        #     🔧 Bash×5 · Read×2 · Edit×1       line 3  composition
-        #     <tool 1>                          line 4  hidden until expanded
+        #     Tool log                          line 1
+        #     ⏱ Ns · N steps                    line 2
+        #     [i/n  if multi-chunk, else nbsp]  line 3
+        #     <tool 1>                          line 4  hidden
         #     <tool 2..N>
         #     <nbsp pad>                        to >=30 lines so fold engages
         #   </blockquote>
         #
-        # Telegram's collapsed preview always shows ~3 lines; we fill
-        # all 3 with information instead of padding them empty.
-        from collections import Counter
-
-        # Build the tool composition string from tool_entries (top names
-        # by count, capped so line 3 stays under ~80 chars).
-        comp_counter: Counter = Counter(
-            e["name"] for e in tool_entries if e.get("kind") != "text"
-        )
-        comp_parts: List[str] = []
-        comp_budget = 80
-        comp_len = 0
-        ordered = comp_counter.most_common()
-        for idx, (name, count) in enumerate(ordered):
-            piece = f"{name}×{count}"
-            extra = (3 if comp_parts else 0) + len(piece)  # " · " separator
-            if comp_parts and comp_len + extra > comp_budget:
-                remaining = len(ordered) - idx
-                if remaining:
-                    comp_parts.append(f"+{remaining}")
-                break
-            comp_parts.append(piece)
-            comp_len += extra
-        composition_line = "🔧 " + " · ".join(comp_parts) if comp_parts else "🔧"
-
+        # Telegram's collapsed preview always shows ~3 lines. We use
+        # them for header + stats + (optional) pagination. Real tool
+        # lines start on line 4 and stay hidden until the operator
+        # taps Show more.
         wrapped: List[str] = []
         n = len(chunks_text)
         nbsp_line = " "  # U+00A0
         pad_target = 30
         for i, chunk_body in enumerate(chunks_text):
-            if n == 1:
-                header = "Tool log"
-            else:
-                header = f"Tool log · {i + 1}/{n}"
+            header = "Tool log"
             stats_line = summary_total
+            if n > 1:
+                third_line = f"{i + 1}/{n}"
+            else:
+                third_line = nbsp_line  # keep 3-line preview shape
 
-            preview_lines = [header, stats_line, composition_line]
+            preview_lines = [header, stats_line, third_line]
             head = "\n".join(preview_lines)
             body_lines = chunk_body.split("\n") if chunk_body else []
             full_body = head
