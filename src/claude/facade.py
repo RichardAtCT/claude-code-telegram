@@ -178,10 +178,15 @@ class ClaudeIntegration:
         user_id: int,
         working_directory: Path,
     ) -> Optional["ClaudeSession"]:  # noqa: F821
-        """Find the most recent resumable session for a user in a directory.
+        """Find the most recent resumable session for a user.
 
-        Returns the session if one exists that is non-expired and has a real
-        (non-temporary) session ID from Claude. Returns None otherwise.
+        aphrollo fork patch: bots are role-based (rusty=devops, jeff=backend,
+        ahri=frontend), not project-based. The operator chats with one persona
+        across many cwds — when rusty `cd`-s into a repo to do work, we MUST
+        keep the same conversation thread, not split per directory. So we
+        ignore working_directory and resume the most recent session for the
+        user across any cwd. The /repo command can still pin a specific
+        project session if the operator wants that explicitly.
         """
 
         sessions = await self.session_manager._get_user_sessions(user_id)
@@ -189,8 +194,7 @@ class ClaudeIntegration:
         matching_sessions = [
             s
             for s in sessions
-            if s.project_path == working_directory
-            and bool(s.session_id)
+            if bool(s.session_id)
             and not s.is_expired(self.config.session_timeout_hours)
         ]
 

@@ -65,10 +65,15 @@ def markdown_to_telegram_html(text: str) -> str:
     )
 
     # --- 2. Extract inline code ---
+    # Telegram's <code> renders inline backticks as a code chip. In several
+    # mobile clients this looks broken (extra whitespace, weird font fall-
+    # back) so we render inline code as plain single-quoted text instead.
+    # Multi-line code blocks (handled in step 1 above) still go through
+    # <pre><code> — those render fine across clients.
     def _replace_inline_code(m: re.Match) -> str:  # type: ignore[type-arg]
         code = m.group(1)
         escaped_code = escape_html(code)
-        return _make_placeholder(f"<code>{escaped_code}</code>")
+        return _make_placeholder(f"'{escaped_code}'")
 
     text = re.sub(r"`([^`\n]+)`", _replace_inline_code, text)
 

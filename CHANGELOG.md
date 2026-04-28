@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Webhook server binds `127.0.0.1` by default** (was `0.0.0.0`). New `API_SERVER_HOST` env var to opt back into public binds. Reverse-proxy deployments (Caddy, nginx) keep working — the proxy still reaches the loopback socket.
+- **Generic `/webhooks/{provider}` auth is now optional on loopback binds.** When `API_SERVER_HOST=127.0.0.1` (the default) and `WEBHOOK_API_SECRET` is unset, requests are accepted without `Authorization: Bearer` — the kernel-enforced loopback boundary is the trust boundary. Public binds (`API_SERVER_HOST != 127.0.0.1`) preserve the original fail-closed behavior. GitHub webhooks are unaffected — HMAC signature verification still runs unconditionally.
+
 ## [1.6.0] - 2026-03-30
 
 ### Added

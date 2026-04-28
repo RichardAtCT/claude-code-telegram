@@ -145,13 +145,27 @@ class DatabaseManager:
         self._pool_lock = asyncio.Lock()
 
     def _parse_database_url(self, database_url: str) -> Path:
-        """Parse database URL to path."""
-        if database_url.startswith("sqlite:///"):
-            return Path(database_url[10:])
-        elif database_url.startswith("sqlite://"):
-            return Path(database_url[9:])
-        else:
-            return Path(database_url)
+        """Parse database URL to path.
+
+        Handles SQLAlchemy-style URLs for both ``sqlite://`` and the
+        ``sqlite+aiosqlite://`` driver variant. Per SQLAlchemy convention,
+        three slashes (``sqlite:///rel.db``) is a relative path and four
+        slashes (``sqlite:////abs/path.db``) is an absolute path. The old
+        parser only matched the bare ``sqlite://`` forms, so a
+        ``sqlite+aiosqlite:////home/...`` URL fell into the ``else`` branch
+        and got opened as a literal-named directory under cwd.
+        """
+        for prefix in ("sqlite+aiosqlite", "sqlite"):
+            quad = f"{prefix}:////"
+            triple = f"{prefix}:///"
+            double = f"{prefix}://"
+            if database_url.startswith(quad):
+                return Path(database_url[len(quad) - 1 :])
+            if database_url.startswith(triple):
+                return Path(database_url[len(triple) :])
+            if database_url.startswith(double):
+                return Path(database_url[len(double) :])
+        return Path(database_url)
 
     async def initialize(self):
         """Initialize database and run migrations."""

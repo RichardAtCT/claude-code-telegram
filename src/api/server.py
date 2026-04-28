@@ -67,19 +67,38 @@ def create_api_app(
             event_type_name = x_github_event or "unknown"
             delivery_id = x_github_delivery or str(uuid.uuid4())
         else:
-            # Generic provider — require auth (fail-closed)
+            # Generic provider auth policy:
+            #
+            #   public bind (host != 127.0.0.1) -> WEBHOOK_API_SECRET MUST be
+            #     set, every request MUST carry a matching Bearer. This is
+            #     the original fail-closed behavior; misconfiguration must
+            #     be loud, not silent.
+            #
+            #   loopback bind (host == 127.0.0.1) -> WEBHOOK_API_SECRET is
+            #     optional. The kernel guarantees only local processes can
+            #     reach the socket, so the trust boundary is enforced at
+            #     the network layer. Operators who want defense-in-depth
+            #     can still set the secret; when set, the Bearer check
+            #     runs as before. When unset, the request is accepted.
+            #
+            # See tests/unit/test_api/test_server.py for the three cases.
             secret = settings.webhook_api_secret
+            host = getattr(settings, "api_server_host", "127.0.0.1")
+            loopback_only = host == "127.0.0.1"
             if not secret:
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        "Webhook API secret not configured. "
-                        "Set WEBHOOK_API_SECRET to accept "
-                        "webhooks from this provider."
-                    ),
-                )
-            if not verify_shared_secret(authorization, secret):
-                raise HTTPException(status_code=401, detail="Invalid authorization")
+                if not loopback_only:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=(
+                            "Webhook API secret not configured. "
+                            "Set WEBHOOK_API_SECRET to accept webhooks "
+                            "from this provider on a non-loopback bind."
+                        ),
+                    )
+                # Loopback + no secret: accept, kernel is the trust boundary.
+            else:
+                if not verify_shared_secret(authorization, secret):
+                    raise HTTPException(status_code=401, detail="Invalid authorization")
             event_type_name = request.headers.get("X-Event-Type", "unknown")
             delivery_id = request.headers.get("X-Delivery-ID", str(uuid.uuid4()))
 
@@ -184,7 +203,7 @@ async def run_api_server(
 
     config = uvicorn.Config(
         app=app,
-        host="0.0.0.0",
+        host=getattr(settings, "api_server_host", "127.0.0.1"),
         port=settings.api_server_port,
         log_level="info" if not settings.debug else "debug",
     )

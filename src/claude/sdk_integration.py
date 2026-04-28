@@ -309,18 +309,25 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
-            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
-            # tools so the SDK does not restrict tool usage (e.g. MCP tools).
+            # When DISABLE_TOOL_VALIDATION=true, pass empty lists for
+            # allowed/disallowed tools so the SDK does not restrict tool usage
+            # (e.g. MCP tools). claude-agent-sdk 0.1.69's
+            # _apply_skills_defaults calls list(allowed_tools) without None
+            # guard, so None crashes; [] is the safe equivalent.
             if self.config.disable_tool_validation:
-                sdk_allowed_tools = None
-                sdk_disallowed_tools = None
+                sdk_allowed_tools = []
+                sdk_disallowed_tools = []
             else:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
-                max_turns=self.config.claude_max_turns,
+                max_turns=(
+                    self.config.claude_max_turns
+                    if self.config.claude_max_turns and self.config.claude_max_turns > 0
+                    else None
+                ),
                 model=self.config.claude_model or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
@@ -334,8 +341,13 @@ class ClaudeSDKManager:
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
-                setting_sources=["project"],
+                setting_sources=["user", "project", "local"],
                 stderr=_stderr_callback,
+                permission_mode=(
+                    "bypassPermissions"
+                    if self.config.disable_tool_validation
+                    else "default"
+                ),
             )
 
             # Pass MCP server configuration if enabled
@@ -565,11 +577,38 @@ class ClaudeSDKManager:
                     previous_session_id=session_id,
                 )
 
-            # Use ResultMessage.result if available, fall back to message extraction
-            if result_content is not None:
+            # Prefer the LAST AssistantMessage's concatenated text blocks as
+            # the user-facing answer. Earlier code trusted ResultMessage.result
+            # exclusively, but in long runs the SDK occasionally surfaced an
+            # intermediate text snippet there (e.g. "I have the full picture.
+            # Here's what's wrong:" emitted before the model went on to do
+            # tool work for many more turns) instead of the model's actual
+            # closing summary. The last assistant turn after end_turn is the
+            # closing text by construction; fall back to ResultMessage.result
+            # only if no assistant text exists at all.
+            last_assistant_text = ""
+            for msg in reversed(messages):
+                if isinstance(msg, AssistantMessage):
+                    msg_content = getattr(msg, "content", [])
+                    if msg_content and isinstance(msg_content, list):
+                        parts = [
+                            getattr(b, "text", "")
+                            for b in msg_content
+                            if hasattr(b, "text") and getattr(b, "text", "")
+                        ]
+                        if parts:
+                            last_assistant_text = "\n".join(parts).strip()
+                            break
+                    elif isinstance(msg_content, str) and msg_content.strip():
+                        last_assistant_text = msg_content.strip()
+                        break
+
+            if last_assistant_text:
+                content = last_assistant_text
+            elif result_content is not None:
                 content = str(result_content).strip()
             else:
-                content_parts = []
+                content_parts: List[str] = []
                 for msg in messages:
                     if isinstance(msg, AssistantMessage):
                         msg_content = getattr(msg, "content", [])
@@ -676,10 +715,12 @@ class ClaudeSDKManager:
                     f"Claude SDK task error: {exceptions[0] if exceptions else e}"
                 )
 
+            import traceback as _tb
             logger.error(
                 "Unexpected error in Claude SDK",
                 error=str(e),
                 error_type=type(e).__name__,
+                traceback=_tb.format_exc(),
             )
             raise ClaudeProcessError(f"Unexpected error: {str(e)}")
 

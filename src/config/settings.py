@@ -298,6 +298,15 @@ class Settings(BaseSettings):
     # Agentic platform settings
     enable_api_server: bool = Field(False, description="Enable FastAPI webhook server")
     api_server_port: int = Field(8080, description="Webhook API server port")
+    api_server_host: str = Field(
+        "127.0.0.1",
+        description=(
+            "Bind address for the webhook API server. Default 127.0.0.1 "
+            "(loopback only). Set to 0.0.0.0 to expose externally; in that "
+            "case WEBHOOK_API_SECRET MUST also be set or the generic "
+            "webhook endpoint will refuse requests."
+        ),
+    )
     enable_scheduler: bool = Field(False, description="Enable job scheduler")
     github_webhook_secret: Optional[str] = Field(
         None, description="GitHub webhook HMAC secret"

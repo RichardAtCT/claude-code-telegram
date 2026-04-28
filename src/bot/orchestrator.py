@@ -635,57 +635,260 @@ class MessageOrchestrator:
         elapsed = time.time() - start_time
         lines: List[str] = [f"Working... ({elapsed:.0f}s)\n"]
 
-        for entry in activity_log[-15:]:  # Show last 15 entries max
+        # Show last 25 entries — bigger window than before so the operator
+        # can actually follow a multi-step run. Telegram's 4096-char message
+        # ceiling is the real limit; _summarize_tool_input caps each line.
+        window = 25
+        for entry in activity_log[-window:]:
             kind = entry.get("kind", "tool")
             if kind == "text":
-                # Claude's intermediate reasoning/commentary
                 snippet = entry.get("detail", "")
                 if verbose_level >= 2:
                     lines.append(f"\U0001f4ac {snippet}")
                 else:
-                    # Level 1: one short line
-                    lines.append(f"\U0001f4ac {snippet[:80]}")
+                    lines.append(f"\U0001f4ac {snippet[:120]}")
             else:
-                # Tool call
                 icon = _tool_icon(entry["name"])
                 if verbose_level >= 2 and entry.get("detail"):
-                    lines.append(f"{icon} {entry['name']}: {entry['detail']}")
+                    lines.append(f"{icon} {entry['name']} · {entry['detail']}")
                 else:
                     lines.append(f"{icon} {entry['name']}")
 
-        if len(activity_log) > 15:
-            lines.insert(1, f"... ({len(activity_log) - 15} earlier entries)\n")
+        if len(activity_log) > window:
+            lines.insert(1, f"... ({len(activity_log) - window} earlier entries)\n")
 
         return "\n".join(lines)
 
     @staticmethod
+    def _format_progress_spoiler(
+        activity_log: List[Dict[str, Any]],
+        elapsed: float,
+    ) -> List[str]:
+        """Render the activity log as a collapsed expandable blockquote.
+
+        Telegram's <blockquote expandable> renders as a ~1-line preview with
+        a "Show more" link — exactly the see-more dropdown shape we want.
+        Final reply lands below as its own bubble; the audit trail is one
+        tap away without bloating the chat.
+        """
+        from html import escape as _esc
+
+        if not activity_log:
+            return []
+
+        # Skip text entries — they duplicate the actual answer below.
+        tool_entries = [e for e in activity_log if e.get("kind") != "text"]
+        if not tool_entries:
+            return []
+
+        body_lines: List[str] = []
+        for entry in tool_entries:
+            icon = _tool_icon(entry["name"])
+            detail = entry.get("detail") or ""
+            if detail:
+                body_lines.append(
+                    f"{icon} {_esc(entry['name'])} · {_esc(detail)}"
+                )
+            else:
+                body_lines.append(f"{icon} {_esc(entry['name'])}")
+
+        # Chunk by character budget so nothing gets truncated. Each chunk is
+        # its own expandable blockquote — when a run has 60 tool calls we'd
+        # rather emit two collapsed bubbles than drop the tail with
+        # "…(truncated)". Telegram caps a message at 4096; budget at 3800
+        # to leave headroom for the summary line and HTML tags.
+        chunk_budget = 3800
+        summary_total = f"⏱ {elapsed:.0f}s · {len(tool_entries)} steps"
+
+        chunks_text: List[str] = []
+        cur: List[str] = []
+        cur_len = 0
+        for line in body_lines:
+            line_len = len(line) + 1  # +1 for the join newline
+            if cur and cur_len + line_len > chunk_budget:
+                chunks_text.append("\n".join(cur))
+                cur = []
+                cur_len = 0
+            cur.append(line)
+            cur_len += line_len
+        if cur:
+            chunks_text.append("\n".join(cur))
+
+        # Layout per chunk:
+        #
+        #   <blockquote expandable>
+        #     Tools log                          line 1
+        #     ⏱ Ns · N steps                    line 2
+        #     [i/n  if multi-chunk, else nbsp]  line 3
+        #     <tool 1>                          line 4  hidden
+        #     <tool 2..N>
+        #   </blockquote>
+        #
+        # Telegram's collapsed preview always shows ~3 lines. We use
+        # them for header + stats + (optional) pagination. Real tool
+        # lines start on line 4 and stay hidden until the operator
+        # taps Show more.
+        wrapped: List[str] = []
+        n = len(chunks_text)
+        nbsp_line = " "  # U+00A0
+        for i, chunk_body in enumerate(chunks_text):
+            header = "Tools log"
+            stats_line = summary_total
+            if n > 1:
+                third_line = f"{i + 1}/{n}"
+            else:
+                third_line = nbsp_line  # keep 3-line preview shape
+
+            preview_lines = [header, stats_line, third_line]
+            head = "\n".join(preview_lines)
+            body_lines = chunk_body.split("\n") if chunk_body else []
+            full_body = head
+            if body_lines:
+                full_body = head + "\n" + "\n".join(body_lines)
+
+            wrapped.append(
+                f"<blockquote expandable>{full_body}</blockquote>"
+            )
+        return wrapped
+
+    @staticmethod
     def _summarize_tool_input(tool_name: str, tool_input: Dict[str, Any]) -> str:
-        """Return a short summary of tool input for verbose level 2."""
+        """Return an informative summary of tool input for verbose level 2.
+
+        Designed to give the operator real visibility into what the bot is
+        doing — actual bash commands, file paths with parent dir, edit
+        snippets, web URLs — rather than just the tool name. Caps individual
+        fields and the overall string so progress messages still fit in
+        Telegram's 4096-char limit when 15 entries are rendered.
+        """
         if not tool_input:
             return ""
-        if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
-            path = tool_input.get("file_path") or tool_input.get("path", "")
-            if path:
-                # Show just the filename, not the full path
-                return path.rsplit("/", 1)[-1]
-        if tool_name in ("Glob", "Grep"):
-            pattern = tool_input.get("pattern", "")
-            if pattern:
-                return pattern[:60]
+
+        def _short_path(p: str) -> str:
+            # Last two path segments: keeps useful context without leaking
+            # /home/debian/<repo>/.../ noise.
+            parts = p.rstrip("/").split("/")
+            return "/".join(parts[-2:]) if len(parts) > 1 else p
+
+        def _clip(s: str, n: int) -> str:
+            s = s.replace("\n", " ").strip()
+            return s if len(s) <= n else s[: n - 1] + "…"
+
         if tool_name == "Bash":
             cmd = tool_input.get("command", "")
             if cmd:
-                return _redact_secrets(cmd[:100])[:80]
-        if tool_name in ("WebFetch", "WebSearch"):
-            return (tool_input.get("url", "") or tool_input.get("query", ""))[:60]
-        if tool_name == "Task":
+                return _clip(_redact_secrets(cmd), 300)
+
+        if tool_name == "Read":
+            path = tool_input.get("file_path") or tool_input.get("path", "")
+            offset = tool_input.get("offset")
+            limit = tool_input.get("limit")
+            if path:
+                suffix = ""
+                if offset is not None and limit is not None:
+                    suffix = f" L{offset}-{int(offset) + int(limit)}"
+                elif limit is not None:
+                    suffix = f" first {limit}L"
+                return _clip(_short_path(path) + suffix, 200)
+
+        if tool_name == "Write":
+            path = tool_input.get("file_path", "")
+            content = tool_input.get("content", "")
+            if path:
+                size = f" ({len(content)}B)" if content else ""
+                return _clip(_short_path(path) + size, 200)
+
+        if tool_name in ("Edit", "MultiEdit"):
+            path = tool_input.get("file_path", "")
+            old = tool_input.get("old_string", "")
+            new = tool_input.get("new_string", "")
+            if tool_name == "MultiEdit":
+                edits = tool_input.get("edits") or []
+                if edits and isinstance(edits, list):
+                    old = edits[0].get("old_string", old)
+                    new = edits[0].get("new_string", new)
+                    multi = f" (+{len(edits) - 1} more)" if len(edits) > 1 else ""
+                else:
+                    multi = ""
+            else:
+                multi = ""
+            head = _short_path(path) if path else ""
+            if old or new:
+                snippet = f" · {_clip(old, 60)} → {_clip(new, 60)}"
+                return _clip(head + snippet + multi, 280)
+            return _clip(head + multi, 200)
+
+        if tool_name in ("Glob", "Grep"):
+            pattern = tool_input.get("pattern", "")
+            path = tool_input.get("path", "")
+            include = tool_input.get("glob") or tool_input.get("include", "")
+            parts = [pattern]
+            if include:
+                parts.append(f"in {include}")
+            if path:
+                parts.append(f"@ {_short_path(path)}")
+            return _clip(" ".join(p for p in parts if p), 200)
+
+        if tool_name in ("LS", "ls"):
+            path = tool_input.get("path", "")
+            if path:
+                return _clip(_short_path(path), 200)
+
+        if tool_name == "WebFetch":
+            url = tool_input.get("url", "")
+            prompt = tool_input.get("prompt", "")
+            if url and prompt:
+                return _clip(f"{url} · {prompt}", 250)
+            return _clip(url or prompt, 250)
+
+        if tool_name == "WebSearch":
+            query = tool_input.get("query", "")
+            return _clip(query, 250)
+
+        if tool_name in ("Task", "Agent"):
+            agent = tool_input.get("subagent_type", "")
             desc = tool_input.get("description", "")
-            if desc:
-                return desc[:60]
-        # Generic: show first key's value
+            prompt = tool_input.get("prompt", "")
+            head = f"[{agent}] " if agent else ""
+            body = desc or prompt
+            return _clip(head + body, 250)
+
+        if tool_name == "TodoWrite":
+            todos = tool_input.get("todos") or []
+            if isinstance(todos, list) and todos:
+                in_prog = next(
+                    (t for t in todos if t.get("status") == "in_progress"), None
+                )
+                if in_prog:
+                    label = in_prog.get("activeForm") or in_prog.get("content", "")
+                    return _clip(f"{len(todos)} todos · {label}", 250)
+                return _clip(f"{len(todos)} todos", 80)
+
+        if tool_name == "Skill":
+            skill = tool_input.get("skill", "")
+            args = tool_input.get("args", "")
+            head = skill
+            if args:
+                head += f" · {args}"
+            return _clip(head, 200)
+
+        if tool_name in ("NotebookRead", "NotebookEdit"):
+            path = tool_input.get("notebook_path") or tool_input.get("path", "")
+            if path:
+                return _clip(_short_path(path), 200)
+
+        # MCP-namespaced tools: mcp__<server>__<tool> — show first stringy arg
+        if tool_name.startswith("mcp__"):
+            for v in tool_input.values():
+                if isinstance(v, str) and v:
+                    return _clip(v, 200)
+
+        # Generic: show first stringy / non-trivial value
         for v in tool_input.values():
             if isinstance(v, str) and v:
-                return v[:60]
+                return _clip(v, 200)
+            if isinstance(v, (list, dict)) and v:
+                return _clip(str(v), 200)
         return ""
 
     @staticmethod
@@ -785,7 +988,9 @@ class MessageOrchestrator:
                         )
                         await draft_streamer.append_tool(line)
 
-            # Capture assistant text (reasoning / commentary)
+            # Capture assistant text (reasoning / commentary). Bumped from
+            # 120 to 280 chars so detailed mode actually shows a sentence,
+            # not an aborted fragment.
             if update_obj.type == "assistant" and update_obj.content:
                 text = update_obj.content.strip()
                 if text:
@@ -793,11 +998,11 @@ class MessageOrchestrator:
                     if first_line:
                         if verbose_level >= 1:
                             tool_log.append(
-                                {"kind": "text", "detail": first_line[:120]}
+                                {"kind": "text", "detail": first_line[:280]}
                             )
                         if draft_streamer:
                             await draft_streamer.append_tool(
-                                f"\U0001f4ac {first_line[:120]}"
+                                f"\U0001f4ac {first_line[:280]}"
                             )
 
             # Stream text to user via draft (prefer token deltas;
@@ -1074,16 +1279,61 @@ class MessageOrchestrator:
                 except Exception:
                     logger.debug("Draft flush failed in finally block", user_id=user_id)
 
+        # Build the activity log as a list of HTML expandable blockquote
+        # chunks. Each chunk holds up to ~3800 chars of tool lines so a
+        # large run gets multiple collapsed bubbles instead of a truncated
+        # one.
+        activity_chunks: List[str] = []
+        if tool_log:
+            elapsed = time.time() - start_time
+            activity_chunks = self._format_progress_spoiler(tool_log, elapsed)
+
+        # Drop the live "Working..." bubble; the activity log rides along
+        # with the final reply as its own collapsed blockquote(s).
         try:
             await progress_msg.delete()
         except Exception:
             logger.debug("Failed to delete progress message, ignoring")
+
+        # Inject activity-log chunks as their own messages before the
+        # answer. When there's exactly one chunk and it fits with the
+        # first answer message under 4096 chars, merge them into a single
+        # bubble so a small run doesn't cost two messages.
+        if activity_chunks and formatted_messages:
+            from .utils.formatting import FormattedMessage as _FM
+
+            first = formatted_messages[0]
+            if (
+                len(activity_chunks) == 1
+                and first.parse_mode == "HTML"
+                and first.text
+                and len(activity_chunks[0]) + len(first.text) + 2 <= 4096
+            ):
+                combined = f"{activity_chunks[0]}\n\n{first.text}"
+                formatted_messages[0] = _FM(combined, parse_mode="HTML")
+            else:
+                # Multiple chunks (or merge wouldn't fit): send each chunk
+                # as its own message, in order, before the answer.
+                for i, chunk in enumerate(activity_chunks):
+                    formatted_messages.insert(i, _FM(chunk, parse_mode="HTML"))
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
 
         # Try to combine text + images in one message when possible
         caption_sent = False
+        logger.info(
+            "Sending final reply",
+            user_id=user_id,
+            messages=len(formatted_messages),
+            sizes=[len(m.text or "") for m in formatted_messages],
+            activity_chunks=len(activity_chunks),
+        )
+
+        # Final-reply messages are sent as plain new bubbles (no
+        # reply-to-original). The blockquote already conveys "this is the
+        # bot's response to your prompt"; reply-quoting on top duplicated
+        # the user's text inside every reply and added visual noise.
         if images and len(formatted_messages) == 1:
             msg = formatted_messages[0]
             if msg.text and len(msg.text) <= 1024:
@@ -1091,14 +1341,12 @@ class MessageOrchestrator:
                     caption_sent = await self._send_images(
                         update,
                         images,
-                        reply_to_message_id=update.message.message_id,
                         caption=msg.text,
                         caption_parse_mode=msg.parse_mode,
                     )
                 except Exception as img_err:
                     logger.warning("Image+caption send failed", error=str(img_err))
 
-        # Send text messages (skip if caption was already embedded in photos)
         if not caption_sent:
             for i, message in enumerate(formatted_messages):
                 if not message.text or not message.text.strip():
@@ -1107,10 +1355,7 @@ class MessageOrchestrator:
                     await update.message.reply_text(
                         message.text,
                         parse_mode=message.parse_mode,
-                        reply_markup=None,  # No keyboards in agentic mode
-                        reply_to_message_id=(
-                            update.message.message_id if i == 0 else None
-                        ),
+                        reply_markup=None,
                     )
                     if i < len(formatted_messages) - 1:
                         await asyncio.sleep(0.5)
@@ -1124,28 +1369,17 @@ class MessageOrchestrator:
                         await update.message.reply_text(
                             message.text,
                             reply_markup=None,
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
                         )
                     except Exception as plain_err:
                         await update.message.reply_text(
                             f"Failed to deliver response "
                             f"(Telegram error: {str(plain_err)[:150]}). "
-                            f"Please try again.",
-                            reply_to_message_id=(
-                                update.message.message_id if i == 0 else None
-                            ),
+                            f"Please try again."
                         )
 
-            # Send images separately if caption wasn't used
             if images:
                 try:
-                    await self._send_images(
-                        update,
-                        images,
-                        reply_to_message_id=update.message.message_id,
-                    )
+                    await self._send_images(update, images)
                 except Exception as img_err:
                     logger.warning("Image send failed", error=str(img_err))
 
