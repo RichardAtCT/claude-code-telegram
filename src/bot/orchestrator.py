@@ -1256,7 +1256,15 @@ class MessageOrchestrator:
             if first.parse_mode == "HTML" and first.text:
                 combined = f"{activity_html}\n\n{first.text}"
                 if len(combined) <= 4096:
+                    # Single bubble: log + answer together.
                     formatted_messages[0] = _FM(combined, parse_mode="HTML")
+                else:
+                    # Combined would overflow. Send the activity log as its
+                    # own bubble before the answer — two messages, but only
+                    # when the answer is too large to ride along.
+                    formatted_messages.insert(
+                        0, _FM(activity_html, parse_mode="HTML")
+                    )
 
         # Use MCP-collected images (from send_image_to_user tool calls)
         images: List[ImageAttachment] = mcp_images
