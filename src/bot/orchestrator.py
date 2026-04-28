@@ -717,7 +717,7 @@ class MessageOrchestrator:
         # Layout per chunk:
         #
         #   <blockquote expandable>
-        #     Tool log                          line 1
+        #     Tools log                          line 1
         #     ⏱ Ns · N steps                    line 2
         #     [i/n  if multi-chunk, else nbsp]  line 3
         #     <tool 1>                          line 4  hidden
@@ -734,7 +734,7 @@ class MessageOrchestrator:
         nbsp_line = " "  # U+00A0
         pad_target = 30
         for i, chunk_body in enumerate(chunks_text):
-            header = "Tool log"
+            header = "Tools log"
             stats_line = summary_total
             if n > 1:
                 third_line = f"{i + 1}/{n}"
