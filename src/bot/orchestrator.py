@@ -1305,6 +1305,14 @@ class MessageOrchestrator:
 
         # Try to combine text + images in one message when possible
         caption_sent = False
+        logger.info(
+            "Sending final reply",
+            user_id=user_id,
+            messages=len(formatted_messages),
+            sizes=[len(m.text or "") for m in formatted_messages],
+            activity_chunks=len(activity_chunks),
+        )
+
         # Final-reply messages are sent as plain new bubbles (no
         # reply-to-original). The blockquote already conveys "this is the
         # bot's response to your prompt"; reply-quoting on top duplicated

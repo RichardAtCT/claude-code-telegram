@@ -577,11 +577,38 @@ class ClaudeSDKManager:
                     previous_session_id=session_id,
                 )
 
-            # Use ResultMessage.result if available, fall back to message extraction
-            if result_content is not None:
+            # Prefer the LAST AssistantMessage's concatenated text blocks as
+            # the user-facing answer. Earlier code trusted ResultMessage.result
+            # exclusively, but in long runs the SDK occasionally surfaced an
+            # intermediate text snippet there (e.g. "I have the full picture.
+            # Here's what's wrong:" emitted before the model went on to do
+            # tool work for many more turns) instead of the model's actual
+            # closing summary. The last assistant turn after end_turn is the
+            # closing text by construction; fall back to ResultMessage.result
+            # only if no assistant text exists at all.
+            last_assistant_text = ""
+            for msg in reversed(messages):
+                if isinstance(msg, AssistantMessage):
+                    msg_content = getattr(msg, "content", [])
+                    if msg_content and isinstance(msg_content, list):
+                        parts = [
+                            getattr(b, "text", "")
+                            for b in msg_content
+                            if hasattr(b, "text") and getattr(b, "text", "")
+                        ]
+                        if parts:
+                            last_assistant_text = "\n".join(parts).strip()
+                            break
+                    elif isinstance(msg_content, str) and msg_content.strip():
+                        last_assistant_text = msg_content.strip()
+                        break
+
+            if last_assistant_text:
+                content = last_assistant_text
+            elif result_content is not None:
                 content = str(result_content).strip()
             else:
-                content_parts = []
+                content_parts: List[str] = []
                 for msg in messages:
                     if isinstance(msg, AssistantMessage):
                         msg_content = getattr(msg, "content", [])
