@@ -716,6 +716,7 @@ class ClaudeSDKManager:
                 )
 
             import traceback as _tb
+
             logger.error(
                 "Unexpected error in Claude SDK",
                 error=str(e),

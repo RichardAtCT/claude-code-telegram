@@ -686,9 +686,7 @@ class MessageOrchestrator:
             icon = _tool_icon(entry["name"])
             detail = entry.get("detail") or ""
             if detail:
-                body_lines.append(
-                    f"{icon} {_esc(entry['name'])} · {_esc(detail)}"
-                )
+                body_lines.append(f"{icon} {_esc(entry['name'])} · {_esc(detail)}")
             else:
                 body_lines.append(f"{icon} {_esc(entry['name'])}")
 
@@ -746,9 +744,7 @@ class MessageOrchestrator:
             if body_lines:
                 full_body = head + "\n" + "\n".join(body_lines)
 
-            wrapped.append(
-                f"<blockquote expandable>{full_body}</blockquote>"
-            )
+            wrapped.append(f"<blockquote expandable>{full_body}</blockquote>")
         return wrapped
 
     @staticmethod
