@@ -296,16 +296,25 @@ class ClaudeSDKManager:
                 stderr_lines.append(line)
                 logger.debug("Claude CLI stderr", line=line)
 
-            # Build system prompt, loading CLAUDE.md from working directory if present
+            # Build system prompt, loading global + project CLAUDE.md if present.
+            # Global identity (~/.claude/CLAUDE.md) ensures the bundled Claude
+            # knows it's running inside a Telegram bot daemon and not in ACP.
             base_prompt = (
                 f"All file operations must stay within {working_directory}. "
                 "Use relative paths."
             )
+            global_claude_md = Path.home() / ".claude" / "CLAUDE.md"
+            if global_claude_md.exists():
+                base_prompt += "\n\n" + global_claude_md.read_text(encoding="utf-8")
+                logger.info(
+                    "Loaded global CLAUDE.md into system prompt",
+                    path=str(global_claude_md),
+                )
             claude_md_path = Path(working_directory) / "CLAUDE.md"
             if claude_md_path.exists():
                 base_prompt += "\n\n" + claude_md_path.read_text(encoding="utf-8")
                 logger.info(
-                    "Loaded CLAUDE.md into system prompt",
+                    "Loaded project CLAUDE.md into system prompt",
                     path=str(claude_md_path),
                 )
 
