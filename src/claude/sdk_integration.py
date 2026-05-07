@@ -531,6 +531,20 @@ class ClaudeSDKManager:
                     cost = getattr(message, "total_cost_usd", 0.0) or 0.0
                     claude_session_id = getattr(message, "session_id", None)
                     result_content = getattr(message, "result", None)
+                    # Log actual model returned by Claude (proof of model swap).
+                    # ResultMessage.model_usage is a dict keyed by model name,
+                    # e.g. {"claude-opus-4-7": {...token counts...}}.
+                    model_usage = getattr(message, "model_usage", None)
+                    actual_models = (
+                        list(model_usage.keys())
+                        if isinstance(model_usage, dict) and model_usage
+                        else []
+                    )
+                    logger.info(
+                        "Turn complete — actual model from Claude",
+                        actual_models=actual_models,
+                        cost_usd=cost,
+                    )
                     current_time = asyncio.get_event_loop().time()
                     for msg in messages:
                         if isinstance(msg, AssistantMessage):

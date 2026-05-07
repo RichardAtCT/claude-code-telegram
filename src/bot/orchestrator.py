@@ -561,6 +561,10 @@ class MessageOrchestrator:
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
+        # Reset session cost tracking — new session, fresh tiers
+        context.user_data["session_total_cost"] = 0.0
+        context.user_data["session_turn_count"] = 0
+        context.user_data["cost_warning_tiers"] = set()
 
         await update.message.reply_text("Session reset. What's next?")
 
@@ -1033,8 +1037,44 @@ class MessageOrchestrator:
             # New session created successfully — clear the one-shot flag
             if force_new:
                 context.user_data["force_new_session"] = False
+                # Reset cost tracking for the brand-new session
+                context.user_data["session_total_cost"] = 0.0
+                context.user_data["session_turn_count"] = 0
+                context.user_data["cost_warning_tiers"] = set()
 
             context.user_data["claude_session_id"] = claude_response.session_id
+
+            # Track cumulative session cost + fire tiered warnings (fire-once-per-tier).
+            # Resets on /new or model swap (force_new path above).
+            if self.settings.enable_cost_warnings:
+                cumulative = (
+                    context.user_data.get("session_total_cost", 0.0)
+                    + claude_response.cost
+                )
+                turn_count = context.user_data.get("session_turn_count", 0) + 1
+                context.user_data["session_total_cost"] = cumulative
+                context.user_data["session_turn_count"] = turn_count
+
+                fired_tiers = context.user_data.setdefault(
+                    "cost_warning_tiers", set()
+                )
+                # Fire the lowest unfired tier that we've crossed (one warning per turn).
+                for tier in sorted(self.settings.session_cost_tiers):
+                    if cumulative >= tier and tier not in fired_tiers:
+                        fired_tiers.add(tier)
+                        try:
+                            await update.message.reply_text(
+                                f"⚠️ Session at ${cumulative:.2f} / "
+                                f"{turn_count} turns. Consider /new."
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to send cost warning",
+                                error=str(e),
+                                tier=tier,
+                                cumulative=cumulative,
+                            )
+                        break
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
