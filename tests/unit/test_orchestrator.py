@@ -376,6 +376,192 @@ async def test_agentic_text_forces_new_session_for_new_thread_context(
     assert context.user_data["claude_session_id"] == "topic-session-abc"
 
 
+async def test_agentic_media_forces_new_session_for_new_thread_context(
+    agentic_settings, deps
+):
+    """Media-derived first messages in a topic must not auto-resume another topic."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "topic-media-session"
+    mock_response.content = "Fresh media topic response"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    update = MagicMock()
+    update.message.message_id = 10
+    update.message.reply_text = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+
+    chat = MagicMock()
+    chat.send_action = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {
+        "current_directory": agentic_settings.approved_directory,
+        "claude_session_id": None,
+        "_thread_context": {
+            "chat_id": -1001234567890,
+            "message_thread_id": 303,
+            "state_key": "-1001234567890:303",
+        },
+    }
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator._handle_agentic_media_message(
+        update=update,
+        context=context,
+        prompt="Describe this image",
+        progress_msg=progress_msg,
+        user_id=123,
+        chat=chat,
+        images=[{"type": "base64", "media_type": "image/png", "data": "abc"}],
+    )
+
+    claude_integration.run_command.assert_called_once()
+    assert claude_integration.run_command.call_args.kwargs["session_id"] is None
+    assert claude_integration.run_command.call_args.kwargs["force_new"] is True
+    assert context.user_data["claude_session_id"] == "topic-media-session"
+
+
+async def test_agentic_document_forces_new_session_for_new_thread_context(
+    agentic_settings, deps
+):
+    """Document first messages in a topic must not auto-resume another topic."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    mock_response = MagicMock()
+    mock_response.session_id = "topic-document-session"
+    mock_response.content = "Fresh document topic response"
+    mock_response.tools_used = []
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=mock_response)
+
+    file_mock = AsyncMock()
+    file_mock.download_as_bytearray = AsyncMock(return_value=b"hello from document")
+
+    document = AsyncMock()
+    document.file_name = "note.txt"
+    document.file_size = 100
+    document.get_file = AsyncMock(return_value=file_mock)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.document = document
+    update.message.caption = None
+    update.message.message_id = 11
+    update.message.reply_text = AsyncMock()
+    update.message.chat.send_action = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    update.message.reply_text.return_value = progress_msg
+
+    context = MagicMock()
+    context.user_data = {
+        "current_directory": agentic_settings.approved_directory,
+        "claude_session_id": None,
+        "_thread_context": {
+            "chat_id": -1001234567890,
+            "message_thread_id": 304,
+            "state_key": "-1001234567890:304",
+        },
+    }
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "security_validator": None,
+        "features": None,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_document(update, context)
+
+    claude_integration.run_command.assert_called_once()
+    assert claude_integration.run_command.call_args.kwargs["session_id"] is None
+    assert claude_integration.run_command.call_args.kwargs["force_new"] is True
+    assert context.user_data["claude_session_id"] == "topic-document-session"
+
+
+async def test_agentic_repo_does_not_resume_global_session_in_thread_context(
+    agentic_settings, deps
+):
+    """Switching repos inside a topic must not import user+directory sessions."""
+    (agentic_settings.approved_directory / "repo_a").mkdir()
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    claude_integration = AsyncMock()
+    existing = MagicMock()
+    existing.session_id = "global-session"
+    claude_integration._find_resumable_session = AsyncMock(return_value=existing)
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.message.text = "/repo repo_a"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {
+        "_thread_context": {"state_key": "-1001234567890:404"},
+        "claude_session_id": None,
+    }
+    context.bot_data = {"claude_integration": claude_integration}
+
+    await orchestrator.agentic_repo(update, context)
+
+    claude_integration._find_resumable_session.assert_not_called()
+    assert context.user_data["claude_session_id"] is None
+    assert context.user_data["current_directory"].name == "repo_a"
+    assert "session resumed" not in update.message.reply_text.call_args.args[0]
+
+
+async def test_cd_callback_does_not_resume_global_session_in_thread_context(
+    agentic_settings, deps
+):
+    """cd: callbacks inside a topic must not import user+directory sessions."""
+    (agentic_settings.approved_directory / "repo_b").mkdir()
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    claude_integration = AsyncMock()
+    existing = MagicMock()
+    existing.session_id = "global-session"
+    claude_integration._find_resumable_session = AsyncMock(return_value=existing)
+
+    query = MagicMock()
+    query.data = "cd:repo_b"
+    query.from_user.id = 123
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+
+    update = MagicMock()
+    update.callback_query = query
+
+    context = MagicMock()
+    context.user_data = {
+        "_thread_context": {"state_key": "-1001234567890:505"},
+        "claude_session_id": None,
+    }
+    context.bot_data = {"claude_integration": claude_integration}
+
+    await orchestrator._agentic_callback(update, context)
+
+    claude_integration._find_resumable_session.assert_not_called()
+    assert context.user_data["claude_session_id"] is None
+    assert context.user_data["current_directory"].name == "repo_b"
+    assert "session resumed" not in query.edit_message_text.call_args.args[0]
+
+
 async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
     """Agentic callback handler is registered with cd: pattern filter."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)

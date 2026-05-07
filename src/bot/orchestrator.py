@@ -637,6 +637,21 @@ class MessageOrchestrator:
             return int(user_override)
         return self.settings.verbose_level
 
+    @staticmethod
+    def _should_force_new_claude_session(
+        context: ContextTypes.DEFAULT_TYPE, session_id: Optional[str]
+    ) -> bool:
+        """Decide whether Claude must skip auto-resume for this message.
+
+        Telegram forum topics are isolated by ``_thread_context``. A new topic
+        has no topic-local ``claude_session_id`` yet; in that case we must
+        force a fresh Claude session or ClaudeIntegration may auto-resume the
+        latest user+directory session from another topic.
+        """
+        if context.user_data.get("force_new_session"):
+            return True
+        return bool(context.user_data.get("_thread_context") and not session_id)
+
     async def agentic_verbose(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1019,17 +1034,12 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
-
         # Thread-scoped topics must not fall back to ClaudeIntegration's
         # user+directory auto-resume. A brand-new Telegram topic has no
         # claude_session_id yet, but shares the same working directory with other
         # topics; without this guard, run_command() resumes the latest global
         # session for the user and leaks context across topics.
-        if context.user_data.get("_thread_context") and not session_id:
-            force_new = True
+        force_new = self._should_force_new_claude_session(context, session_id)
 
         thread_context = context.user_data.get("_thread_context")
         if thread_context:
@@ -1308,9 +1318,7 @@ class MessageOrchestrator:
         )
         session_id = context.user_data.get("claude_session_id")
 
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
+        force_new = self._should_force_new_claude_session(context, session_id)
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -1519,7 +1527,7 @@ class MessageOrchestrator:
             "current_directory", self.settings.approved_directory
         )
         session_id = context.user_data.get("claude_session_id")
-        force_new = bool(context.user_data.get("force_new_session"))
+        force_new = self._should_force_new_claude_session(context, session_id)
 
         verbose_level = self._get_verbose_level(context)
         tool_log: List[Dict[str, Any]] = []
@@ -1668,10 +1676,12 @@ class MessageOrchestrator:
 
             context.user_data["current_directory"] = target_path
 
-            # Try to find a resumable session
+            # Try to find a resumable session. In Telegram forum topics, session
+            # lookup must stay topic-local; falling back to user+directory here
+            # would reintroduce context leaks across topics.
             claude_integration = context.bot_data.get("claude_integration")
             session_id = None
-            if claude_integration:
+            if claude_integration and not context.user_data.get("_thread_context"):
                 existing = await claude_integration._find_resumable_session(
                     update.effective_user.id, target_path
                 )
@@ -1792,10 +1802,11 @@ class MessageOrchestrator:
 
         context.user_data["current_directory"] = new_path
 
-        # Look for a resumable session instead of always clearing
+        # Look for a resumable session in non-thread contexts only. Telegram
+        # forum topics must not fall back to the global user+directory session.
         claude_integration = context.bot_data.get("claude_integration")
         session_id = None
-        if claude_integration:
+        if claude_integration and not context.user_data.get("_thread_context"):
             existing = await claude_integration._find_resumable_session(
                 query.from_user.id, new_path
             )
