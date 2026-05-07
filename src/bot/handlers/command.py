@@ -905,7 +905,7 @@ async def session_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Check if there's a resumable session from the database
     resumable_info = ""
-    if not claude_session_id:
+    if not claude_session_id and not context.user_data.get("_thread_context"):
         claude_integration: ClaudeIntegration = context.bot_data.get(
             "claude_integration"
         )

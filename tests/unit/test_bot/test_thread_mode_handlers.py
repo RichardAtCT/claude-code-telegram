@@ -177,6 +177,38 @@ async def test_continue_command_does_not_global_resume_in_thread_context(
     claude_integration.continue_session.assert_not_called()
 
 
+async def test_status_does_not_show_global_resumable_session_in_thread_context(
+    thread_settings,
+):
+    """Classic /status should not surface another topic's resumable session."""
+    settings, project_root = thread_settings
+    claude_integration = AsyncMock()
+    claude_integration._find_resumable_session = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 1
+    update.message.date.strftime.return_value = "12:00:00 UTC"
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {
+        "settings": settings,
+        "rate_limiter": None,
+        "claude_integration": claude_integration,
+    }
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": None,
+    }
+
+    await command.session_status(update, context)
+
+    claude_integration._find_resumable_session.assert_not_called()
+    sent_text = update.message.reply_text.call_args.args[0]
+    assert "Session will auto-resume" not in sent_text
+
+
 async def test_continue_callback_does_not_global_resume_in_thread_context(
     thread_settings,
 ):
