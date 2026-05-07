@@ -29,6 +29,15 @@ from ..utils.image_extractor import (
 logger = structlog.get_logger()
 
 
+def _should_force_new_claude_session(
+    context: ContextTypes.DEFAULT_TYPE, session_id: Optional[str]
+) -> bool:
+    """Prevent thread-scoped contexts from falling back to global auto-resume."""
+    if context.user_data.get("force_new_session"):
+        return True
+    return bool(context.user_data.get("_thread_context") and not session_id)
+
+
 async def _format_progress_update(update_obj) -> Optional[str]:
     """Format progress updates with enhanced context and visual indicators."""
     if update_obj.type == "tool_result":
@@ -351,9 +360,7 @@ async def handle_text_message(
         # Get existing session ID
         session_id = context.user_data.get("claude_session_id")
 
-        # Check if /new was used — skip auto-resume for this first message.
-        # Flag is only cleared after a successful run so retries keep the intent.
-        force_new = bool(context.user_data.get("force_new_session"))
+        force_new = _should_force_new_claude_session(context, session_id)
 
         # MCP image collection via stream intercept
         mcp_images: list[ImageAttachment] = []
@@ -810,6 +817,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             "current_directory", settings.approved_directory
         )
         session_id = context.user_data.get("claude_session_id")
+        force_new = _should_force_new_claude_session(context, session_id)
 
         # Process with Claude
         try:
@@ -818,7 +826,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                force_new=force_new,
             )
+
+            if force_new:
+                context.user_data["force_new_session"] = False
 
             # Update session ID
             context.user_data["claude_session_id"] = claude_response.session_id
@@ -937,6 +949,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 "current_directory", settings.approved_directory
             )
             session_id = context.user_data.get("claude_session_id")
+            force_new = _should_force_new_claude_session(context, session_id)
 
             # Process with Claude
             try:
@@ -945,7 +958,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     working_directory=current_dir,
                     user_id=user_id,
                     session_id=session_id,
+                    force_new=force_new,
                 )
+
+                if force_new:
+                    context.user_data["force_new_session"] = False
 
                 # Update session ID
                 context.user_data["claude_session_id"] = claude_response.session_id
@@ -1064,6 +1081,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "current_directory", settings.approved_directory
         )
         session_id = context.user_data.get("claude_session_id")
+        force_new = _should_force_new_claude_session(context, session_id)
 
         try:
             # Keep classic mode aligned with handle_photo: single progress message,
@@ -1073,7 +1091,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 working_directory=current_dir,
                 user_id=user_id,
                 session_id=session_id,
+                force_new=force_new,
             )
+
+            if force_new:
+                context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
 

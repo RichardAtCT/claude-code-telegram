@@ -1,11 +1,12 @@
 """Tests for thread mode handler constraints."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.bot.handlers import callback, command
+from src.bot.handlers import callback, command, message
 from src.config import create_test_config
 
 
@@ -60,6 +61,60 @@ async def test_command_cd_stays_within_project_root(thread_settings):
     await command.change_directory(update, context)
 
     assert context.user_data["current_directory"] == project_root
+    assert context.user_data["claude_session_id"] is None
+    context.bot_data["claude_integration"]._find_resumable_session.assert_not_called()
+
+
+async def test_classic_text_forces_new_session_for_new_thread_context(thread_settings):
+    """Classic text handler must not auto-resume a global session in a new topic."""
+    settings, project_root = thread_settings
+
+    progress_msg = AsyncMock()
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(
+        return_value=SimpleNamespace(session_id="classic-topic-session", content="ok")
+    )
+
+    update = MagicMock()
+    update.effective_user.id = 1
+    update.message.text = "remember banana"
+    update.message.message_id = 10
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress_msg)
+
+    context = MagicMock()
+    context.bot_data = {
+        "settings": settings,
+        "rate_limiter": None,
+        "audit_logger": None,
+        "storage": None,
+        "claude_integration": claude_integration,
+    }
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": None,
+    }
+
+    await message.handle_text_message(update, context)
+
+    assert claude_integration.run_command.call_args.kwargs["force_new"] is True
+    assert context.user_data["claude_session_id"] == "classic-topic-session"
+
+
+async def test_classic_thread_force_new_helper_covers_non_text_entrypoints(
+    thread_settings,
+):
+    """Document/photo/voice handlers share the same thread auto-resume guard."""
+    _, project_root = thread_settings
+    context = MagicMock()
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": None,
+    }
+
+    assert message._should_force_new_claude_session(context, None) is True
 
 
 async def test_callback_cd_stays_within_project_root(thread_settings):

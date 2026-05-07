@@ -687,12 +687,17 @@ async def change_directory(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Update current directory in user data
         context.user_data["current_directory"] = resolved_path
 
-        # Look up existing session for the new directory instead of clearing
+        # Look up existing session for the new directory in non-thread contexts
+        # only. Telegram forum topics must not import global user+directory
+        # sessions from other topics.
         claude_integration: ClaudeIntegration = context.bot_data.get(
             "claude_integration"
         )
         resumed_session_info = ""
-        if claude_integration:
+        if context.user_data.get("_thread_context"):
+            context.user_data["claude_session_id"] = None
+            resumed_session_info = "\n🆕 Topic-scoped directory change. Send a message to start a new session."
+        elif claude_integration:
             existing_session = await claude_integration._find_resumable_session(
                 user_id, resolved_path
             )
