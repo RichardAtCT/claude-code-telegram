@@ -49,6 +49,9 @@ _MEDIA_TYPE_MAP = {
     "webp": "image/webp",
 }
 
+# Session-control flags must be scoped to each Telegram forum topic, not user-wide.
+_THREAD_SCOPED_SESSION_KEYS = ("force_new_session", "session_started")
+
 # Patterns that look like secrets/credentials in CLI arguments
 _SECRET_PATTERNS: List[re.Pattern[str]] = [
     # API keys / tokens (sk-ant-..., sk-..., ghp_..., gho_..., github_pat_..., xoxb-...)
@@ -148,31 +151,49 @@ class MessageOrchestrator:
             is_sync_bypass = handler.__name__ == "sync_threads"
             is_start_bypass = handler.__name__ in {"start_command", "agentic_start"}
             message_thread_id = self._extract_message_thread_id(update)
-            should_enforce = self.settings.enable_project_threads
+            chat = update.effective_chat
+            should_enforce_project_thread = self.settings.enable_project_threads
+            should_scope_thread_state = (
+                message_thread_id is not None and chat is not None
+            )
 
-            if should_enforce:
+            if should_enforce_project_thread:
                 if self.settings.project_threads_mode == "private":
-                    should_enforce = not is_sync_bypass and not (
+                    should_enforce_project_thread = not is_sync_bypass and not (
                         is_start_bypass and message_thread_id is None
                     )
                 else:
-                    should_enforce = not is_sync_bypass
+                    should_enforce_project_thread = not is_sync_bypass
 
-            if should_enforce:
-                allowed = await self._apply_thread_routing_context(update, context)
+            if should_enforce_project_thread:
+                allowed = await self._apply_thread_routing_context(
+                    update,
+                    context,
+                    message_thread_id,
+                )
                 if not allowed:
                     return
+            elif should_scope_thread_state:
+                self._load_thread_state(
+                    context,
+                    chat_id=chat.id,
+                    message_thread_id=message_thread_id,
+                    project_root=self.settings.approved_directory,
+                )
 
             try:
                 await handler(update, context)
             finally:
-                if should_enforce:
+                if should_enforce_project_thread or should_scope_thread_state:
                     self._persist_thread_state(context)
 
         return wrapped
 
     async def _apply_thread_routing_context(
-        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        message_thread_id: Optional[int],
     ) -> bool:
         """Enforce strict project-thread routing and load thread-local state."""
         manager = context.bot_data.get("project_threads_manager")
@@ -204,7 +225,6 @@ class MessageOrchestrator:
                 )
                 return False
 
-        message_thread_id = self._extract_message_thread_id(update)
         if not message_thread_id:
             await self._reject_for_thread_mode(
                 update,
@@ -220,11 +240,32 @@ class MessageOrchestrator:
             )
             return False
 
-        state_key = f"{chat.id}:{message_thread_id}"
+        self._load_thread_state(
+            context,
+            chat_id=chat.id,
+            message_thread_id=message_thread_id,
+            project_root=project.absolute_path,
+            project_slug=project.slug,
+            project_name=project.name,
+        )
+        return True
+
+    def _load_thread_state(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        chat_id: int,
+        message_thread_id: int,
+        project_root: Path,
+        project_slug: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> None:
+        """Load thread-local compatibility keys into user_data."""
+        state_key = f"{chat_id}:{message_thread_id}"
         thread_states = context.user_data.setdefault("thread_state", {})
         state = thread_states.get(state_key, {})
 
-        project_root = project.absolute_path
+        project_root = project_root.resolve()
         current_dir_raw = state.get("current_directory")
         current_dir = (
             Path(current_dir_raw).resolve() if current_dir_raw else project_root
@@ -234,15 +275,19 @@ class MessageOrchestrator:
 
         context.user_data["current_directory"] = current_dir
         context.user_data["claude_session_id"] = state.get("claude_session_id")
+        for key in _THREAD_SCOPED_SESSION_KEYS:
+            if key in state:
+                context.user_data[key] = state[key]
+            else:
+                context.user_data.pop(key, None)
         context.user_data["_thread_context"] = {
-            "chat_id": chat.id,
+            "chat_id": chat_id,
             "message_thread_id": message_thread_id,
             "state_key": state_key,
-            "project_slug": project.slug,
+            "project_slug": project_slug,
             "project_root": str(project_root),
-            "project_name": project.name,
+            "project_name": project_name,
         }
-        return True
 
     def _persist_thread_state(self, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Persist compatibility keys back into per-thread state."""
@@ -258,12 +303,17 @@ class MessageOrchestrator:
         if not self._is_within(current_dir, project_root) or not current_dir.is_dir():
             current_dir = project_root
 
-        thread_states = context.user_data.setdefault("thread_state", {})
-        thread_states[thread_context["state_key"]] = {
+        thread_state = {
             "current_directory": str(current_dir),
             "claude_session_id": context.user_data.get("claude_session_id"),
             "project_slug": thread_context["project_slug"],
         }
+        for key in _THREAD_SCOPED_SESSION_KEYS:
+            if key in context.user_data:
+                thread_state[key] = context.user_data[key]
+
+        thread_states = context.user_data.setdefault("thread_state", {})
+        thread_states[thread_context["state_key"]] = thread_state
 
     @staticmethod
     def _is_within(path: Path, root: Path) -> bool:
@@ -972,6 +1022,25 @@ class MessageOrchestrator:
         # Check if /new was used — skip auto-resume for this first message.
         # Flag is only cleared after a successful run so retries keep the intent.
         force_new = bool(context.user_data.get("force_new_session"))
+
+        # Thread-scoped topics must not fall back to ClaudeIntegration's
+        # user+directory auto-resume. A brand-new Telegram topic has no
+        # claude_session_id yet, but shares the same working directory with other
+        # topics; without this guard, run_command() resumes the latest global
+        # session for the user and leaks context across topics.
+        if context.user_data.get("_thread_context") and not session_id:
+            force_new = True
+
+        thread_context = context.user_data.get("_thread_context")
+        if thread_context:
+            logger.info(
+                "Thread-scoped Claude routing",
+                chat_id=thread_context.get("chat_id"),
+                message_thread_id=thread_context.get("message_thread_id"),
+                state_key=thread_context.get("state_key"),
+                session_id=session_id,
+                force_new=force_new,
+            )
 
         # --- Verbose progress tracking via stream callback ---
         tool_log: List[Dict[str, Any]] = []
