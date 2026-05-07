@@ -403,19 +403,29 @@ async def continue_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 session_id=claude_session_id,
             )
         else:
-            # No session in context, try to find the most recent session
-            status_msg = await update.message.reply_text(
-                "🔍 <b>Looking for Recent Session</b>\n\n"
-                "Searching for your most recent session in this directory...",
-                parse_mode="HTML",
-            )
+            if context.user_data.get("_thread_context"):
+                status_msg = await update.message.reply_text(
+                    "❌ <b>No Topic Session Found</b>\n\n"
+                    f"No Claude session has been started in this Telegram topic yet.\n"
+                    f"Directory: <code>{current_dir.relative_to(settings.approved_directory)}/</code>\n\n"
+                    f"Send a message in this topic or use <code>/new</code> to start fresh.",
+                    parse_mode="HTML",
+                )
+                claude_response = None
+            else:
+                # No session in context, try to find the most recent session
+                status_msg = await update.message.reply_text(
+                    "🔍 <b>Looking for Recent Session</b>\n\n"
+                    "Searching for your most recent session in this directory...",
+                    parse_mode="HTML",
+                )
 
-            # Use default prompt if none provided
-            claude_response = await claude_integration.continue_session(
-                user_id=user_id,
-                working_directory=current_dir,
-                prompt=prompt or default_prompt,
-            )
+                # Use default prompt if none provided
+                claude_response = await claude_integration.continue_session(
+                    user_id=user_id,
+                    working_directory=current_dir,
+                    prompt=prompt or default_prompt,
+                )
 
         if claude_response:
             # Update session ID in context

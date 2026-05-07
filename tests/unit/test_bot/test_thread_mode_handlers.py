@@ -142,7 +142,98 @@ async def test_callback_cd_stays_within_project_root(thread_settings):
     await callback.handle_cd_callback(query, "..", context)
 
     assert context.user_data["current_directory"] == project_root
+    assert context.user_data["claude_session_id"] is None
+    context.bot_data["claude_integration"]._find_resumable_session.assert_not_called()
     query.edit_message_text.assert_called_once()
+
+
+async def test_continue_command_does_not_global_resume_in_thread_context(
+    thread_settings,
+):
+    """Classic /continue should not continue a global session from a new topic."""
+    settings, project_root = thread_settings
+    claude_integration = AsyncMock()
+    claude_integration.continue_session = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 1
+    update.message.reply_text = AsyncMock(return_value=AsyncMock())
+
+    context = MagicMock()
+    context.args = []
+    context.bot_data = {
+        "settings": settings,
+        "audit_logger": None,
+        "claude_integration": claude_integration,
+    }
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": None,
+    }
+
+    await command.continue_session(update, context)
+
+    claude_integration.continue_session.assert_not_called()
+
+
+async def test_continue_callback_does_not_global_resume_in_thread_context(
+    thread_settings,
+):
+    """Classic continue callback should stay topic-local."""
+    settings, project_root = thread_settings
+    claude_integration = AsyncMock()
+    claude_integration.continue_session = AsyncMock()
+
+    query = MagicMock()
+    query.from_user.id = 1
+    query.edit_message_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {"settings": settings, "claude_integration": claude_integration}
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": None,
+    }
+
+    await callback._handle_continue_action(query, context)
+
+    claude_integration.continue_session.assert_not_called()
+
+
+async def test_quick_action_forces_new_session_for_new_thread_context(thread_settings):
+    """Quick actions must not auto-resume a global session in a new topic."""
+    settings, project_root = thread_settings
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(
+        return_value=SimpleNamespace(session_id="quick-topic-session", content="ok")
+    )
+    quick_actions = SimpleNamespace(
+        actions={"qa": SimpleNamespace(icon="⚡", name="QA", prompt="run qa")}
+    )
+
+    query = MagicMock()
+    query.from_user.id = 1
+    query.edit_message_text = AsyncMock()
+    query.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {
+        "settings": settings,
+        "quick_actions": quick_actions,
+        "claude_integration": claude_integration,
+    }
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": None,
+    }
+
+    await callback.handle_quick_action_callback(query, "qa", context)
+
+    assert claude_integration.run_command.call_args.kwargs["force_new"] is True
+    assert context.user_data["claude_session_id"] == "quick-topic-session"
 
 
 async def test_start_private_mode_triggers_auto_sync(thread_settings):

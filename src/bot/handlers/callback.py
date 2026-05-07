@@ -165,11 +165,16 @@ async def handle_cd_callback(
             )
             return
 
-        # Update directory and resume session for that directory when available
+        # Update directory and resume session for that directory when available.
+        # In Telegram forum topics, never import a global user+directory session
+        # from another topic.
         context.user_data["current_directory"] = new_path
 
         resumed_session_info = ""
-        if claude_integration:
+        if context.user_data.get("_thread_context"):
+            context.user_data["claude_session_id"] = None
+            resumed_session_info = "\n🆕 Topic-scoped directory change. Send a message to start a new session."
+        elif claude_integration:
             existing_session = await claude_integration._find_resumable_session(
                 user_id, new_path
             )
@@ -567,6 +572,28 @@ async def _handle_continue_action(query, context: ContextTypes.DEFAULT_TYPE) -> 
                 session_id=claude_session_id,
             )
         else:
+            if context.user_data.get("_thread_context"):
+                await query.edit_message_text(
+                    "❌ <b>No Topic Session Found</b>\n\n"
+                    f"No Claude session has been started in this Telegram topic yet.\n"
+                    f"Directory: <code>{escape_html(str(current_dir.relative_to(settings.approved_directory)))}/</code>\n\n"
+                    f"Send a message in this topic or use the button below to start fresh.",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "🆕 New Session", callback_data="action:new_session"
+                                ),
+                                InlineKeyboardButton(
+                                    "📊 Status", callback_data="action:status"
+                                ),
+                            ]
+                        ]
+                    ),
+                )
+                return
+
             # No session in context, try to find the most recent session
             await query.edit_message_text(
                 "🔍 <b>Looking for Recent Session</b>\n\n"
@@ -918,12 +945,21 @@ async def handle_quick_action_callback(
             parse_mode="HTML",
         )
 
+        session_id = context.user_data.get("claude_session_id")
+        force_new = bool(context.user_data.get("_thread_context") and not session_id)
+
         # Run the action through Claude
         claude_response = await claude_integration.run_command(
-            prompt=action.prompt, working_directory=current_dir, user_id=user_id
+            prompt=action.prompt,
+            working_directory=current_dir,
+            user_id=user_id,
+            session_id=session_id,
+            force_new=force_new,
         )
 
         if claude_response:
+            context.user_data["claude_session_id"] = claude_response.session_id
+
             # Format and send the response
             response_text = escape_html(claude_response.content)
             if len(response_text) > 4000:
