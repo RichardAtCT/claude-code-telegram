@@ -597,6 +597,51 @@ async def test_compact_command_forces_compaction(agentic_settings, deps):
     assert "Fallback: não" in reply
     assert context.user_data["claude_session_id"] is None
     assert context.user_data["force_new_session"] is True
+    assert "Resumo do tópico." in context.user_data["_pending_compacted_prompt"]
+    assert context.user_data["_pending_compacted_context_key"] == key
+
+    final_response = MagicMock()
+    final_response.session_id = "session-after-manual-compact"
+    final_response.content = "Resposta nova"
+    final_response.tools_used = []
+    final_response.interrupted = False
+    claude_integration.run_command.reset_mock()
+    claude_integration.run_command.return_value = final_response
+    summary_store.create_summary.reset_mock()
+    storage.save_claude_interaction = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    progress_msg.edit_text = AsyncMock()
+    update.message.text = "Continue com o resumo"
+    update.message.message_id = 1
+    update.message.chat_id = -100
+    update.message.message_thread_id = 54
+    update.message.chat.id = -100
+    update.message.chat.type = "private"
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress_msg)
+    context.bot = MagicMock()
+    context.bot_data.update(
+        {
+            "rate_limiter": None,
+            "audit_logger": None,
+            "settings": agentic_settings,
+        }
+    )
+
+    await orchestrator.agentic_text(update, context)
+
+    claude_integration.run_command.assert_awaited_once()
+    prompt_call = claude_integration.run_command.await_args
+    assert "Resumo do tópico." in prompt_call.kwargs["prompt"]
+    assert "New user message:\nContinue com o resumo" in prompt_call.kwargs["prompt"]
+    assert prompt_call.kwargs["session_id"] is None
+    assert prompt_call.kwargs["force_new"] is True
+    assert context.user_data["claude_session_id"] == "session-after-manual-compact"
+    assert context.user_data["force_new_session"] is False
+    assert "_pending_compacted_prompt" not in context.user_data
+    assert "_pending_compacted_context_key" not in context.user_data
 
 
 async def test_agentic_text_forces_new_session_for_new_thread_context(

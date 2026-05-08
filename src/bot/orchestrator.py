@@ -622,6 +622,9 @@ class MessageOrchestrator:
             user_id=user_id,
         )
 
+        context.user_data["_pending_compacted_prompt"] = compaction.compacted_prompt
+        context.user_data["_pending_compacted_context_key"] = key
+
         if compaction.force_new_session:
             context.user_data["claude_session_id"] = None
             context.user_data["force_new_session"] = True
@@ -1238,14 +1241,32 @@ class MessageOrchestrator:
         prompt_for_claude = message_text
         run_session_id = session_id
         run_force_new = force_new
+        pending_compacted_prompt = context.user_data.get("_pending_compacted_prompt")
+        pending_compacted_key = context.user_data.get("_pending_compacted_context_key")
+        use_pending_compacted_prompt = (
+            bool(pending_compacted_prompt) and pending_compacted_key == topic_state_key
+        )
+        if use_pending_compacted_prompt:
+            prompt_for_claude = (
+                f"{pending_compacted_prompt}\n\n"
+                f"New user message:\n{message_text}"
+            )
+            run_session_id = None
+            run_force_new = True
+            context.user_data.pop("_pending_compacted_prompt", None)
+            context.user_data.pop("_pending_compacted_context_key", None)
 
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
         success = True
         try:
-            if self.settings.context_runtime_enabled and self.context_manager.would_exceed_limit(
-                topic_state_key, message_text
+            if (
+                self.settings.context_runtime_enabled
+                and not use_pending_compacted_prompt
+                and self.context_manager.would_exceed_limit(
+                    topic_state_key, message_text
+                )
             ):
                 storage = context.bot_data.get("storage")
                 summary_store = (
