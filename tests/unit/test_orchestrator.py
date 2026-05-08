@@ -155,6 +155,17 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
     assert len(cb_handlers) == 2
 
 
+def test_agentic_text_uses_same_lock_for_same_topic(agentic_settings, deps):
+    """Topic lock cache reuses the same asyncio.Lock for a given topic key."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+
+    first_lock = orchestrator._topic_lock("-1001234567890:202")
+    second_lock = orchestrator._topic_lock("-1001234567890:202")
+
+    assert first_lock is second_lock
+    assert isinstance(first_lock, asyncio.Lock)
+
+
 async def test_agentic_bot_commands(agentic_settings, deps):
     """Agentic mode returns 6 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)

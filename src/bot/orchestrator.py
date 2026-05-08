@@ -1029,9 +1029,32 @@ class MessageOrchestrator:
     async def agentic_text(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        """Direct Claude passthrough serialized per Telegram topic."""
+        message_text = update.message.text
+        topic_state_key = self._current_topic_key(update, context)
+        lock = self._topic_lock(topic_state_key)
+
+        try:
+            async with asyncio.timeout(self.settings.context_lock_timeout_seconds):
+                async with lock:
+                    await self._agentic_text_locked(
+                        update, context, topic_state_key, message_text
+                    )
+        except TimeoutError:
+            await update.message.reply_text(
+                "⏳ Este tópico ainda está processando uma resposta longa. "
+                "Tenta de novo em alguns segundos."
+            )
+
+    async def _agentic_text_locked(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        topic_state_key: str,
+        message_text: str,
+    ) -> None:
         """Direct Claude passthrough. Simple progress. No suggestions."""
         user_id = update.effective_user.id
-        message_text = update.message.text
 
         logger.info(
             "Agentic text message",
@@ -1130,7 +1153,6 @@ class MessageOrchestrator:
             interrupt_event=interrupt_event,
         )
 
-        topic_state_key = self._current_topic_key(update, context)
         prompt_for_claude = message_text
         run_session_id = session_id
         run_force_new = force_new
