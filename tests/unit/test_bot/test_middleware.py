@@ -21,6 +21,7 @@ from src.config.settings import Settings
 @pytest.fixture
 def mock_settings():
     """Minimal Settings mock for ClaudeCodeBot."""
+    context_defaults = create_test_config(approved_directory="/tmp/test")
     settings = MagicMock(spec=Settings)
     settings.telegram_token_str = "test:token"
     settings.webhook_url = None
@@ -35,6 +36,11 @@ def mock_settings():
     settings.enable_api_server = False
     settings.enable_scheduler = False
     settings.approved_directory = "/tmp/test"
+    settings.context_runtime_enabled = context_defaults.context_runtime_enabled
+    settings.context_token_threshold = context_defaults.context_token_threshold
+    settings.context_compact_keep_last = context_defaults.context_compact_keep_last
+    settings.context_summary_target_tokens = context_defaults.context_summary_target_tokens
+    settings.context_lock_timeout_seconds = context_defaults.context_lock_timeout_seconds
     return settings
 
 
