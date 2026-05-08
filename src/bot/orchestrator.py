@@ -404,6 +404,8 @@ class MessageOrchestrator:
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("context", self.context_status),
+            ("compact", self.compact_context),
             ("restart", command.restart_command),
         ]
         if self.settings.enable_project_threads:
@@ -537,6 +539,8 @@ class MessageOrchestrator:
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("context", "Show topic context usage"),
+                BotCommand("compact", "Compact topic context now"),
                 BotCommand("restart", "Restart the bot"),
             ]
             if self.settings.enable_project_threads:
@@ -562,6 +566,76 @@ class MessageOrchestrator:
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
             return commands
+
+    # --- Context runtime commands ---
+
+    async def context_status(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Report tracked context usage for the current Telegram topic."""
+        message = update.effective_message or update.message
+        key = self._current_topic_key(update, context)
+        state = self.context_manager.get_state(key)
+        threshold = max(1, self.context_manager.token_threshold)
+        pct = min(100.0, (state.tokens_used / threshold) * 100)
+
+        await message.reply_text(
+            "*Contexto do tópico*\n"
+            f"- Chave: `{key}`\n"
+            f"- Mensagens rastreadas: {state.message_count} mensagens\n"
+            f"- Tokens estimados: {state.tokens_used}/{threshold} ({pct:.1f}%)\n"
+            f"- Compactações: {state.compaction_count}",
+            parse_mode="Markdown",
+        )
+
+    async def compact_context(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Force context compaction for the current Telegram topic."""
+        message = update.effective_message or update.message
+        claude_integration = context.bot_data.get("claude_integration")
+        storage = context.bot_data.get("storage")
+        summary_store = (
+            getattr(storage, "conversation_summaries", None)
+            if storage is not None
+            else None
+        )
+
+        if claude_integration is None or summary_store is None:
+            await message.reply_text("Context runtime indisponível neste momento.")
+            return
+
+        key = self._current_topic_key(update, context)
+        current_dir = context.user_data.get(
+            "current_directory", self.settings.approved_directory
+        )
+        session_id = context.user_data.get("claude_session_id") or "unknown-session"
+        user = update.effective_user
+        user_id = user.id if user is not None else 0
+
+        compaction = await self.context_manager.compact(
+            key=key,
+            claude=claude_integration,
+            summary_store=summary_store,
+            session_id=session_id,
+            working_directory=str(current_dir),
+            user_id=user_id,
+        )
+
+        if compaction.force_new_session:
+            context.user_data["claude_session_id"] = None
+            context.user_data["force_new_session"] = True
+
+        fallback = "sim" if compaction.used_fallback else "não"
+        await message.reply_text(
+            "*Contexto compactado*\n"
+            f"- Chave: `{key}`\n"
+            f"- Mensagens incluídas: {compaction.messages_included}\n"
+            f"- Tokens antes: {compaction.tokens_before}\n"
+            f"- Tokens depois: {compaction.tokens_after}\n"
+            f"- Fallback: {fallback}",
+            parse_mode="Markdown",
+        )
 
     # --- Agentic handlers ---
 

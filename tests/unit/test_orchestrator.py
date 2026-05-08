@@ -82,8 +82,8 @@ def deps():
     }
 
 
-def test_agentic_registers_6_commands(agentic_settings, deps):
-    """Agentic mode registers start, new, status, verbose, repo, restart commands."""
+def test_agentic_registers_8_commands(agentic_settings, deps):
+    """Agentic mode registers start, new, status, verbose, repo, context, compact, restart commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     app = MagicMock()
     app.add_handler = MagicMock()
@@ -100,12 +100,14 @@ def test_agentic_registers_6_commands(agentic_settings, deps):
     ]
     commands = [h[0][0].commands for h in cmd_handlers]
 
-    assert len(cmd_handlers) == 6
+    assert len(cmd_handlers) == 8
     assert frozenset({"start"}) in commands
     assert frozenset({"new"}) in commands
     assert frozenset({"status"}) in commands
     assert frozenset({"verbose"}) in commands
     assert frozenset({"repo"}) in commands
+    assert frozenset({"context"}) in commands
+    assert frozenset({"compact"}) in commands
     assert frozenset({"restart"}) in commands
 
 
@@ -235,13 +237,22 @@ async def test_agentic_text_times_out_only_waiting_for_busy_topic_lock(
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
-    """Agentic mode returns 6 bot commands."""
+    """Agentic mode returns 8 bot commands."""
     orchestrator = MessageOrchestrator(agentic_settings, deps)
     commands = await orchestrator.get_bot_commands()
 
-    assert len(commands) == 6
+    assert len(commands) == 8
     cmd_names = [c.command for c in commands]
-    assert cmd_names == ["start", "new", "status", "verbose", "repo", "restart"]
+    assert cmd_names == [
+        "start",
+        "new",
+        "status",
+        "verbose",
+        "repo",
+        "context",
+        "compact",
+        "restart",
+    ]
 
 
 async def test_classic_bot_commands(classic_settings, deps):
@@ -500,6 +511,92 @@ async def test_agentic_text_compacts_before_claude_when_threshold_exceeded(
     assert state.message_count == 1
     assert state.turns[-1].user_text == "Continue from here"
     assert state.turns[-1].assistant_text == "Final answer"
+
+
+async def test_context_command_reports_topic_usage(agentic_settings, deps):
+    """The /context command reports tracked usage for the current topic."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    key = "-100:54"
+    orchestrator.context_manager.record_turn(
+        key,
+        user_text="Olá",
+        assistant_text="Oi, como posso ajudar?",
+        session_id="session-topic-54",
+    )
+
+    update = MagicMock()
+    update.effective_message = update.message
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {
+        "_thread_context": {
+            "chat_id": -100,
+            "message_thread_id": 54,
+            "state_key": key,
+        }
+    }
+
+    await orchestrator.context_status(update, context)
+
+    update.message.reply_text.assert_awaited_once()
+    reply = update.message.reply_text.await_args.args[0]
+    assert "Contexto do tópico" in reply
+    assert "mensagens" in reply
+    assert key in reply
+
+
+async def test_compact_command_forces_compaction(agentic_settings, deps):
+    """The /compact command forces context compaction for the current topic."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    key = "-100:54"
+    orchestrator.context_manager.record_turn(
+        key,
+        user_text="Mensagem anterior",
+        assistant_text="Resposta anterior",
+        session_id="session-topic-54",
+    )
+
+    summary_response = MagicMock()
+    summary_response.content = "Resumo do tópico."
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=summary_response)
+
+    summary_store = MagicMock()
+    summary_store.create_summary = AsyncMock()
+    storage = MagicMock()
+    storage.conversation_summaries = summary_store
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = update.message
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {
+        "current_directory": agentic_settings.approved_directory,
+        "claude_session_id": "session-topic-54",
+        "_thread_context": {
+            "chat_id": -100,
+            "message_thread_id": 54,
+            "state_key": key,
+        },
+    }
+    context.bot_data = {
+        "claude_integration": claude_integration,
+        "storage": storage,
+    }
+
+    await orchestrator.compact_context(update, context)
+
+    claude_integration.run_command.assert_awaited_once()
+    summary_store.create_summary.assert_awaited_once()
+    update.message.reply_text.assert_awaited_once()
+    reply = update.message.reply_text.await_args.args[0]
+    assert "compactado" in reply
+    assert "Fallback: não" in reply
+    assert context.user_data["claude_session_id"] is None
+    assert context.user_data["force_new_session"] is True
 
 
 async def test_agentic_text_forces_new_session_for_new_thread_context(
