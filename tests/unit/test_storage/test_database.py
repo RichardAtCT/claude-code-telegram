@@ -97,3 +97,37 @@ class TestDatabaseManager:
             cursor = await conn.execute("SELECT MAX(version) FROM schema_version")
             version = await cursor.fetchone()
             assert version[0] >= 1  # At least initial migration
+
+
+async def test_migration_5_creates_conversation_summaries(db_manager):
+    """Migration 5 creates conversation_summaries table, columns and indexes."""
+    async with db_manager.get_connection() as conn:
+        cursor = await conn.execute("PRAGMA table_info(conversation_summaries)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        assert columns == [
+            "id",
+            "topic_key",
+            "session_id",
+            "summary_text",
+            "messages_included",
+            "tokens_before",
+            "tokens_after",
+            "created_at",
+        ]
+
+        cursor = await conn.execute("PRAGMA foreign_key_list(conversation_summaries)")
+        foreign_keys = await cursor.fetchall()
+        assert any(
+            row[2] == "sessions"
+            and row[3] == "session_id"
+            and row[4] == "session_id"
+            for row in foreign_keys
+        )
+
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='index' AND tbl_name='conversation_summaries'"
+        )
+        indexes = {row[0] for row in await cursor.fetchall()}
+        assert "idx_conversation_summaries_topic_created" in indexes
+        assert "idx_conversation_summaries_session" in indexes

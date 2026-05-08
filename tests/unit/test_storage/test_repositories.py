@@ -8,6 +8,7 @@ import pytest
 
 from src.storage.database import DatabaseManager
 from src.storage.models import (
+    ConversationSummaryModel,
     MessageModel,
     ProjectThreadModel,
     SessionModel,
@@ -17,6 +18,7 @@ from src.storage.models import (
 from src.storage.repositories import (
     AnalyticsRepository,
     AuditLogRepository,
+    ConversationSummaryRepository,
     MessageRepository,
     ProjectThreadRepository,
     SessionRepository,
@@ -76,6 +78,12 @@ async def analytics_repo(db_manager):
 async def project_thread_repo(db_manager):
     """Create project thread repository."""
     return ProjectThreadRepository(db_manager)
+
+
+@pytest.fixture
+async def conversation_summary_repo(db_manager):
+    """Create conversation summary repository."""
+    return ConversationSummaryRepository(db_manager)
 
 
 class TestUserRepository:
@@ -258,6 +266,65 @@ class TestSessionRepository:
         active_sessions = await session_repo.get_user_sessions(12351, active_only=True)
         assert len(active_sessions) == 1
         assert active_sessions[0].session_id == "recent-session"
+
+
+async def test_conversation_summary_repository_create_and_latest(
+    conversation_summary_repo, user_repo, session_repo
+):
+    """Create summaries and retrieve latest/list by topic."""
+    user = UserModel(
+        user_id=22345,
+        telegram_username="summaryuser",
+        first_seen=datetime.now(UTC),
+        last_active=datetime.now(UTC),
+        is_allowed=True,
+    )
+    await user_repo.create_user(user)
+
+    session = SessionModel(
+        session_id="summary-session",
+        user_id=22345,
+        project_path="/test/summaries",
+        created_at=datetime.now(UTC),
+        last_used=datetime.now(UTC),
+    )
+    await session_repo.create_session(session)
+
+    old_summary = ConversationSummaryModel(
+        topic_key="topic-a",
+        session_id="summary-session",
+        summary_text="old summary",
+        messages_included=5,
+        tokens_before=1000,
+        tokens_after=100,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    old_id = await conversation_summary_repo.create_summary(old_summary)
+
+    new_summary = ConversationSummaryModel(
+        topic_key="topic-a",
+        session_id="summary-session",
+        summary_text="new summary",
+        messages_included=8,
+        tokens_before=2000,
+        tokens_after=200,
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    new_id = await conversation_summary_repo.create_summary(new_summary)
+
+    latest = await conversation_summary_repo.get_latest_for_topic("topic-a")
+    assert latest is not None
+    assert latest.id == new_id
+    assert latest.summary_text == "new summary"
+    assert latest.messages_included == 8
+    assert latest.tokens_before == 2000
+    assert latest.tokens_after == 200
+    assert latest.created_at == datetime(2026, 1, 2, tzinfo=UTC)
+
+    summaries = await conversation_summary_repo.list_for_topic("topic-a", limit=10)
+    assert [summary.id for summary in summaries] == [new_id, old_id]
+
+    assert await conversation_summary_repo.get_latest_for_topic("missing") is None
 
 
 class TestMessageRepository:

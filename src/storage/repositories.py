@@ -15,6 +15,7 @@ import structlog
 from .database import DatabaseManager
 from .models import (
     AuditLogModel,
+    ConversationSummaryModel,
     CostTrackingModel,
     MessageModel,
     ProjectThreadModel,
@@ -380,6 +381,72 @@ class ProjectThreadRepository:
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
             return [ProjectThreadModel.from_row(row) for row in rows]
+
+
+class ConversationSummaryRepository:
+    """Conversation summary data access."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        """Initialize repository."""
+        self.db = db_manager
+
+    async def create_summary(self, summary: ConversationSummaryModel) -> int:
+        """Create a conversation summary and return its ID."""
+        async with self.db.get_connection() as conn:
+            created_at = summary.created_at or datetime.now(UTC)
+            cursor = await conn.execute(
+                """
+                INSERT INTO conversation_summaries
+                (topic_key, session_id, summary_text, messages_included,
+                 tokens_before, tokens_after, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    summary.topic_key,
+                    summary.session_id,
+                    summary.summary_text,
+                    summary.messages_included,
+                    summary.tokens_before,
+                    summary.tokens_after,
+                    created_at,
+                ),
+            )
+            await conn.commit()
+            return cursor.lastrowid
+
+    async def get_latest_for_topic(
+        self, topic_key: str
+    ) -> Optional[ConversationSummaryModel]:
+        """Get the latest summary for a topic."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM conversation_summaries
+                WHERE topic_key = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+            """,
+                (topic_key,),
+            )
+            row = await cursor.fetchone()
+            return ConversationSummaryModel.from_row(row) if row else None
+
+    async def list_for_topic(
+        self, topic_key: str, limit: int = 20
+    ) -> List[ConversationSummaryModel]:
+        """List summaries for a topic, newest first."""
+        async with self.db.get_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM conversation_summaries
+                WHERE topic_key = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            """,
+                (topic_key, limit),
+            )
+            rows = await cursor.fetchall()
+            return [ConversationSummaryModel.from_row(row) for row in rows]
 
 
 class MessageRepository:

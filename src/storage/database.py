@@ -310,6 +310,28 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- Long-context conversation summaries persisted per topic/session
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic_key TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    summary_text TEXT NOT NULL,
+                    messages_included INTEGER NOT NULL,
+                    tokens_before INTEGER NOT NULL,
+                    tokens_after INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_conversation_summaries_topic_created
+                    ON conversation_summaries(topic_key, created_at);
+                CREATE INDEX IF NOT EXISTS idx_conversation_summaries_session
+                    ON conversation_summaries(session_id);
+                """,
+            ),
         ]
 
     async def _init_pool(self):

@@ -29,6 +29,10 @@ class TestStorageFacade:
         # Should be able to perform health check
         assert await storage.health_check()
 
+    async def test_conversation_summaries_repository_wired(self, storage):
+        """Test conversation summaries repository is exposed by facade."""
+        assert storage.conversation_summaries is not None
+
     async def test_get_or_create_user(self, storage):
         """Test getting or creating user."""
         # Create new user

@@ -20,6 +20,7 @@ from .models import (
 from .repositories import (
     AnalyticsRepository,
     AuditLogRepository,
+    ConversationSummaryRepository,
     CostTrackingRepository,
     MessageRepository,
     ProjectThreadRepository,
@@ -40,6 +41,7 @@ class Storage:
         self.users = UserRepository(self.db_manager)
         self.sessions = SessionRepository(self.db_manager)
         self.project_threads = ProjectThreadRepository(self.db_manager)
+        self.conversation_summaries = ConversationSummaryRepository(self.db_manager)
         self.messages = MessageRepository(self.db_manager)
         self.tools = ToolUsageRepository(self.db_manager)
         self.audit = AuditLogRepository(self.db_manager)
