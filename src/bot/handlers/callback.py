@@ -12,6 +12,7 @@ from ...config.settings import Settings
 from ...security.audit import AuditLogger
 from ...security.validators import SecurityValidator
 from ..utils.html_format import escape_html
+from .message import _should_force_new_claude_session
 
 logger = structlog.get_logger()
 
@@ -946,7 +947,7 @@ async def handle_quick_action_callback(
         )
 
         session_id = context.user_data.get("claude_session_id")
-        force_new = bool(context.user_data.get("_thread_context") and not session_id)
+        force_new = _should_force_new_claude_session(context, session_id)
 
         # Run the action through Claude
         claude_response = await claude_integration.run_command(
@@ -956,6 +957,9 @@ async def handle_quick_action_callback(
             session_id=session_id,
             force_new=force_new,
         )
+
+        if force_new:
+            context.user_data["force_new_session"] = False
 
         if claude_response:
             context.user_data["claude_session_id"] = claude_response.session_id

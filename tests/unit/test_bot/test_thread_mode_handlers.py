@@ -268,6 +268,44 @@ async def test_quick_action_forces_new_session_for_new_thread_context(thread_set
     assert context.user_data["claude_session_id"] == "quick-topic-session"
 
 
+async def test_quick_action_consumes_pending_force_new_session(thread_settings):
+    """Quick actions after /new must consume the one-shot force-new flag."""
+    settings, project_root = thread_settings
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(
+        return_value=SimpleNamespace(session_id="quick-topic-session", content="ok")
+    )
+    quick_actions = SimpleNamespace(
+        actions={"qa": SimpleNamespace(icon="⚡", name="QA", prompt="run qa")}
+    )
+
+    query = MagicMock()
+    query.from_user.id = 1
+    query.edit_message_text = AsyncMock()
+    query.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.bot_data = {
+        "settings": settings,
+        "quick_actions": quick_actions,
+        "claude_integration": claude_integration,
+    }
+    context.user_data = {
+        "current_directory": project_root,
+        "_thread_context": {"project_root": str(project_root)},
+        "claude_session_id": "old-topic-session",
+        "force_new_session": True,
+    }
+
+    await callback.handle_quick_action_callback(query, "qa", context)
+
+    kwargs = claude_integration.run_command.call_args.kwargs
+    assert kwargs["session_id"] == "old-topic-session"
+    assert kwargs["force_new"] is True
+    assert context.user_data["claude_session_id"] == "quick-topic-session"
+    assert context.user_data["force_new_session"] is False
+
+
 async def test_start_private_mode_triggers_auto_sync(thread_settings):
     """Private mode /start auto-syncs project topics for current private chat."""
     settings, _ = thread_settings
