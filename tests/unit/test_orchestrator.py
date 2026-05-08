@@ -161,9 +161,77 @@ def test_agentic_text_uses_same_lock_for_same_topic(agentic_settings, deps):
 
     first_lock = orchestrator._topic_lock("-1001234567890:202")
     second_lock = orchestrator._topic_lock("-1001234567890:202")
+    other_topic_lock = orchestrator._topic_lock("-1001234567890:303")
 
     assert first_lock is second_lock
+    assert first_lock is not other_topic_lock
     assert isinstance(first_lock, asyncio.Lock)
+
+
+async def test_agentic_text_free_lock_does_not_timeout_slow_execution(
+    agentic_settings, deps
+):
+    """A slow Claude run is not cancelled once the topic lock is acquired."""
+    agentic_settings.context_lock_timeout_seconds = 0.01
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    started = asyncio.Event()
+
+    async def slow_locked(*args, **kwargs):
+        started.set()
+        await asyncio.sleep(0.05)
+
+    orchestrator._agentic_text_locked = AsyncMock(side_effect=slow_locked)
+
+    update = MagicMock()
+    update.message.text = "slow request"
+    update.message.chat_id = -1001234567890
+    update.message.message_thread_id = 202
+    update.effective_message = update.message
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    await orchestrator.agentic_text(update, context)
+
+    assert started.is_set()
+    orchestrator._agentic_text_locked.assert_awaited_once_with(
+        update, context, "-1001234567890:202", "slow request"
+    )
+    update.message.reply_text.assert_not_awaited()
+    assert not orchestrator._topic_lock("-1001234567890:202").locked()
+
+
+async def test_agentic_text_times_out_only_waiting_for_busy_topic_lock(
+    agentic_settings, deps
+):
+    """A second request in the same topic times out while waiting for the lock."""
+    agentic_settings.context_lock_timeout_seconds = 0.01
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    orchestrator._agentic_text_locked = AsyncMock()
+    lock = orchestrator._topic_lock("-1001234567890:202")
+    await lock.acquire()
+
+    update = MagicMock()
+    update.message.text = "second request"
+    update.message.chat_id = -1001234567890
+    update.message.message_thread_id = 202
+    update.effective_message = update.message
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {}
+
+    try:
+        await orchestrator.agentic_text(update, context)
+    finally:
+        lock.release()
+
+    orchestrator._agentic_text_locked.assert_not_awaited()
+    update.message.reply_text.assert_awaited_once_with(
+        "⏳ Este tópico ainda está processando uma resposta longa. "
+        "Tenta de novo em alguns segundos."
+    )
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):

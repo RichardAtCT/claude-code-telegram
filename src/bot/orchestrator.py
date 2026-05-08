@@ -1034,17 +1034,25 @@ class MessageOrchestrator:
         topic_state_key = self._current_topic_key(update, context)
         lock = self._topic_lock(topic_state_key)
 
+        acquired = False
         try:
             async with asyncio.timeout(self.settings.context_lock_timeout_seconds):
-                async with lock:
-                    await self._agentic_text_locked(
-                        update, context, topic_state_key, message_text
-                    )
+                await lock.acquire()
+                acquired = True
         except TimeoutError:
             await update.message.reply_text(
                 "⏳ Este tópico ainda está processando uma resposta longa. "
                 "Tenta de novo em alguns segundos."
             )
+            return
+
+        try:
+            await self._agentic_text_locked(
+                update, context, topic_state_key, message_text
+            )
+        finally:
+            if acquired:
+                lock.release()
 
     async def _agentic_text_locked(
         self,
