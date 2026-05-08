@@ -108,7 +108,7 @@ class ContextManager:
         """Build a prompt for summarizing retained topic context."""
         state = self.get_state(key)
         prior_summary = state.last_summary_text or "Nenhum resumo anterior."
-        turns = state.turns if state.last_summary_text is None else self.recent_turns(key)
+        turns = state.turns
         turns_text = self._format_turns(turns)
 
         return (

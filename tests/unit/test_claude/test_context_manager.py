@@ -160,8 +160,8 @@ class TestContextManager:
 
         assert manager.would_exceed_limit("10:1", "a") is True
 
-    def test_build_summary_prompt_contains_prior_summary_and_recent_turns(self):
-        """Summary prompt should include current state information for compaction."""
+    def test_build_summary_prompt_contains_prior_summary_and_all_turns(self):
+        """Summary prompt should include all turns even when a prior summary exists."""
         manager = ContextManager(token_threshold=1000, keep_last=2, summary_target_tokens=25)
         state = manager.get_state("10:1")
         state.last_summary_text = "Resumo anterior"
@@ -176,7 +176,8 @@ class TestContextManager:
         assert "resposta 2" in prompt
         assert "terceira" in prompt
         assert "resposta 3" in prompt
-        assert "primeira" not in prompt
+        assert "primeira" in prompt
+        assert "resposta 1" in prompt
         assert "25 tokens" in prompt
 
     def test_build_summary_prompt_includes_all_turns_on_first_summary(self):
