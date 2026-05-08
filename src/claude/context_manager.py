@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Optional
+from typing import Any, Optional
+
+from src.storage.models import ConversationSummaryModel
 
 GENERAL_TOPIC_SENTINEL = 1
 
@@ -49,6 +51,19 @@ class TopicContextState:
     last_summary_at: Optional[datetime] = None
     last_summary_text: Optional[str] = None
     turns: list[ContextTurn] = field(default_factory=list)
+
+
+@dataclass
+class CompactionResult:
+    """Result returned after compacting a topic context."""
+
+    compacted_prompt: str
+    summary_text: str
+    messages_included: int
+    tokens_before: int
+    tokens_after: int
+    force_new_session: bool = True
+    used_fallback: bool = False
 
 
 class ContextManager:
@@ -119,6 +134,81 @@ class ContextManager:
             "Produza um resumo conciso em português com fatos, decisões, "
             "pendências e preferências relevantes. "
             f"Alvo: aproximadamente {self.summary_target_tokens} tokens."
+        )
+
+    def build_compacted_prompt(self, key: str, summary_text: str) -> str:
+        """Build the prompt used to restart Claude with compacted context."""
+        recent_turns_text = self._format_turns(self.recent_turns(key))
+
+        if summary_text:
+            return (
+                "Conversation summary from earlier messages:\n"
+                f"{summary_text}\n\n"
+                "Recent verbatim turns:\n"
+                f"{recent_turns_text}"
+            )
+
+        return "Recent verbatim turns:\n" f"{recent_turns_text}"
+
+    async def compact(
+        self,
+        key: str,
+        claude: Any,
+        summary_store: Any,
+        session_id: str,
+        working_directory: str,
+        user_id: int,
+    ) -> CompactionResult:
+        """Summarize long context and retain only recent verbatim turns."""
+        state = self.get_state(key)
+        previous_summary = state.last_summary_text
+        recent_turns = self.recent_turns(key)
+        tokens_before = state.tokens_used
+        messages_included = len(state.turns)
+        used_fallback = False
+
+        try:
+            response = await claude.run_command(
+                prompt=self.build_summary_prompt(key),
+                working_directory=working_directory,
+                user_id=user_id,
+                session_id=None,
+                force_new=True,
+            )
+            summary_text = response.content.strip()
+            tokens_after = estimate_tokens(summary_text) + sum(
+                turn.estimated_tokens for turn in recent_turns
+            )
+            await summary_store.create_summary(
+                ConversationSummaryModel(
+                    topic_key=key,
+                    session_id=session_id,
+                    summary_text=summary_text,
+                    messages_included=messages_included,
+                    tokens_before=tokens_before,
+                    tokens_after=tokens_after,
+                    created_at=datetime.now(UTC),
+                )
+            )
+        except Exception:
+            used_fallback = True
+            summary_text = ""
+            tokens_after = sum(turn.estimated_tokens for turn in recent_turns)
+
+        compacted_prompt = self.build_compacted_prompt(key, summary_text)
+        state.turns = recent_turns
+        state.tokens_used = tokens_after
+        state.compaction_count += 1
+        state.last_summary_at = datetime.now(UTC)
+        state.last_summary_text = summary_text or previous_summary
+
+        return CompactionResult(
+            compacted_prompt=compacted_prompt,
+            summary_text=summary_text,
+            messages_included=messages_included,
+            tokens_before=tokens_before,
+            tokens_after=tokens_after,
+            used_fallback=used_fallback,
         )
 
     @staticmethod

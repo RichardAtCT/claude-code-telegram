@@ -1,6 +1,9 @@
 """Tests for Claude context manager foundation."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+
+import pytest
 
 from src.claude.context_manager import (
     GENERAL_TOPIC_SENTINEL,
@@ -10,6 +13,34 @@ from src.claude.context_manager import (
     estimate_tokens,
     topic_key,
 )
+
+
+class FakeClaude:
+    """Fake Claude integration for compaction tests."""
+
+    def __init__(self, content: str = "Resumo gerado", error: Exception | None = None) -> None:
+        self.content = content
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    async def run_command(self, **kwargs: object) -> SimpleNamespace:
+        """Record invocation and return a fake response or raise configured error."""
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(content=self.content)
+
+
+class FakeSummaryStore:
+    """Fake summary repository for compaction tests."""
+
+    def __init__(self) -> None:
+        self.summaries: list[object] = []
+
+    async def create_summary(self, summary: object) -> int:
+        """Record persisted summaries and return a fake id."""
+        self.summaries.append(summary)
+        return len(self.summaries)
 
 
 class TestTopicKey:
@@ -194,3 +225,111 @@ class TestContextManager:
         assert "resposta antiga" in prompt
         assert "turno recente" in prompt
         assert "resposta recente" in prompt
+
+    @pytest.mark.asyncio
+    async def test_compact_saves_summary_and_returns_prompt(self):
+        """Compaction should save summary and return restart prompt with recent turns."""
+        manager = ContextManager(token_threshold=1000, keep_last=2, summary_target_tokens=25)
+        manager.record_turn("10:1", "turno antigo", "resposta antiga", "session-1")
+        manager.record_turn("10:1", "turno intermediário", "resposta 2", "session-2")
+        manager.record_turn("10:1", "turno recente", "resposta recente", "session-3")
+        tokens_before = manager.get_state("10:1").tokens_used
+        recent_before = manager.recent_turns("10:1")
+        claude = FakeClaude(content="  Resumo novo  ")
+        summary_store = FakeSummaryStore()
+
+        result = await manager.compact(
+            "10:1",
+            claude=claude,
+            summary_store=summary_store,
+            session_id="session-original",
+            working_directory="/tmp/project",
+            user_id=123,
+        )
+
+        expected_tokens_after = estimate_tokens("Resumo novo") + sum(
+            turn.estimated_tokens for turn in recent_before
+        )
+        state = manager.get_state("10:1")
+        assert result.summary_text == "Resumo novo"
+        assert result.compacted_prompt.startswith(
+            "Conversation summary from earlier messages:"
+        )
+        assert "Recent verbatim turns:" in result.compacted_prompt
+        assert "Resumo novo" in result.compacted_prompt
+        assert "turno antigo" not in result.compacted_prompt
+        assert "turno intermediário" in result.compacted_prompt
+        assert "turno recente" in result.compacted_prompt
+        assert result.messages_included == 3
+        assert result.tokens_before == tokens_before
+        assert result.tokens_after == expected_tokens_after
+        assert result.force_new_session is True
+        assert result.used_fallback is False
+        assert state.turns == recent_before
+        assert state.tokens_used == expected_tokens_after
+        assert state.compaction_count == 1
+        assert state.last_summary_at is not None
+        assert state.last_summary_at.tzinfo == UTC
+        assert state.last_summary_text == "Resumo novo"
+        assert len(summary_store.summaries) == 1
+        saved_summary = summary_store.summaries[0]
+        assert saved_summary.topic_key == "10:1"
+        assert saved_summary.session_id == "session-original"
+        assert saved_summary.summary_text == "Resumo novo"
+        assert saved_summary.messages_included == 3
+        assert saved_summary.tokens_before == tokens_before
+        assert saved_summary.tokens_after == expected_tokens_after
+        assert saved_summary.created_at is not None
+        assert claude.calls == [
+            {
+                "prompt": claude.calls[0]["prompt"],
+                "working_directory": "/tmp/project",
+                "user_id": 123,
+                "session_id": None,
+                "force_new": True,
+            }
+        ]
+        assert "turno antigo" in claude.calls[0]["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_compact_fallback_keeps_recent_turn_when_summary_fails(self):
+        """Fallback compaction should keep recent turns without saving a summary."""
+        manager = ContextManager(token_threshold=1000, keep_last=1, summary_target_tokens=25)
+        state = manager.get_state("10:1")
+        state.last_summary_text = "Resumo anterior"
+        manager.record_turn("10:1", "turno antigo", "resposta antiga", "session-1")
+        manager.record_turn("10:1", "turno recente", "resposta recente", "session-2")
+        tokens_before = state.tokens_used
+        recent_before = manager.recent_turns("10:1")
+        claude = FakeClaude(error=RuntimeError("falha no resumo"))
+        summary_store = FakeSummaryStore()
+
+        result = await manager.compact(
+            "10:1",
+            claude=claude,
+            summary_store=summary_store,
+            session_id="session-original",
+            working_directory="/tmp/project",
+            user_id=123,
+        )
+
+        expected_tokens_after = sum(turn.estimated_tokens for turn in recent_before)
+        assert result.summary_text == ""
+        assert result.compacted_prompt.startswith("Recent verbatim turns:")
+        assert "Conversation summary from earlier messages:" not in result.compacted_prompt
+        assert "turno antigo" not in result.compacted_prompt
+        assert "turno recente" in result.compacted_prompt
+        assert result.messages_included == 2
+        assert result.tokens_before == tokens_before
+        assert result.tokens_after == expected_tokens_after
+        assert result.force_new_session is True
+        assert result.used_fallback is True
+        assert state.turns == recent_before
+        assert state.tokens_used == expected_tokens_after
+        assert state.compaction_count == 1
+        assert state.last_summary_at is not None
+        assert state.last_summary_at.tzinfo == UTC
+        assert state.last_summary_text == "Resumo anterior"
+        assert summary_store.summaries == []
+        assert claude.calls[0]["session_id"] is None
+        assert claude.calls[0]["force_new"] is True
