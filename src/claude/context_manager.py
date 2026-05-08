@@ -35,7 +35,7 @@ class ContextTurn:
     @property
     def estimated_tokens(self) -> int:
         """Estimated token usage for this exchange."""
-        return estimate_tokens(f"{self.user_text}\n{self.assistant_text}")
+        return estimate_tokens(self.user_text) + estimate_tokens(self.assistant_text)
 
 
 @dataclass
@@ -76,7 +76,7 @@ class ContextManager:
         """Return whether adding the next user text would exceed threshold."""
         state = self.get_state(key)
         projected_tokens = state.tokens_used + estimate_tokens(next_user_text)
-        return projected_tokens > self.token_threshold
+        return projected_tokens >= self.token_threshold
 
     def record_turn(
         self,
@@ -84,7 +84,7 @@ class ContextManager:
         user_text: str,
         assistant_text: str,
         session_id: str,
-    ) -> ContextTurn:
+    ) -> TopicContextState:
         """Record one completed exchange under a topic key."""
         state = self.get_state(key)
         turn = ContextTurn(
@@ -95,7 +95,7 @@ class ContextManager:
         state.turns.append(turn)
         state.message_count += 1
         state.tokens_used += turn.estimated_tokens
-        return turn
+        return state
 
     def recent_turns(self, key: str) -> list[ContextTurn]:
         """Return the most recent turns retained for summary context."""
@@ -108,7 +108,8 @@ class ContextManager:
         """Build a prompt for summarizing retained topic context."""
         state = self.get_state(key)
         prior_summary = state.last_summary_text or "Nenhum resumo anterior."
-        turns_text = self._format_turns(self.recent_turns(key))
+        turns = state.turns if state.last_summary_text is None else self.recent_turns(key)
+        turns_text = self._format_turns(turns)
 
         return (
             "Resuma o contexto desta conversa para continuidade futura.\n"

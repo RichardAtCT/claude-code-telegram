@@ -74,8 +74,8 @@ class TestContextTurn:
         )
 
         assert turn.estimated_tokens == estimate_tokens(
-            "pergunta em português\nresposta detalhada em português"
-        )
+            "pergunta em português"
+        ) + estimate_tokens("resposta detalhada em português")
 
 
 class TestTopicContextState:
@@ -122,15 +122,22 @@ class TestContextManager:
         """Recorded turns should update counters and recent turns should be bounded."""
         manager = ContextManager(token_threshold=1000, keep_last=2, summary_target_tokens=50)
 
-        first = manager.record_turn("10:1", "primeira", "resposta 1", "session-1")
-        second = manager.record_turn("10:1", "segunda", "resposta 2", "session-2")
-        third = manager.record_turn("10:1", "terceira", "resposta 3", "session-3")
+        returned_state = manager.record_turn(
+            "10:1", "primeira", "resposta 1", "session-1"
+        )
+        manager.record_turn("10:1", "segunda", "resposta 2", "session-2")
+        manager.record_turn("10:1", "terceira", "resposta 3", "session-3")
         state = manager.get_state("10:1")
 
-        assert state.turns == [first, second, third]
+        assert returned_state is state
+        assert [turn.user_text for turn in state.turns] == [
+            "primeira",
+            "segunda",
+            "terceira",
+        ]
         assert state.message_count == 3
         assert state.tokens_used == sum(turn.estimated_tokens for turn in state.turns)
-        assert manager.recent_turns("10:1") == [second, third]
+        assert manager.recent_turns("10:1") == state.turns[1:]
 
     def test_would_exceed_limit_uses_topic_state_and_next_user_text(self):
         """Threshold checks should include existing topic usage and next user text."""
@@ -145,6 +152,13 @@ class TestContextManager:
         assert manager.would_exceed_limit("10:1", short_text) is False
         assert manager.would_exceed_limit("10:1", long_text) is True
         assert manager.would_exceed_limit("10:2", short_text) is False
+
+    def test_would_exceed_limit_is_true_when_projected_equals_threshold(self):
+        """Threshold equality should trigger context compaction."""
+        manager = ContextManager(token_threshold=10, keep_last=2, summary_target_tokens=10)
+        manager.get_state("10:1").tokens_used = 10 - estimate_tokens("a")
+
+        assert manager.would_exceed_limit("10:1", "a") is True
 
     def test_build_summary_prompt_contains_prior_summary_and_recent_turns(self):
         """Summary prompt should include current state information for compaction."""
@@ -164,3 +178,18 @@ class TestContextManager:
         assert "resposta 3" in prompt
         assert "primeira" not in prompt
         assert "25 tokens" in prompt
+
+    def test_build_summary_prompt_includes_all_turns_on_first_summary(self):
+        """First summary prompt should include every available turn, not only keep_last."""
+        manager = ContextManager(token_threshold=1000, keep_last=2, summary_target_tokens=25)
+        manager.record_turn("10:1", "turno antigo", "resposta antiga", "session-1")
+        manager.record_turn("10:1", "turno intermediário", "resposta 2", "session-2")
+        manager.record_turn("10:1", "turno recente", "resposta recente", "session-3")
+
+        prompt = manager.build_summary_prompt("10:1")
+
+        assert "Nenhum resumo anterior" in prompt
+        assert "turno antigo" in prompt
+        assert "resposta antiga" in prompt
+        assert "turno recente" in prompt
+        assert "resposta recente" in prompt
