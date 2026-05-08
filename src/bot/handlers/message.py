@@ -234,12 +234,11 @@ def _format_error_message(error: Exception | str) -> str:
 
     if "invalid api key" in error_lower or "authentication_error" in error_lower:
         return (
-            "🔑 <b>API Authentication Error</b>\n\n"
-            "The API key used to connect to Claude is invalid or expired.\n\n"
+            "🔑 <b>Claude Authentication Error</b>\n\n"
+            "Claude CLI/OAuth authentication is invalid or expired.\n\n"
             "<b>What you can do:</b>\n"
-            "• Ask the administrator to verify the "
-            "<code>ANTHROPIC_API_KEY</code> setting\n"
-            "• Check that the API key has not been revoked"
+            "• Ask the administrator to refresh Claude CLI/OAuth login\n"
+            "• Do not configure Anthropic API keys for this bot"
         )
 
     # Match known SDK prefixes: "Failed to connect to Claude: ..."

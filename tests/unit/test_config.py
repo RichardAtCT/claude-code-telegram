@@ -47,6 +47,21 @@ def test_settings_with_valid_data(tmp_path):
     assert settings.approved_directory == test_dir
 
 
+def test_settings_does_not_model_anthropic_api_key(tmp_path, monkeypatch):
+    """ANTHROPIC_API_KEY is not a supported app setting."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-unsupported")
+
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(tmp_path),
+    )
+
+    assert "anthropic_api_key" not in Settings.model_fields
+    assert not hasattr(settings, "anthropic_api_key")
+    assert not hasattr(settings, "anthropic_api_key_str")
+
+
 def test_allowed_users_parsing():
     """Test parsing of comma-separated user IDs."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -630,7 +645,7 @@ def test_environment_loading():
 def test_load_config_does_not_log_api_keys(tmp_path):
     """Startup/error logs should not include raw provider API keys."""
     secrets = {
-        "ANTHROPIC_API_KEY": "sk-ant-api03-sensitive-anthropic-token-value",
+        "ANTHROPIC_API_KEY": "dummy-anthropic-api-key",
         "MISTRAL_API_KEY": "mistral-sensitive-token-value-123",
         "OPENAI_API_KEY": "sk-sensitive-openai-token-value-456",
     }

@@ -250,13 +250,15 @@ class ClaudeSDKManager:
         self.config = config
         self.security_validator = security_validator
 
-        # Set up environment for Claude Code SDK if API key is provided
-        # If no API key is provided, the SDK will use existing CLI authentication
-        if config.anthropic_api_key_str:
-            os.environ["ANTHROPIC_API_KEY"] = config.anthropic_api_key_str
-            logger.info("Using provided API key for Claude SDK authentication")
+        # Ferd policy: never authenticate Claude via paid Anthropic API key.
+        # The SDK must use existing Claude CLI/OAuth authentication only.
+        if os.environ.pop("ANTHROPIC_API_KEY", None) is not None:
+            logger.warning(
+                "Removed unsupported Anthropic API key from environment; "
+                "using Claude CLI/OAuth authentication"
+            )
         else:
-            logger.info("No API key provided, using existing Claude CLI authentication")
+            logger.info("Using existing Claude CLI/OAuth authentication")
 
     def _is_retryable_error(self, exc: BaseException) -> bool:
         """Return True for transient errors that warrant a retry.
@@ -309,14 +311,16 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
-            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
-            # tools so the SDK does not restrict tool usage (e.g. MCP tools).
+            # When DISABLE_TOOL_VALIDATION=true, do not pass None here.
+            # claude-agent-sdk currently calls list(options.allowed_tools) while
+            # applying skill defaults, so None crashes before Claude starts.
+            # An empty list means "no explicit restriction from this wrapper".
             if self.config.disable_tool_validation:
-                sdk_allowed_tools = None
-                sdk_disallowed_tools = None
+                sdk_allowed_tools = []
+                sdk_disallowed_tools = []
             else:
-                sdk_allowed_tools = self.config.claude_allowed_tools
-                sdk_disallowed_tools = self.config.claude_disallowed_tools
+                sdk_allowed_tools = self.config.claude_allowed_tools or []
+                sdk_disallowed_tools = self.config.claude_disallowed_tools or []
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(

@@ -74,10 +74,6 @@ class Settings(BaseSettings):
     claude_cli_path: Optional[str] = Field(
         None, description="Path to Claude CLI executable"
     )
-    anthropic_api_key: Optional[SecretStr] = Field(
-        None,
-        description="Anthropic API key for SDK (optional if CLI logged in)",
-    )
     claude_model: Optional[str] = Field(
         None, description="Claude model to use (defaults to CLI default if unset)"
     )
@@ -275,10 +271,28 @@ class Settings(BaseSettings):
         description="Stream partial responses via sendMessageDraft (private chats only)",
     )
     stream_draft_interval: float = Field(
-        0.3,
-        description="Minimum seconds between draft updates (0.1-5.0)",
-        ge=0.1,
-        le=5.0,
+        1.5,
+        description="Minimum seconds between draft updates (0.5-10.0)",
+        ge=0.5,
+        le=10.0,
+    )
+    telegram_progress_edit_interval: float = Field(
+        6.0,
+        description="Minimum seconds between progress-message edits",
+        ge=2.0,
+        le=60.0,
+    )
+    telegram_progress_max_failures: int = Field(
+        1,
+        description="Disable progress edits after this many Telegram failures",
+        ge=0,
+        le=10,
+    )
+    telegram_api_retry_attempts: int = Field(
+        2,
+        description="Bounded retry attempts for transient Telegram API errors",
+        ge=1,
+        le=5,
     )
 
     # Monitoring
@@ -526,14 +540,6 @@ class Settings(BaseSettings):
             return self.auth_token_secret.get_secret_value()
         return None
 
-    @property
-    def anthropic_api_key_str(self) -> Optional[str]:
-        """Get Anthropic API key as string."""
-        return (
-            self.anthropic_api_key.get_secret_value()
-            if self.anthropic_api_key
-            else None
-        )
 
     @property
     def mistral_api_key_str(self) -> Optional[str]:

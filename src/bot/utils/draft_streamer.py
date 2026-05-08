@@ -7,6 +7,7 @@ from typing import List, Optional
 import structlog
 import telegram
 
+from src.bot.utils.telegram_resilience import resilient_telegram_call
 from src.utils.constants import TELEGRAM_MAX_MESSAGE_LENGTH
 
 logger = structlog.get_logger()
@@ -50,13 +51,15 @@ class DraftStreamer:
         chat_id: int,
         draft_id: int,
         message_thread_id: Optional[int] = None,
-        throttle_interval: float = 0.3,
+        throttle_interval: float = 1.5,
+        retry_attempts: int = 1,
     ) -> None:
         self.bot = bot
         self.chat_id = chat_id
         self.draft_id = draft_id
         self.message_thread_id = message_thread_id
         self.throttle_interval = throttle_interval
+        self.retry_attempts = retry_attempts
 
         self._tool_lines: List[str] = []
         self._accumulated_text = ""
@@ -117,17 +120,24 @@ class DraftStreamer:
         if len(draft_text) > TELEGRAM_MAX_MESSAGE_LENGTH:
             draft_text = "\u2026" + draft_text[-(TELEGRAM_MAX_MESSAGE_LENGTH - 1) :]
 
-        try:
-            kwargs = {
-                "chat_id": self.chat_id,
-                "text": draft_text,
-                "draft_id": self.draft_id,
-            }
-            if self.message_thread_id is not None:
-                kwargs["message_thread_id"] = self.message_thread_id
-            await self.bot.send_message_draft(**kwargs)
+        kwargs = {
+            "chat_id": self.chat_id,
+            "text": draft_text,
+            "draft_id": self.draft_id,
+        }
+        if self.message_thread_id is not None:
+            kwargs["message_thread_id"] = self.message_thread_id
+
+        result = await resilient_telegram_call(
+            lambda: self.bot.send_message_draft(**kwargs),
+            operation="draft.send_message_draft",
+            chat_id=self.chat_id,
+            attempts=self.retry_attempts,
+            fail_silently=True,
+        )
+        if result is not None:
             self._last_send_time = time.time()
-        except Exception:
+        else:
             logger.debug(
                 "Draft send failed, disabling streamer",
                 chat_id=self.chat_id,

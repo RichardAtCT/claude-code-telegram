@@ -26,18 +26,10 @@ claude auth login
 claude auth status
 # Should show: "You are authenticated"
 
-# No ANTHROPIC_API_KEY needed — SDK uses CLI credentials
+# Do not set ANTHROPIC_API_KEY — SDK uses Claude CLI/OAuth credentials
 ```
 
-#### Option B: Direct API Key
-
-Uses the SDK with a direct API key, no CLI auth needed.
-
-```bash
-# 1. Get your API key from https://console.anthropic.com/
-# 2. Configure bot
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
-```
+Direct Anthropic API key authentication is intentionally unsupported for this bot.
 
 ### 3. Install the Bot
 
@@ -78,7 +70,7 @@ nano .env
 **Required Configuration:**
 
 ```bash
-TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TELEGRAM_BOT_TOKEN=<telegram-bot-token>
 TELEGRAM_BOT_USERNAME=your_bot_username
 APPROVED_DIRECTORY=/path/to/your/projects
 ALLOWED_USERS=123456789  # Your Telegram user ID
@@ -309,9 +301,9 @@ By default the keychain re-locks after a short idle period. Set it to 8 hours:
 security set-keychain-settings -t 28800 ~/Library/Keychains/login.keychain-db
 ```
 
-### Alternative: Use an API Key Instead
+### Alternative
 
-Bypass the keychain entirely by using a direct API key (Option B in the authentication section above). Set `ANTHROPIC_API_KEY` in your `.env` and the keychain is never consulted.
+Do not bypass Claude CLI/OAuth with direct Anthropic API keys; this bot intentionally rejects that auth path.
 
 ## Troubleshooting
 
@@ -333,11 +325,7 @@ claude auth status
 # If not authenticated: claude auth login
 ```
 
-**SDK + API Key:**
-```bash
-# Verify key starts with: sk-ant-api03-
-echo $ANTHROPIC_API_KEY
-```
+Direct Anthropic API key authentication is unsupported; refresh Claude CLI/OAuth instead.
 
 ### Permission errors
 ```bash

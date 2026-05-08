@@ -108,54 +108,25 @@ class TestClaudeSDKManager:
         """Create SDK manager."""
         return ClaudeSDKManager(config)
 
-    async def test_sdk_manager_initialization_with_api_key(self, tmp_path):
-        """Test SDK manager initialization with API key."""
-        from src.config.settings import Settings
+    async def test_sdk_manager_removes_anthropic_api_key_from_environment(
+        self, config, monkeypatch
+    ):
+        """SDK manager must ignore and remove Anthropic API key environment auth."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-unsupported")
 
-        # Test with API key provided
-        config_with_key = Settings(
-            telegram_bot_token="test:token",
-            telegram_bot_username="testbot",
-            approved_directory=tmp_path,
-            anthropic_api_key="test-api-key",
-            claude_timeout_seconds=2,
-        )
+        ClaudeSDKManager(config)
 
-        # Store original env var
-        original_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        assert "ANTHROPIC_API_KEY" not in os.environ
 
-        try:
-            ClaudeSDKManager(config_with_key)
+    async def test_sdk_manager_initialization_without_api_key(
+        self, config, monkeypatch
+    ):
+        """Test SDK manager initialization uses Claude CLI/OAuth auth."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-            # Check that API key was set in environment
-            assert os.environ.get("ANTHROPIC_API_KEY") == "test-api-key"
+        ClaudeSDKManager(config)
 
-        finally:
-            # Restore original env var
-            if original_api_key:
-                os.environ["ANTHROPIC_API_KEY"] = original_api_key
-            elif "ANTHROPIC_API_KEY" in os.environ:
-                del os.environ["ANTHROPIC_API_KEY"]
-
-    async def test_sdk_manager_initialization_without_api_key(self, config):
-        """Test SDK manager initialization without API key (uses CLI auth)."""
-        # Store original env var
-        original_api_key = os.environ.get("ANTHROPIC_API_KEY")
-
-        try:
-            # Remove any existing API key
-            if "ANTHROPIC_API_KEY" in os.environ:
-                del os.environ["ANTHROPIC_API_KEY"]
-
-            ClaudeSDKManager(config)
-
-            # Check that no API key was set (should use CLI auth)
-            assert config.anthropic_api_key_str is None
-
-        finally:
-            # Restore original env var
-            if original_api_key:
-                os.environ["ANTHROPIC_API_KEY"] = original_api_key
+        assert "ANTHROPIC_API_KEY" not in os.environ
 
     async def test_execute_command_success(self, sdk_manager):
         """Test successful command execution."""
@@ -601,8 +572,12 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].allowed_tools == ["Read", "Write", "Bash"]
 
-    async def test_disable_tool_validation_sets_allowed_tools_none(self, tmp_path):
-        """allowed_tools=None when DISABLE_TOOL_VALIDATION=true."""
+    async def test_disable_tool_validation_sets_allowed_tools_empty(self, tmp_path):
+        """allowed_tools=[] when DISABLE_TOOL_VALIDATION=true.
+
+        The current claude-agent-sdk applies skill defaults with list(options.allowed_tools),
+        so passing None crashes before Claude starts.
+        """
         config = Settings(
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
@@ -630,8 +605,8 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        assert captured_options[0].allowed_tools is None
-        assert captured_options[0].disallowed_tools is None
+        assert captured_options[0].allowed_tools == []
+        assert captured_options[0].disallowed_tools == []
 
     async def test_tool_validation_enabled_passes_configured_tools(self, tmp_path):
         """allowed/disallowed_tools passed when DISABLE_TOOL_VALIDATION=false."""

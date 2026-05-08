@@ -73,7 +73,7 @@ cp .env.example .env
 
 **Minimum required:**
 ```bash
-TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TELEGRAM_BOT_TOKEN=<telegram-bot-token>
 TELEGRAM_BOT_USERNAME=my_claude_bot
 APPROVED_DIRECTORY=/Users/yourname/projects
 ALLOWED_USERS=123456789  # Your Telegram user ID
@@ -229,7 +229,7 @@ ALLOWED_USERS=123456789          # Comma-separated Telegram user IDs
 
 ```bash
 # Claude
-ANTHROPIC_API_KEY=sk-ant-...     # API key (optional if using CLI auth)
+CLAUDE_CLI_PATH=claude           # Claude CLI; auth must be CLI/OAuth, not API key
 CLAUDE_MAX_COST_PER_USER=10.0    # Spending limit per user (USD)
 CLAUDE_TIMEOUT_SECONDS=300       # Operation timeout
 
@@ -305,7 +305,7 @@ Message [@userinfobot](https://t.me/userinfobot) on Telegram -- it will reply wi
 - Check bot logs with `make run-debug`
 
 **Claude integration not working:**
-- SDK mode (default): Check `claude auth status` or verify `ANTHROPIC_API_KEY`
+- SDK mode (default): Check `claude auth status`; this bot does not support Anthropic API keys
 - CLI mode: Verify `claude --version` and `claude auth status`
 - Check `CLAUDE_ALLOWED_TOOLS` includes necessary tools (see [docs/tools.md](docs/tools.md) for the full reference)
 

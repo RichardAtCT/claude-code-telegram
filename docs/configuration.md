@@ -26,7 +26,7 @@ Configuration is loaded in this order (later sources override earlier ones):
 
 ```bash
 # Telegram Bot Configuration
-TELEGRAM_BOT_TOKEN=1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TELEGRAM_BOT_TOKEN=<telegram-bot-token>
 TELEGRAM_BOT_USERNAME=your_bot_name
 
 # Security
@@ -62,7 +62,8 @@ DISABLE_TOOL_VALIDATION=false
 
 ```bash
 # Authentication
-ANTHROPIC_API_KEY=sk-ant-api03-...    # Optional: API key for SDK (uses CLI auth if omitted)
+# Claude auth is provided by Claude CLI/OAuth. Anthropic API keys are unsupported.
+CLAUDE_CLI_PATH=claude
 
 # Maximum conversation turns before requiring new session
 CLAUDE_MAX_TURNS=10
@@ -339,14 +340,11 @@ The configuration system performs extensive validation:
 
 #### Option 1: Use Existing Claude CLI Authentication (Recommended)
 ```bash
-# No ANTHROPIC_API_KEY needed - SDK will use CLI credentials
+# Do not set ANTHROPIC_API_KEY - SDK will use Claude CLI/OAuth credentials
 # Ensure Claude CLI is installed and authenticated: claude auth login
 ```
 
-#### Option 2: Direct API Key
-```bash
-ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
-```
+Direct Anthropic API key authentication is intentionally unsupported for this bot.
 
 ## Troubleshooting
 

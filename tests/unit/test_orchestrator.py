@@ -802,7 +802,7 @@ class TestRedactSecrets:
         )
 
     def test_anthropic_api_key_redacted(self):
-        key = "sk-ant-api03-abc123def456ghi789jkl012mno345"
+        key = "dummy-anthropic-api-key"
         cmd = f"ANTHROPIC_API_KEY={key}"
         result = _redact_secrets(cmd)
         assert key not in result

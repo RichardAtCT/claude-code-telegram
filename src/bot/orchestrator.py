@@ -34,6 +34,7 @@ from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
 from .utils.draft_streamer import DraftStreamer, generate_draft_id
 from .utils.html_format import escape_html
+from .utils.telegram_resilience import resilient_telegram_call
 from .utils.image_extractor import (
     ImageAttachment,
     should_send_as_photo,
@@ -756,23 +757,27 @@ class MessageOrchestrator:
     @staticmethod
     def _start_typing_heartbeat(
         chat: Any,
-        interval: float = 2.0,
+        interval: float = 4.0,
+        attempts: int = 1,
     ) -> "asyncio.Task[None]":
         """Start a background typing indicator task.
 
-        Sends typing every *interval* seconds, independently of
-        stream events. Cancel the returned task in a ``finally``
-        block.
+        Sends typing every *interval* seconds, independently of stream events.
+        Telegram failures are intentionally swallowed so a bad typing action
+        never cancels the Claude request.
         """
 
         async def _heartbeat() -> None:
             try:
                 while True:
                     await asyncio.sleep(interval)
-                    try:
-                        await chat.send_action("typing")
-                    except Exception:
-                        pass
+                    await resilient_telegram_call(
+                        lambda: chat.send_action("typing"),
+                        operation="send_action.typing",
+                        chat_id=getattr(chat, "id", None),
+                        attempts=attempts,
+                        fail_silently=True,
+                    )
             except asyncio.CancelledError:
                 pass
 
@@ -810,6 +815,11 @@ class MessageOrchestrator:
             return None
 
         last_edit_time = [0.0]  # mutable container for closure
+        progress_failures = [0]
+        progress_disabled = [False]
+        progress_interval = self.settings.telegram_progress_edit_interval
+        progress_max_failures = self.settings.telegram_progress_max_failures
+        telegram_attempts = self.settings.telegram_api_retry_attempts
 
         async def _on_stream(update_obj: StreamUpdate) -> None:
             # Stop all streaming activity after interrupt
@@ -871,20 +881,33 @@ class MessageOrchestrator:
                 if update_obj.type == "stream_delta":
                     await draft_streamer.append_text(update_obj.content)
 
-            # Throttle progress message edits to avoid Telegram rate limits
-            if not draft_streamer and verbose_level >= 1:
+            # Throttle progress message edits to avoid Telegram rate limits.
+            # If Telegram starts rejecting progress edits, disable progress UI for
+            # this request and let Claude continue to final delivery.
+            if not draft_streamer and verbose_level >= 1 and not progress_disabled[0]:
                 now = time.time()
-                if (now - last_edit_time[0]) >= 2.0 and tool_log:
+                if (now - last_edit_time[0]) >= progress_interval and tool_log:
                     last_edit_time[0] = now
                     new_text = self._format_verbose_progress(
                         tool_log, verbose_level, start_time
                     )
-                    try:
-                        await progress_msg.edit_text(
+                    result = await resilient_telegram_call(
+                        lambda: progress_msg.edit_text(
                             new_text, reply_markup=reply_markup
-                        )
-                    except Exception:
-                        pass
+                        ),
+                        operation="progress.edit_text",
+                        chat_id=getattr(getattr(progress_msg, "chat", None), "id", None),
+                        attempts=telegram_attempts,
+                        fail_silently=True,
+                    )
+                    if result is None:
+                        progress_failures[0] += 1
+                        if progress_failures[0] >= progress_max_failures:
+                            progress_disabled[0] = True
+                            logger.warning(
+                                "Disabling Telegram progress edits for request",
+                                failures=progress_failures[0],
+                            )
 
         return _on_stream
 
@@ -1066,6 +1089,7 @@ class MessageOrchestrator:
                 draft_id=generate_draft_id(),
                 message_thread_id=update.message.message_thread_id,
                 throttle_interval=self.settings.stream_draft_interval,
+                retry_attempts=self.settings.telegram_api_retry_attempts,
             )
 
         on_stream = self._make_stream_callback(
