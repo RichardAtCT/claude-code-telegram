@@ -29,6 +29,7 @@ from telegram.ext import (
     filters,
 )
 
+from ..claude.context_manager import ContextManager, topic_key
 from ..claude.sdk_integration import StreamUpdate
 from ..config.settings import Settings
 from ..projects import PrivateTopicsUnavailableError
@@ -138,6 +139,13 @@ class MessageOrchestrator:
         self.settings = settings
         self.deps = deps
         self._active_requests: Dict[int, ActiveRequest] = {}
+        self.context_manager = ContextManager(
+            token_threshold=settings.context_token_threshold,
+            keep_last=settings.context_compact_keep_last,
+            summary_target_tokens=settings.context_summary_target_tokens,
+        )
+        self._topic_locks: Dict[str, asyncio.Lock] = {}
+        self._topic_active_counts: Dict[str, int] = {}
         self._known_commands: frozenset[str] = frozenset()
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
@@ -324,6 +332,24 @@ class MessageOrchestrator:
             return True
         except ValueError:
             return False
+
+    def _current_topic_key(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> str:
+        """Return the runtime context key for the current Telegram topic."""
+        thread_context = context.user_data.get("_thread_context")
+        if thread_context and thread_context.get("state_key"):
+            return str(thread_context["state_key"])
+
+        message = update.effective_message or update.message
+        chat_id = message.chat_id
+        return topic_key(chat_id, getattr(message, "message_thread_id", None))
+
+    def _topic_lock(self, key: str) -> asyncio.Lock:
+        """Return the lock associated with a topic key, creating it if needed."""
+        if key not in self._topic_locks:
+            self._topic_locks[key] = asyncio.Lock()
+        return self._topic_locks[key]
 
     @staticmethod
     def _extract_message_thread_id(update: Update) -> Optional[int]:
@@ -1104,18 +1130,55 @@ class MessageOrchestrator:
             interrupt_event=interrupt_event,
         )
 
+        topic_state_key = self._current_topic_key(update, context)
+        prompt_for_claude = message_text
+        run_session_id = session_id
+        run_force_new = force_new
+
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
         success = True
         try:
+            if self.settings.context_runtime_enabled and self.context_manager.would_exceed_limit(
+                topic_state_key, message_text
+            ):
+                storage = context.bot_data.get("storage")
+                summary_store = (
+                    getattr(storage, "conversation_summaries", None)
+                    if storage is not None
+                    else None
+                )
+                try:
+                    await progress_msg.edit_text(
+                        "Compacting long topic context before continuing...",
+                        reply_markup=stop_kb,
+                    )
+                except Exception:
+                    logger.debug("Failed to update progress message for compaction")
+
+                compaction = await self.context_manager.compact(
+                    key=topic_state_key,
+                    claude=claude_integration,
+                    summary_store=summary_store,
+                    session_id=session_id or "unknown-session",
+                    working_directory=str(current_dir),
+                    user_id=user_id,
+                )
+                prompt_for_claude = (
+                    f"{compaction.compacted_prompt}\n\n"
+                    f"New user message:\n{message_text}"
+                )
+                run_session_id = None
+                run_force_new = True
+
             claude_response = await claude_integration.run_command(
-                prompt=message_text,
+                prompt=prompt_for_claude,
                 working_directory=current_dir,
                 user_id=user_id,
-                session_id=session_id,
+                session_id=run_session_id,
                 on_stream=on_stream,
-                force_new=force_new,
+                force_new=run_force_new,
                 interrupt_event=interrupt_event,
             )
 
@@ -1124,6 +1187,14 @@ class MessageOrchestrator:
                 context.user_data["force_new_session"] = False
 
             context.user_data["claude_session_id"] = claude_response.session_id
+
+            if self.settings.context_runtime_enabled:
+                self.context_manager.record_turn(
+                    topic_state_key,
+                    user_text=message_text,
+                    assistant_text=claude_response.content or "",
+                    session_id=claude_response.session_id,
+                )
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response

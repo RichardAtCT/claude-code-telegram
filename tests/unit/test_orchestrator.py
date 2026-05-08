@@ -322,6 +322,107 @@ async def test_agentic_text_calls_claude(agentic_settings, deps):
         assert call.kwargs.get("reply_markup") is None
 
 
+async def test_agentic_text_compacts_before_claude_when_threshold_exceeded(
+    agentic_settings, deps
+):
+    """Runtime context compaction runs before the user prompt when threshold is hit."""
+    settings = create_test_config(
+        approved_directory=str(agentic_settings.approved_directory),
+        agentic_mode=True,
+        context_runtime_enabled=True,
+        context_token_threshold=10000,
+        context_compact_keep_last=1,
+        context_summary_target_tokens=200,
+    )
+    orchestrator = MessageOrchestrator(settings, deps)
+    state = orchestrator.context_manager.get_state("-1001234567890:202")
+    state.tokens_used = settings.context_token_threshold
+
+    summary_response = MagicMock()
+    summary_response.session_id = "summary-session"
+    summary_response.content = "Resumo compacto anterior."
+    summary_response.tools_used = []
+    summary_response.interrupted = False
+
+    final_response = MagicMock()
+    final_response.session_id = "new-session-after-compact"
+    final_response.content = "Final answer"
+    final_response.tools_used = []
+    final_response.interrupted = False
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(
+        side_effect=[summary_response, final_response]
+    )
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    progress_msg.edit_text = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = update.message
+    update.message.text = "Continue from here"
+    update.message.message_id = 1
+    update.message.chat_id = -1001234567890
+    update.message.message_thread_id = 202
+    update.message.chat.id = -1001234567890
+    update.message.chat.type = "private"
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress_msg)
+
+    summary_store = MagicMock()
+    summary_store.create_summary = AsyncMock()
+    storage = MagicMock()
+    storage.conversation_summaries = summary_store
+    storage.save_claude_interaction = AsyncMock()
+
+    context = MagicMock()
+    context.bot = MagicMock()
+    context.user_data = {
+        "current_directory": settings.approved_directory,
+        "claude_session_id": "old-session",
+        "_thread_context": {
+            "chat_id": -1001234567890,
+            "message_thread_id": 202,
+            "state_key": "-1001234567890:202",
+            "project_root": str(settings.approved_directory),
+            "project_slug": None,
+            "project_name": None,
+        },
+    }
+    context.bot_data = {
+        "settings": settings,
+        "claude_integration": claude_integration,
+        "storage": storage,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    assert claude_integration.run_command.await_count == 2
+    summary_call = claude_integration.run_command.await_args_list[0]
+    final_call = claude_integration.run_command.await_args_list[1]
+
+    assert "Resuma o contexto" in summary_call.kwargs["prompt"]
+    assert summary_call.kwargs["session_id"] is None
+    assert summary_call.kwargs["force_new"] is True
+    summary_store.create_summary.assert_awaited_once()
+
+    assert final_call.kwargs["session_id"] is None
+    assert final_call.kwargs["force_new"] is True
+    assert "Conversation summary from earlier messages" in final_call.kwargs["prompt"]
+    assert "Resumo compacto anterior." in final_call.kwargs["prompt"]
+    assert "New user message:\nContinue from here" in final_call.kwargs["prompt"]
+    assert context.user_data["claude_session_id"] == "new-session-after-compact"
+
+    state = orchestrator.context_manager.get_state("-1001234567890:202")
+    assert state.message_count == 1
+    assert state.turns[-1].user_text == "Continue from here"
+    assert state.turns[-1].assistant_text == "Final answer"
+
+
 async def test_agentic_text_forces_new_session_for_new_thread_context(
     agentic_settings, deps
 ):
