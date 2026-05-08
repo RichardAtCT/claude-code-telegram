@@ -110,6 +110,24 @@ def test_security_relaxation_settings_defaults_and_overrides():
         assert overridden.disable_tool_validation is True
 
 
+def test_context_runtime_settings_defaults(monkeypatch):
+    """Context runtime settings have production-safe defaults."""
+    from src.config.settings import Settings
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "test_bot")
+    monkeypatch.setenv("APPROVED_DIRECTORY", "/tmp")
+
+    settings = Settings()
+
+    assert settings.context_runtime_enabled is True
+    assert settings.context_token_threshold == 150_000
+    assert settings.context_compact_keep_last == 8
+    assert settings.context_summary_max_turns == 3
+    assert settings.context_hard_trim_fallback is True
+    assert settings.context_summary_target_tokens == 1_200
+
+
 def test_approved_directory_validation_nonexistent():
     """Test validation fails for non-existent directory."""
     with pytest.raises(ValidationError) as exc_info:

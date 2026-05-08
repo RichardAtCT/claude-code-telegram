@@ -20,6 +20,12 @@ from src.utils.constants import (
     DEFAULT_CLAUDE_MAX_COST_PER_USER,
     DEFAULT_CLAUDE_MAX_TURNS,
     DEFAULT_CLAUDE_TIMEOUT_SECONDS,
+    DEFAULT_CONTEXT_COMPACT_KEEP_LAST,
+    DEFAULT_CONTEXT_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_CONTEXT_MAX_QUEUE_DEPTH,
+    DEFAULT_CONTEXT_SUMMARY_MAX_TURNS,
+    DEFAULT_CONTEXT_SUMMARY_TARGET_TOKENS,
+    DEFAULT_CONTEXT_TOKEN_THRESHOLD,
     DEFAULT_DATABASE_URL,
     DEFAULT_MAX_SESSIONS_PER_USER,
     DEFAULT_PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS,
@@ -147,6 +153,46 @@ class Settings(BaseSettings):
             "Maximum delay cap in seconds. "
             "0 disables the cap entirely (delays grow unbounded with backoff)."
         ),
+    )
+
+    # Long-context runtime
+    context_runtime_enabled: bool = Field(
+        True,
+        description="Enable topic-scoped long-context tracking and compaction",
+    )
+    context_token_threshold: int = Field(
+        DEFAULT_CONTEXT_TOKEN_THRESHOLD,
+        ge=10_000,
+        description="Estimated token threshold that triggers context compaction",
+    )
+    context_compact_keep_last: int = Field(
+        DEFAULT_CONTEXT_COMPACT_KEEP_LAST,
+        ge=1,
+        description="Number of recent turns to keep verbatim after compaction",
+    )
+    context_summary_max_turns: int = Field(
+        DEFAULT_CONTEXT_SUMMARY_MAX_TURNS,
+        ge=1,
+        description="Max Claude turns for context summary generation",
+    )
+    context_summary_target_tokens: int = Field(
+        DEFAULT_CONTEXT_SUMMARY_TARGET_TOKENS,
+        ge=200,
+        description="Target maximum size for generated context summaries",
+    )
+    context_hard_trim_fallback: bool = Field(
+        True,
+        description="Fall back to last-N-turn context if summary generation fails",
+    )
+    context_lock_timeout_seconds: int = Field(
+        DEFAULT_CONTEXT_LOCK_TIMEOUT_SECONDS,
+        ge=5,
+        description="Seconds to wait for per-topic context lock before failing safely",
+    )
+    context_max_queue_depth: int = Field(
+        DEFAULT_CONTEXT_MAX_QUEUE_DEPTH,
+        ge=1,
+        description="Maximum active/queued requests allowed per topic",
     )
 
     # Sandbox settings
