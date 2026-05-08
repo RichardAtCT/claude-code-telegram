@@ -103,7 +103,8 @@ async def test_migration_5_creates_conversation_summaries(db_manager):
     """Migration 5 creates conversation_summaries table, columns and indexes."""
     async with db_manager.get_connection() as conn:
         cursor = await conn.execute("PRAGMA table_info(conversation_summaries)")
-        columns = [row[1] for row in await cursor.fetchall()]
+        column_rows = await cursor.fetchall()
+        columns = [row[1] for row in column_rows]
         assert columns == [
             "id",
             "topic_key",
@@ -114,6 +115,8 @@ async def test_migration_5_creates_conversation_summaries(db_manager):
             "tokens_after",
             "created_at",
         ]
+        session_id_column = next(row for row in column_rows if row[1] == "session_id")
+        assert session_id_column[3] == 0
 
         cursor = await conn.execute("PRAGMA foreign_key_list(conversation_summaries)")
         foreign_keys = await cursor.fetchall()

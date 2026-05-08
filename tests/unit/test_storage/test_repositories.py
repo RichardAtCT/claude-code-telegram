@@ -327,6 +327,31 @@ async def test_conversation_summary_repository_create_and_latest(
     assert await conversation_summary_repo.get_latest_for_topic("missing") is None
 
 
+async def test_conversation_summary_allows_missing_session(
+    conversation_summary_repo,
+):
+    """Summaries created before the first Claude session use a NULL session_id."""
+    summary = ConversationSummaryModel(
+        topic_key="topic-without-session",
+        session_id=None,
+        summary_text="summary before session exists",
+        messages_included=2,
+        tokens_before=500,
+        tokens_after=80,
+        created_at=datetime(2026, 1, 3, tzinfo=UTC),
+    )
+
+    summary_id = await conversation_summary_repo.create_summary(summary)
+
+    latest = await conversation_summary_repo.get_latest_for_topic(
+        "topic-without-session"
+    )
+    assert latest is not None
+    assert latest.id == summary_id
+    assert latest.session_id is None
+    assert latest.summary_text == "summary before session exists"
+
+
 class TestMessageRepository:
     """Test message repository."""
 

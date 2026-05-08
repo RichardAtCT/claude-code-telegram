@@ -143,7 +143,7 @@ class ConversationSummaryModel:
     """Persisted long-context conversation summary."""
 
     topic_key: str
-    session_id: str
+    session_id: Optional[str]
     summary_text: str
     messages_included: int
     tokens_before: int

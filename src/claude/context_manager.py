@@ -155,7 +155,7 @@ class ContextManager:
         key: str,
         claude: Any,
         summary_store: Any,
-        session_id: str,
+        session_id: Optional[str],
         working_directory: str,
         user_id: int,
     ) -> CompactionResult:

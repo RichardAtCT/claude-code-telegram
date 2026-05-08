@@ -6,6 +6,7 @@ classic mode, delegates to existing full-featured handlers.
 """
 
 import asyncio
+import inspect
 import re
 import time
 from dataclasses import dataclass, field
@@ -51,8 +52,16 @@ _MEDIA_TYPE_MAP = {
     "webp": "image/webp",
 }
 
+_PENDING_COMPACTED_PROMPT_KEY = "_pending_compacted_prompt"
+_PENDING_COMPACTED_CONTEXT_KEY = "_pending_compacted_context_key"
+
 # Session-control flags must be scoped to each Telegram forum topic, not user-wide.
-_THREAD_SCOPED_SESSION_KEYS = ("force_new_session", "session_started")
+_THREAD_SCOPED_SESSION_KEYS = (
+    "force_new_session",
+    "session_started",
+    _PENDING_COMPACTED_PROMPT_KEY,
+    _PENDING_COMPACTED_CONTEXT_KEY,
+)
 
 # Patterns that look like secrets/credentials in CLI arguments
 _SECRET_PATTERNS: List[re.Pattern[str]] = [
@@ -145,7 +154,6 @@ class MessageOrchestrator:
             summary_target_tokens=settings.context_summary_target_tokens,
         )
         self._topic_locks: Dict[str, asyncio.Lock] = {}
-        self._topic_active_counts: Dict[str, int] = {}
         self._known_commands: frozenset[str] = frozenset()
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
@@ -350,6 +358,44 @@ class MessageOrchestrator:
         if key not in self._topic_locks:
             self._topic_locks[key] = asyncio.Lock()
         return self._topic_locks[key]
+
+    @staticmethod
+    def _clear_pending_compacted_context(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Clear one-shot compacted context carried between /compact and next prompt."""
+        context.user_data.pop(_PENDING_COMPACTED_PROMPT_KEY, None)
+        context.user_data.pop(_PENDING_COMPACTED_CONTEXT_KEY, None)
+
+    async def _latest_persisted_compacted_prompt(
+        self, key: str, context: ContextTypes.DEFAULT_TYPE
+    ) -> Optional[str]:
+        """Rehydrate the latest persisted summary when in-memory state is empty."""
+        state = self.context_manager.get_state(key)
+        if state.message_count or state.last_summary_text:
+            return None
+
+        storage = context.bot_data.get("storage")
+        summary_store = (
+            getattr(storage, "conversation_summaries", None)
+            if storage is not None
+            else None
+        )
+        get_latest = (
+            getattr(summary_store, "get_latest_for_topic", None)
+            if summary_store is not None
+            else None
+        )
+        if not inspect.iscoroutinefunction(get_latest):
+            return None
+
+        latest = await get_latest(key)
+        if latest is None or not getattr(latest, "summary_text", None):
+            return None
+
+        state.last_summary_text = latest.summary_text
+        state.last_summary_at = getattr(latest, "created_at", None)
+        state.tokens_used = getattr(latest, "tokens_after", 0) or 0
+        state.compaction_count = max(state.compaction_count, 1)
+        return self.context_manager.build_compacted_prompt(key, latest.summary_text)
 
     @staticmethod
     def _extract_message_thread_id(update: Update) -> Optional[int]:
@@ -606,39 +652,58 @@ class MessageOrchestrator:
             return
 
         key = self._current_topic_key(update, context)
+        lock = self._topic_lock(key)
+        acquired = False
+        try:
+            async with asyncio.timeout(self.settings.context_lock_timeout_seconds):
+                await lock.acquire()
+                acquired = True
+        except TimeoutError:
+            await message.reply_text(
+                "⏳ Este tópico ainda está processando uma resposta longa. "
+                "Tenta compactar de novo em alguns segundos."
+            )
+            return
+
         current_dir = context.user_data.get(
             "current_directory", self.settings.approved_directory
         )
-        session_id = context.user_data.get("claude_session_id") or "unknown-session"
+        session_id = context.user_data.get("claude_session_id")
         user = update.effective_user
         user_id = user.id if user is not None else 0
 
-        compaction = await self.context_manager.compact(
-            key=key,
-            claude=claude_integration,
-            summary_store=summary_store,
-            session_id=session_id,
-            working_directory=str(current_dir),
-            user_id=user_id,
-        )
+        try:
+            compaction = await self.context_manager.compact(
+                key=key,
+                claude=claude_integration,
+                summary_store=summary_store,
+                session_id=session_id,
+                working_directory=str(current_dir),
+                user_id=user_id,
+            )
 
-        context.user_data["_pending_compacted_prompt"] = compaction.compacted_prompt
-        context.user_data["_pending_compacted_context_key"] = key
+            context.user_data[_PENDING_COMPACTED_PROMPT_KEY] = (
+                compaction.compacted_prompt
+            )
+            context.user_data[_PENDING_COMPACTED_CONTEXT_KEY] = key
 
-        if compaction.force_new_session:
-            context.user_data["claude_session_id"] = None
-            context.user_data["force_new_session"] = True
+            if compaction.force_new_session:
+                context.user_data["claude_session_id"] = None
+                context.user_data["force_new_session"] = True
 
-        fallback = "sim" if compaction.used_fallback else "não"
-        await message.reply_text(
-            "*Contexto compactado*\n"
-            f"- Chave: `{key}`\n"
-            f"- Mensagens incluídas: {compaction.messages_included}\n"
-            f"- Tokens antes: {compaction.tokens_before}\n"
-            f"- Tokens depois: {compaction.tokens_after}\n"
-            f"- Fallback: {fallback}",
-            parse_mode="Markdown",
-        )
+            fallback = "sim" if compaction.used_fallback else "não"
+            await message.reply_text(
+                "*Contexto compactado*\n"
+                f"- Chave: `{key}`\n"
+                f"- Mensagens incluídas: {compaction.messages_included}\n"
+                f"- Tokens antes: {compaction.tokens_before}\n"
+                f"- Tokens depois: {compaction.tokens_after}\n"
+                f"- Fallback: {fallback}",
+                parse_mode="Markdown",
+            )
+        finally:
+            if acquired:
+                lock.release()
 
     # --- Agentic handlers ---
 
@@ -646,6 +711,7 @@ class MessageOrchestrator:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Brief welcome, no buttons."""
+        self._clear_pending_compacted_context(context)
         user = update.effective_user
         sync_line = ""
         if (
@@ -703,6 +769,7 @@ class MessageOrchestrator:
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
+        self._clear_pending_compacted_context(context)
 
         await update.message.reply_text("Session reset. What's next?")
 
@@ -1241,11 +1308,12 @@ class MessageOrchestrator:
         prompt_for_claude = message_text
         run_session_id = session_id
         run_force_new = force_new
-        pending_compacted_prompt = context.user_data.get("_pending_compacted_prompt")
-        pending_compacted_key = context.user_data.get("_pending_compacted_context_key")
+        pending_compacted_prompt = context.user_data.get(_PENDING_COMPACTED_PROMPT_KEY)
+        pending_compacted_key = context.user_data.get(_PENDING_COMPACTED_CONTEXT_KEY)
         use_pending_compacted_prompt = (
             bool(pending_compacted_prompt) and pending_compacted_key == topic_state_key
         )
+        using_compacted_prompt = False
         if use_pending_compacted_prompt:
             prompt_for_claude = (
                 f"{pending_compacted_prompt}\n\n"
@@ -1253,8 +1321,20 @@ class MessageOrchestrator:
             )
             run_session_id = None
             run_force_new = True
-            context.user_data.pop("_pending_compacted_prompt", None)
-            context.user_data.pop("_pending_compacted_context_key", None)
+            self._clear_pending_compacted_context(context)
+            using_compacted_prompt = True
+        elif self.settings.context_runtime_enabled:
+            compacted_prompt = await self._latest_persisted_compacted_prompt(
+                topic_state_key, context
+            )
+            if compacted_prompt:
+                prompt_for_claude = (
+                    f"{compacted_prompt}\n\n"
+                    f"New user message:\n{message_text}"
+                )
+                run_session_id = None
+                run_force_new = True
+                using_compacted_prompt = True
 
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
@@ -1263,7 +1343,7 @@ class MessageOrchestrator:
         try:
             if (
                 self.settings.context_runtime_enabled
-                and not use_pending_compacted_prompt
+                and not using_compacted_prompt
                 and self.context_manager.would_exceed_limit(
                     topic_state_key, message_text
                 )
@@ -1286,7 +1366,7 @@ class MessageOrchestrator:
                     key=topic_state_key,
                     claude=claude_integration,
                     summary_store=summary_store,
-                    session_id=session_id or "unknown-session",
+                    session_id=session_id,
                     working_directory=str(current_dir),
                     user_id=user_id,
                 )

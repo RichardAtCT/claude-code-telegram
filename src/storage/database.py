@@ -317,7 +317,7 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS conversation_summaries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic_key TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
+                    session_id TEXT,
                     summary_text TEXT NOT NULL,
                     messages_included INTEGER NOT NULL,
                     tokens_before INTEGER NOT NULL,
@@ -330,6 +330,44 @@ class DatabaseManager:
                     ON conversation_summaries(topic_key, created_at);
                 CREATE INDEX IF NOT EXISTS idx_conversation_summaries_session
                     ON conversation_summaries(session_id);
+                """,
+            ),
+            (
+                6,
+                """
+                -- Allow summaries before the first Claude session exists.
+                PRAGMA foreign_keys=OFF;
+
+                DROP TABLE IF EXISTS conversation_summaries_new;
+                CREATE TABLE conversation_summaries_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    topic_key TEXT NOT NULL,
+                    session_id TEXT,
+                    summary_text TEXT NOT NULL,
+                    messages_included INTEGER NOT NULL,
+                    tokens_before INTEGER NOT NULL,
+                    tokens_after INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                );
+
+                INSERT INTO conversation_summaries_new
+                    (id, topic_key, session_id, summary_text, messages_included,
+                     tokens_before, tokens_after, created_at)
+                SELECT
+                    id, topic_key, session_id, summary_text, messages_included,
+                    tokens_before, tokens_after, created_at
+                FROM conversation_summaries;
+
+                DROP TABLE conversation_summaries;
+                ALTER TABLE conversation_summaries_new RENAME TO conversation_summaries;
+
+                CREATE INDEX IF NOT EXISTS idx_conversation_summaries_topic_created
+                    ON conversation_summaries(topic_key, created_at);
+                CREATE INDEX IF NOT EXISTS idx_conversation_summaries_session
+                    ON conversation_summaries(session_id);
+
+                PRAGMA foreign_keys=ON;
                 """,
             ),
         ]

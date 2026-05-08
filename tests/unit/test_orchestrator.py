@@ -329,11 +329,17 @@ async def test_agentic_new_resets_session(agentic_settings, deps):
     update.message.reply_text = AsyncMock()
 
     context = MagicMock()
-    context.user_data = {"claude_session_id": "old-session-123"}
+    context.user_data = {
+        "claude_session_id": "old-session-123",
+        "_pending_compacted_prompt": "stale compacted prompt",
+        "_pending_compacted_context_key": "-100:54",
+    }
 
     await orchestrator.agentic_new(update, context)
 
     assert context.user_data["claude_session_id"] is None
+    assert "_pending_compacted_prompt" not in context.user_data
+    assert "_pending_compacted_context_key" not in context.user_data
     update.message.reply_text.assert_called_once_with("Session reset. What's next?")
 
 
@@ -642,6 +648,187 @@ async def test_compact_command_forces_compaction(agentic_settings, deps):
     assert context.user_data["force_new_session"] is False
     assert "_pending_compacted_prompt" not in context.user_data
     assert "_pending_compacted_context_key" not in context.user_data
+
+
+async def test_compact_command_times_out_waiting_for_busy_topic_lock(
+    agentic_settings, deps
+):
+    """/compact must not mutate topic context while agentic_text owns the topic lock."""
+    agentic_settings.context_lock_timeout_seconds = 0.01
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    key = "-100:54"
+    orchestrator.context_manager.record_turn(
+        key,
+        user_text="Mensagem anterior",
+        assistant_text="Resposta anterior",
+        session_id="session-topic-54",
+    )
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock()
+    summary_store = MagicMock()
+    summary_store.create_summary = AsyncMock()
+    storage = MagicMock()
+    storage.conversation_summaries = summary_store
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = update.message
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {
+        "current_directory": agentic_settings.approved_directory,
+        "claude_session_id": "session-topic-54",
+        "_thread_context": {
+            "chat_id": -100,
+            "message_thread_id": 54,
+            "state_key": key,
+        },
+    }
+    context.bot_data = {
+        "claude_integration": claude_integration,
+        "storage": storage,
+    }
+
+    lock = orchestrator._topic_lock(key)
+    await lock.acquire()
+    try:
+        await orchestrator.compact_context(update, context)
+    finally:
+        lock.release()
+
+    claude_integration.run_command.assert_not_awaited()
+    summary_store.create_summary.assert_not_awaited()
+    update.message.reply_text.assert_awaited_once_with(
+        "⏳ Este tópico ainda está processando uma resposta longa. "
+        "Tenta compactar de novo em alguns segundos."
+    )
+
+
+async def test_compact_command_without_session_persists_nullable_session_id(
+    agentic_settings, deps
+):
+    """/compact before the first Claude session must not write unknown-session."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    key = "-100:54"
+    orchestrator.context_manager.record_turn(
+        key,
+        user_text="Mensagem anterior",
+        assistant_text="Resposta anterior",
+        session_id="session-topic-54",
+    )
+
+    summary_response = MagicMock()
+    summary_response.content = "Resumo do tópico."
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=summary_response)
+
+    summary_store = MagicMock()
+    summary_store.create_summary = AsyncMock()
+    storage = MagicMock()
+    storage.conversation_summaries = summary_store
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = update.message
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+    context.user_data = {
+        "current_directory": agentic_settings.approved_directory,
+        "claude_session_id": None,
+        "_thread_context": {
+            "chat_id": -100,
+            "message_thread_id": 54,
+            "state_key": key,
+        },
+    }
+    context.bot_data = {
+        "claude_integration": claude_integration,
+        "storage": storage,
+    }
+
+    await orchestrator.compact_context(update, context)
+
+    summary = summary_store.create_summary.await_args.args[0]
+    assert summary.session_id is None
+
+
+async def test_agentic_text_rehydrates_latest_summary_when_memory_state_is_empty(
+    agentic_settings, deps
+):
+    """After process memory loss, latest persisted topic summary seeds the next run."""
+    orchestrator = MessageOrchestrator(agentic_settings, deps)
+    key = "-100:54"
+
+    final_response = MagicMock()
+    final_response.session_id = "session-after-rehydrate"
+    final_response.content = "Resposta nova"
+    final_response.tools_used = []
+    final_response.interrupted = False
+
+    claude_integration = AsyncMock()
+    claude_integration.run_command = AsyncMock(return_value=final_response)
+
+    summary_store = MagicMock()
+    summary_store.get_latest_for_topic = AsyncMock(
+        return_value=SimpleNamespace(
+            summary_text="Resumo persistido do tópico.",
+            tokens_after=321,
+            created_at=None,
+        )
+    )
+    storage = MagicMock()
+    storage.conversation_summaries = summary_store
+    storage.save_claude_interaction = AsyncMock()
+
+    progress_msg = AsyncMock()
+    progress_msg.delete = AsyncMock()
+    progress_msg.edit_text = AsyncMock()
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_message = update.message
+    update.message.text = "Continue daqui"
+    update.message.message_id = 1
+    update.message.chat_id = -100
+    update.message.message_thread_id = 54
+    update.message.chat.id = -100
+    update.message.chat.type = "private"
+    update.message.chat.send_action = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=progress_msg)
+
+    context = MagicMock()
+    context.bot = MagicMock()
+    context.user_data = {
+        "current_directory": agentic_settings.approved_directory,
+        "claude_session_id": None,
+        "_thread_context": {
+            "chat_id": -100,
+            "message_thread_id": 54,
+            "state_key": key,
+            "project_root": str(agentic_settings.approved_directory),
+            "project_slug": None,
+            "project_name": None,
+        },
+    }
+    context.bot_data = {
+        "settings": agentic_settings,
+        "claude_integration": claude_integration,
+        "storage": storage,
+        "rate_limiter": None,
+        "audit_logger": None,
+    }
+
+    await orchestrator.agentic_text(update, context)
+
+    summary_store.get_latest_for_topic.assert_awaited_once_with(key)
+    prompt_call = claude_integration.run_command.await_args
+    assert "Resumo persistido do tópico." in prompt_call.kwargs["prompt"]
+    assert "New user message:\nContinue daqui" in prompt_call.kwargs["prompt"]
+    assert prompt_call.kwargs["session_id"] is None
+    assert prompt_call.kwargs["force_new"] is True
 
 
 async def test_agentic_text_forces_new_session_for_new_thread_context(
@@ -1433,6 +1620,66 @@ async def test_thread_mode_new_session_flag_is_isolated_per_topic(
     assert (
         context.user_data["thread_state"]["-1001234567890:777"]["force_new_session"]
         is True
+    )
+
+
+async def test_thread_mode_pending_compacted_prompt_is_isolated_per_topic(
+    group_thread_settings, deps
+):
+    """A pending compacted prompt from one topic must not leak into another."""
+    orchestrator = MessageOrchestrator(group_thread_settings, deps)
+
+    project_path = group_thread_settings.approved_directory / "project_a"
+    project = SimpleNamespace(
+        slug="project_a",
+        name="Project A",
+        absolute_path=project_path,
+    )
+
+    project_threads_manager = MagicMock()
+    project_threads_manager.resolve_project = AsyncMock(return_value=project)
+    project_threads_manager.guidance_message.return_value = "Use project thread"
+    deps["project_threads_manager"] = project_threads_manager
+
+    context = MagicMock()
+    context.bot_data = {}
+    context.user_data = {
+        "thread_state": {
+            "-1001234567890:777": {
+                "current_directory": str(project_path),
+                "claude_session_id": None,
+                "_pending_compacted_prompt": "topic 777 summary",
+                "_pending_compacted_context_key": "-1001234567890:777",
+            },
+            "-1001234567890:888": {
+                "current_directory": str(project_path),
+                "claude_session_id": "topic-888-session",
+            },
+        }
+    }
+
+    message_888 = MagicMock()
+    message_888.message_thread_id = 888
+    message_888.reply_text = AsyncMock()
+    update_888 = MagicMock()
+    update_888.effective_chat.id = -1001234567890
+    update_888.effective_chat.is_forum = True
+    update_888.effective_message = message_888
+    update_888.message = message_888
+    update_888.callback_query = None
+
+    async def assert_topic_888_context(update, context):
+        assert context.user_data["claude_session_id"] == "topic-888-session"
+        assert "_pending_compacted_prompt" not in context.user_data
+        assert "_pending_compacted_context_key" not in context.user_data
+
+    await orchestrator._inject_deps(assert_topic_888_context)(update_888, context)
+
+    assert (
+        context.user_data["thread_state"]["-1001234567890:777"][
+            "_pending_compacted_prompt"
+        ]
+        == "topic 777 summary"
     )
 
 
