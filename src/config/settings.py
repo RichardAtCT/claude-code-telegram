@@ -22,8 +22,6 @@ from src.utils.constants import (
     DEFAULT_CLAUDE_TIMEOUT_SECONDS,
     DEFAULT_CONTEXT_COMPACT_KEEP_LAST,
     DEFAULT_CONTEXT_LOCK_TIMEOUT_SECONDS,
-    DEFAULT_CONTEXT_MAX_QUEUE_DEPTH,
-    DEFAULT_CONTEXT_SUMMARY_MAX_TURNS,
     DEFAULT_CONTEXT_SUMMARY_TARGET_TOKENS,
     DEFAULT_CONTEXT_TOKEN_THRESHOLD,
     DEFAULT_DATABASE_URL,
@@ -170,29 +168,15 @@ class Settings(BaseSettings):
         ge=1,
         description="Number of recent turns to keep verbatim after compaction",
     )
-    context_summary_max_turns: int = Field(
-        DEFAULT_CONTEXT_SUMMARY_MAX_TURNS,
-        ge=1,
-        description="Max Claude turns for context summary generation",
-    )
     context_summary_target_tokens: int = Field(
         DEFAULT_CONTEXT_SUMMARY_TARGET_TOKENS,
         ge=200,
         description="Target maximum size for generated context summaries",
     )
-    context_hard_trim_fallback: bool = Field(
-        True,
-        description="Fall back to last-N-turn context if summary generation fails",
-    )
     context_lock_timeout_seconds: int = Field(
         DEFAULT_CONTEXT_LOCK_TIMEOUT_SECONDS,
         ge=5,
         description="Seconds to wait for per-topic context lock before failing safely",
-    )
-    context_max_queue_depth: int = Field(
-        DEFAULT_CONTEXT_MAX_QUEUE_DEPTH,
-        ge=1,
-        description="Maximum active/queued requests allowed per topic",
     )
 
     # Sandbox settings

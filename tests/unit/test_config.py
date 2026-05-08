@@ -123,8 +123,6 @@ def test_context_runtime_settings_defaults(monkeypatch):
     assert settings.context_runtime_enabled is True
     assert settings.context_token_threshold == 150_000
     assert settings.context_compact_keep_last == 8
-    assert settings.context_summary_max_turns == 3
-    assert settings.context_hard_trim_fallback is True
     assert settings.context_summary_target_tokens == 1_200
 
 
