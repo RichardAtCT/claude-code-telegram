@@ -115,6 +115,27 @@ async def test_process_voice_message_with_caption(voice_handler):
     assert result.prompt == "Please summarize:\n\nTranscribed text"
 
 
+async def test_process_voice_message_includes_reply_context(voice_handler):
+    """Voice replies include the replied-to message so Claude is not blind."""
+    voice = _mock_voice(duration=4)
+    voice_handler._transcribe_mistral = AsyncMock(
+        return_value="Ask Codex to handle this and keep going until approved."
+    )
+
+    result = await voice_handler.process_voice_message(
+        voice,
+        caption=None,
+        reply_context="Previous message: PR #1 needs review",
+    )
+
+    assert result.prompt == (
+        "Context from replied-to Telegram message:\n"
+        "Previous message: PR #1 needs review\n\n"
+        "Voice message transcription:\n\n"
+        "Ask Codex to handle this and keep going until approved."
+    )
+
+
 async def test_process_voice_message_timedelta_duration(voice_handler):
     """process_voice_message handles timedelta duration from Telegram."""
     voice = _mock_voice(duration=timedelta(seconds=15))

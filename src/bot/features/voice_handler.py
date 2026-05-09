@@ -51,13 +51,16 @@ class VoiceHandler:
             )
 
     async def process_voice_message(
-        self, voice: Voice, caption: Optional[str] = None
+        self,
+        voice: Voice,
+        caption: Optional[str] = None,
+        reply_context: Optional[str] = None,
     ) -> ProcessedVoice:
         """Download and transcribe a voice message.
 
         1. Download .ogg bytes from Telegram
         2. Call the configured transcription provider (Mistral, OpenAI, or local)
-        3. Build a prompt combining caption + transcription
+        3. Build a prompt combining reply context, caption, and transcription
         """
         initial_file_size = getattr(voice, "file_size", None)
         self._ensure_allowed_file_size(initial_file_size)
@@ -102,7 +105,14 @@ class VoiceHandler:
 
         # Build prompt
         label = caption if caption else "Voice message transcription:"
-        prompt = f"{label}\n\n{transcription}"
+        prompt_parts = []
+        clean_reply_context = (reply_context or "").strip()
+        if clean_reply_context:
+            prompt_parts.append(
+                "Context from replied-to Telegram message:\n" f"{clean_reply_context}"
+            )
+        prompt_parts.append(f"{label}\n\n{transcription}")
+        prompt = "\n\n".join(prompt_parts)
 
         dur = voice.duration
         duration_secs = int(dur.total_seconds()) if isinstance(dur, timedelta) else dur

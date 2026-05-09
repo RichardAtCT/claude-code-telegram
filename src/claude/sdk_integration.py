@@ -205,7 +205,7 @@ class StreamUpdate:
 
 
 def _is_stream_delta(message: Message) -> bool:
-    """Return True for incremental SDK text/thinking delta events."""
+    """Return True only for user-visible incremental SDK text delta events."""
     if not isinstance(message, StreamEvent):
         return False
 
@@ -214,12 +214,7 @@ def _is_stream_delta(message: Message) -> bool:
         return False
 
     delta = event.get("delta", {})
-    delta_type = delta.get("type")
-    if delta_type == "text_delta":
-        return bool(delta.get("text"))
-    if delta_type == "thinking_delta":
-        return bool(delta.get("thinking"))
-    return False
+    return delta.get("type") == "text_delta" and bool(delta.get("text"))
 
 
 def _consolidate_stream_deltas(deltas: List[Message]) -> Message:
@@ -233,8 +228,6 @@ def _consolidate_stream_deltas(deltas: List[Message]) -> Message:
         delta = (stream_event.event or {}).get("delta", {})
         if delta.get("type") == "text_delta":
             text_parts.append(delta.get("text", ""))
-        elif delta.get("type") == "thinking_delta":
-            text_parts.append(delta.get("thinking", ""))
 
     last_event = stream_events[-1]
     return StreamEvent(
@@ -957,7 +950,8 @@ class ClaudeSDKManager:
                         elif isinstance(block, TextBlock):
                             text_parts.append(block.text)
                         elif isinstance(block, ThinkingBlock):
-                            text_parts.append(block.thinking)
+                            # Thinking content is internal reasoning; never stream it to Telegram.
+                            continue
 
                 if text_parts or tool_calls:
                     update = StreamUpdate(
@@ -984,14 +978,6 @@ class ClaudeSDKManager:
                             update = StreamUpdate(
                                 type="stream_delta",
                                 content=text,
-                            )
-                            await stream_callback(update)
-                    elif delta.get("type") == "thinking_delta":
-                        thinking = delta.get("thinking", "")
-                        if thinking:
-                            update = StreamUpdate(
-                                type="stream_delta",
-                                content=thinking,
                             )
                             await stream_callback(update)
 

@@ -1763,6 +1763,37 @@ class MessageOrchestrator:
                 "Claude photo processing failed", error=str(e), user_id=user_id
             )
 
+    def _reply_context_for_prompt(self, message: Any) -> Optional[str]:
+        """Return concise text from the Telegram message this update replies to."""
+        reply = getattr(message, "reply_to_message", None)
+        if reply is None:
+            return None
+
+        raw_text = getattr(reply, "text", None) or getattr(reply, "caption", None)
+        text = raw_text.strip() if isinstance(raw_text, str) else ""
+        if text:
+            return text
+
+        sender = getattr(getattr(reply, "from_user", None), "full_name", None)
+        message_id = getattr(reply, "message_id", None)
+        media_type = next(
+            (
+                name
+                for name in ("voice", "photo", "document", "video", "audio", "animation")
+                if (media := getattr(reply, name, None)) is not None
+                and media.__class__.__module__ != "unittest.mock"
+            ),
+            "message",
+        )
+        details = [f"type={media_type}"]
+        if isinstance(sender, str) and sender:
+            details.append(f"sender={sender}")
+        if isinstance(message_id, (int, str)):
+            details.append(f"message_id={message_id}")
+        if media_type == "message" and len(details) == 1:
+            return None
+        return "Replied-to Telegram message has no text/caption (" + ", ".join(details) + ")."
+
     async def agentic_voice(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -1782,8 +1813,11 @@ class MessageOrchestrator:
 
         try:
             voice = update.message.voice
+            reply_context = self._reply_context_for_prompt(update.message)
             processed_voice = await voice_handler.process_voice_message(
-                voice, update.message.caption
+                voice,
+                update.message.caption,
+                **({"reply_context": reply_context} if reply_context else {}),
             )
 
             await progress_msg.edit_text("Working...")
