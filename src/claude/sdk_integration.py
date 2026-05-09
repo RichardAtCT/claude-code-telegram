@@ -51,6 +51,28 @@ SDK_STREAM_COALESCE_WINDOW_SECONDS = 1.5
 SDK_STREAM_COALESCE_MAX_BATCH = 15
 
 
+def _format_ask_user_question_tool(tool_input: Dict[str, Any]) -> str:
+    """Render AskUserQuestion as plain user-facing text for Telegram delivery."""
+    question = str(tool_input.get("question") or "").strip()
+    raw_choices = tool_input.get("choices") or []
+
+    lines: List[str] = []
+    if question:
+        lines.append(question)
+
+    if isinstance(raw_choices, list):
+        choices = [str(choice).strip() for choice in raw_choices if str(choice).strip()]
+    else:
+        choices = []
+
+    if choices:
+        if lines:
+            lines.append("")
+        lines.extend(f"{idx}) {choice}" for idx, choice in enumerate(choices, start=1))
+
+    return "\n".join(lines).strip()
+
+
 @dataclass
 class ClaudeResponse:
     """Response from Claude Code SDK."""
@@ -766,6 +788,13 @@ class ClaudeSDKManager:
                             for block in msg_content:
                                 if isinstance(block, TextBlock):
                                     content_parts.append(block.text)
+                                elif isinstance(block, ToolUseBlock):
+                                    if getattr(block, "name", "") == "AskUserQuestion":
+                                        prompt_text = _format_ask_user_question_tool(
+                                            getattr(block, "input", {}) or {}
+                                        )
+                                        if prompt_text:
+                                            content_parts.append(prompt_text)
                                 elif isinstance(block, ThinkingBlock):
                                     # Thinking content is internal reasoning;
                                     # skip when reconstructing the user reply.
