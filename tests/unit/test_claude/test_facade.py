@@ -294,3 +294,44 @@ class TestEmptySessionIdWarning:
 
         # Session ID should be empty on the response
         assert not result.session_id
+
+
+class TestStaleSessionFallback:
+    """Verify stale Claude-side sessions are cleared from active and durable stores."""
+
+    async def test_stale_resumed_session_removed_from_storage_before_fresh_retry(
+        self, facade, session_manager
+    ):
+        """If Claude cannot resume a stored session, future topic messages use the fresh ID."""
+        project = Path("/test/project")
+        user_id = 789
+        stale = ClaudeSession(
+            session_id="stale-session-id",
+            user_id=user_id,
+            project_path=project,
+            created_at=datetime.utcnow(),
+            last_used=datetime.utcnow(),
+        )
+        await session_manager.storage.save_session(stale)
+        session_manager.active_sessions[stale.session_id] = stale
+
+        fresh_response = _make_mock_response(session_id="fresh-session-id")
+        with patch.object(
+            facade,
+            "_execute",
+            side_effect=[RuntimeError("No conversation found"), fresh_response],
+        ):
+            result = await facade.run_command(
+                prompt="hello",
+                working_directory=project,
+                user_id=user_id,
+                session_id="stale-session-id",
+            )
+
+        assert result.session_id == "fresh-session-id"
+        assert "stale-session-id" not in session_manager.storage.sessions
+        assert "stale-session-id" not in session_manager.active_sessions
+
+        stored_fresh = session_manager.storage.sessions.get("fresh-session-id")
+        assert stored_fresh is not None
+        assert stored_fresh.project_path == project

@@ -101,8 +101,12 @@ class ClaudeIntegration:
                         failed_session_id=claude_session_id,
                         error=str(resume_error),
                     )
-                    # Clean up the stale session
-                    await self.session_manager.remove_session(session.session_id)
+                    # Clean up the stale session from both the active cache and
+                    # durable storage before retrying. This prevents the next
+                    # topic-scoped message from reusing a Claude-side session ID
+                    # that no longer exists and looking like context was lost.
+                    stale_session_id = session.session_id
+                    await self.session_manager.remove_session(stale_session_id)
 
                     # Create a fresh session and retry
                     session = await self.session_manager.get_or_create_session(
