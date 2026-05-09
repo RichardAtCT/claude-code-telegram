@@ -482,13 +482,7 @@ async def handle_text_message(
 
         # JAR-148: structured delivery log so silent "message vanished"
         # cases (200 OK from API but nothing visible to the user) become
-        # debuggable from logs alone. Capture chat/thread routing, chunk
-        # count, total length, first/last preview, and the placeholder flag.
-        first_preview = (
-            formatted_messages[0].text[:200]
-            if formatted_messages and formatted_messages[0].text
-            else None
-        )
+        # debuggable from logs alone without persisting user-visible content.
         is_placeholder = (
             len(formatted_messages) == 1
             and "(No content to display)" in formatted_messages[0].text
@@ -500,7 +494,6 @@ async def handle_text_message(
             message_thread_id=getattr(update.message, "message_thread_id", None),
             formatted_count=len(formatted_messages),
             total_text_len=sum(len(m.text or "") for m in formatted_messages),
-            first_preview=first_preview,
             is_placeholder=is_placeholder,
             image_count=len(images),
         )

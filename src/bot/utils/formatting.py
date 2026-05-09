@@ -74,8 +74,6 @@ class ResponseFormatter:
             logger.warning(
                 "format_claude_response_empty_placeholder",
                 original_text_len=len(text),
-                original_first_chars=text[:200],
-                original_last_chars=text[-200:] if len(text) > 200 else "",
                 used_semantic_chunking=self._should_use_semantic_chunking(text),
             )
             return [FormattedMessage("<i>(No content to display)</i>")]
