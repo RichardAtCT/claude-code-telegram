@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
@@ -44,6 +45,10 @@ logger = structlog.get_logger()
 
 # Fallback message when Claude produces no text but did use tools.
 TASK_COMPLETED_MSG = "✅ Task completed. Tools used: {tools_summary}"
+
+SDK_STREAM_QUEUE_MAXSIZE = 256
+SDK_STREAM_COALESCE_WINDOW_SECONDS = 1.5
+SDK_STREAM_COALESCE_MAX_BATCH = 15
 
 
 @dataclass
@@ -175,6 +180,50 @@ class StreamUpdate:
                 return max(0, min(100, percentage))
 
         return None
+
+
+def _is_stream_delta(message: Message) -> bool:
+    """Return True for incremental SDK text/thinking delta events."""
+    if not isinstance(message, StreamEvent):
+        return False
+
+    event = message.event or {}
+    if event.get("type") != "content_block_delta":
+        return False
+
+    delta = event.get("delta", {})
+    delta_type = delta.get("type")
+    if delta_type == "text_delta":
+        return bool(delta.get("text"))
+    if delta_type == "thinking_delta":
+        return bool(delta.get("thinking"))
+    return False
+
+
+def _consolidate_stream_deltas(deltas: List[Message]) -> Message:
+    """Concatenate incremental StreamEvent deltas into one stream delta message."""
+    stream_events = [delta for delta in deltas if isinstance(delta, StreamEvent)]
+    if not stream_events:
+        raise ValueError("Cannot consolidate an empty stream delta batch")
+
+    text_parts: List[str] = []
+    for stream_event in stream_events:
+        delta = (stream_event.event or {}).get("delta", {})
+        if delta.get("type") == "text_delta":
+            text_parts.append(delta.get("text", ""))
+        elif delta.get("type") == "thinking_delta":
+            text_parts.append(delta.get("thinking", ""))
+
+    last_event = stream_events[-1]
+    return StreamEvent(
+        uuid=getattr(last_event, "uuid", ""),
+        session_id=getattr(last_event, "session_id", ""),
+        parent_tool_use_id=getattr(last_event, "parent_tool_use_id", None),
+        event={
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "".join(text_parts)},
+        },
+    )
 
 
 def _make_can_use_tool_callback(
@@ -369,6 +418,12 @@ class ClaudeSDKManager:
             # Collect messages via ClaudeSDKClient
             messages: List[Message] = []
             interrupted = False
+            worker_metrics: Dict[str, float] = {
+                "queue_depth_max": 0,
+                "coalesced": 0,
+                "dropped": 0,
+                "worker_lag_ms_max": 0,
+            }
 
             async def _run_client() -> None:
                 client = ClaudeSDKClient(options)
@@ -406,33 +461,155 @@ class ClaudeSDKManager:
                     else:
                         await client.query(prompt)
 
-                    async for raw_data in client._query.receive_messages():
-                        try:
-                            message = parse_message(raw_data)
-                        except MessageParseError as e:
-                            logger.debug(
-                                "Skipping unparseable message",
-                                error=str(e),
-                            )
-                            continue
-
-                        messages.append(message)
-
-                        if isinstance(message, ResultMessage):
-                            break
-
-                        # Handle streaming callback
-                        if stream_callback:
+                    if not stream_callback:
+                        async for raw_data in client._query.receive_messages():
                             try:
-                                await self._handle_stream_message(
-                                    message, stream_callback
+                                message = parse_message(raw_data)
+                            except MessageParseError as e:
+                                logger.debug(
+                                    "Skipping unparseable message",
+                                    error=str(e),
                                 )
-                            except Exception as callback_error:
-                                logger.warning(
-                                    "Stream callback failed",
-                                    error=str(callback_error),
-                                    error_type=type(callback_error).__name__,
+                                continue
+
+                            messages.append(message)
+
+                            if isinstance(message, ResultMessage):
+                                break
+                        return
+
+                    queue: asyncio.Queue[Optional[Message]] = asyncio.Queue(
+                        maxsize=SDK_STREAM_QUEUE_MAXSIZE
+                    )
+                    worker_metrics.update(
+                        {
+                            "queue_depth_max": 0,
+                            "coalesced": 0,
+                            "dropped": 0,
+                            "worker_lag_ms_max": 0,
+                        }
+                    )
+
+                    async def _handle_with_metrics(message: Message) -> None:
+                        t0 = time.monotonic()
+                        try:
+                            await self._handle_stream_message(message, stream_callback)
+                        except Exception as callback_error:
+                            logger.warning(
+                                "Stream callback failed",
+                                error=str(callback_error),
+                                error_type=type(callback_error).__name__,
+                            )
+                        finally:
+                            lag_ms = (time.monotonic() - t0) * 1000
+                            worker_metrics["worker_lag_ms_max"] = max(
+                                worker_metrics["worker_lag_ms_max"], lag_ms
+                            )
+
+                    async def _flush_pending(pending_deltas: List[Message]) -> None:
+                        if not pending_deltas:
+                            return
+
+                        consolidated = _consolidate_stream_deltas(pending_deltas)
+                        worker_metrics["coalesced"] += len(pending_deltas)
+                        await _handle_with_metrics(consolidated)
+
+                    async def _producer() -> None:
+                        async for raw_data in client._query.receive_messages():
+                            try:
+                                message = parse_message(raw_data)
+                            except MessageParseError as e:
+                                logger.debug(
+                                    "Skipping unparseable message",
+                                    error=str(e),
                                 )
+                                continue
+
+                            messages.append(message)
+
+                            if queue.full() and _is_stream_delta(message):
+                                worker_metrics["dropped"] += 1
+                                continue
+
+                            await queue.put(message)
+                            worker_metrics["queue_depth_max"] = max(
+                                worker_metrics["queue_depth_max"], queue.qsize()
+                            )
+
+                            if isinstance(message, ResultMessage):
+                                await queue.put(None)
+                                worker_metrics["queue_depth_max"] = max(
+                                    worker_metrics["queue_depth_max"], queue.qsize()
+                                )
+                                return
+
+                        await queue.put(None)
+                        worker_metrics["queue_depth_max"] = max(
+                            worker_metrics["queue_depth_max"], queue.qsize()
+                        )
+
+                    async def _consumer() -> None:
+                        pending_deltas: List[Message] = []
+                        last_flush = time.monotonic()
+
+                        while True:
+                            timeout = max(
+                                0.05,
+                                SDK_STREAM_COALESCE_WINDOW_SECONDS
+                                - (time.monotonic() - last_flush),
+                            )
+                            try:
+                                message = await asyncio.wait_for(
+                                    queue.get(), timeout=timeout
+                                )
+                            except asyncio.TimeoutError:
+                                await _flush_pending(pending_deltas)
+                                pending_deltas = []
+                                last_flush = time.monotonic()
+                                continue
+
+                            if message is None:
+                                await _flush_pending(pending_deltas)
+                                return
+
+                            if isinstance(message, ResultMessage):
+                                await _flush_pending(pending_deltas)
+                                pending_deltas = []
+                                last_flush = time.monotonic()
+                                continue
+
+                            if _is_stream_delta(message):
+                                pending_deltas.append(message)
+                                if (
+                                    time.monotonic() - last_flush
+                                    >= SDK_STREAM_COALESCE_WINDOW_SECONDS
+                                    or len(pending_deltas)
+                                    >= SDK_STREAM_COALESCE_MAX_BATCH
+                                ):
+                                    await _flush_pending(pending_deltas)
+                                    pending_deltas = []
+                                    last_flush = time.monotonic()
+                                continue
+
+                            if pending_deltas:
+                                await _flush_pending(pending_deltas)
+                                pending_deltas = []
+                                last_flush = time.monotonic()
+
+                            await _handle_with_metrics(message)
+
+                    producer_task = asyncio.create_task(_producer())
+                    consumer_task = asyncio.create_task(_consumer())
+                    try:
+                        await asyncio.gather(producer_task, consumer_task)
+                    finally:
+                        for task in (producer_task, consumer_task):
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(
+                            producer_task, consumer_task, return_exceptions=True
+                        )
+
                 finally:
                     await client.disconnect()
 
@@ -558,6 +735,9 @@ class ClaudeSDKManager:
 
             # Calculate duration
             duration_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
+            num_turns = len(
+                [m for m in messages if isinstance(m, (UserMessage, AssistantMessage))]
+            )
 
             # Use Claude's session_id if available, otherwise fall back
             final_session_id = claude_session_id or session_id or ""
@@ -595,18 +775,22 @@ class ClaudeSDKManager:
                 tools_summary = ", ".join(unique_tool_names) or "unknown"
                 content = TASK_COMPLETED_MSG.format(tools_summary=tools_summary)
 
+            logger.info(
+                "claude_run_complete",
+                queue_depth_max=int(worker_metrics["queue_depth_max"]),
+                coalesced_count=int(worker_metrics["coalesced"]),
+                dropped_count=int(worker_metrics["dropped"]),
+                worker_lag_ms_max=int(worker_metrics["worker_lag_ms_max"]),
+                duration_ms=duration_ms,
+                num_turns=num_turns,
+            )
+
             return ClaudeResponse(
                 content=content,
                 session_id=final_session_id,
                 cost=cost,
                 duration_ms=duration_ms,
-                num_turns=len(
-                    [
-                        m
-                        for m in messages
-                        if isinstance(m, (UserMessage, AssistantMessage))
-                    ]
-                ),
+                num_turns=num_turns,
                 tools_used=tools_used,
                 interrupted=interrupted,
             )
@@ -740,6 +924,14 @@ class ClaudeSDKManager:
                                 content=text,
                             )
                             await stream_callback(update)
+                    elif delta.get("type") == "thinking_delta":
+                        thinking = delta.get("thinking", "")
+                        if thinking:
+                            update = StreamUpdate(
+                                type="stream_delta",
+                                content=thinking,
+                            )
+                            await stream_callback(update)
 
             elif isinstance(message, UserMessage):
                 content = getattr(message, "content", "")
@@ -751,7 +943,11 @@ class ClaudeSDKManager:
                     await stream_callback(update)
 
         except Exception as e:
-            logger.warning("Stream callback failed", error=str(e))
+            logger.warning(
+                "Stream callback failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
     def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:
         """Load MCP server configuration from a JSON file.
