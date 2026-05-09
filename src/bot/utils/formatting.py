@@ -4,10 +4,13 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional
 
+import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ...config.settings import Settings
 from .html_format import escape_html, markdown_to_telegram_html
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -61,11 +64,23 @@ class ResponseFormatter:
         # Filter out any empty messages produced by formatting/splitting
         messages = [m for m in messages if m.text and m.text.strip()]
 
-        return (
-            messages
-            if messages
-            else [FormattedMessage("<i>(No content to display)</i>")]
-        )
+        if not messages:
+            # JAR-148: surface this case in logs — historically the placeholder
+            # got delivered with no diagnostic, leaving "where did my message
+            # go?" investigations blind. Capture original input shape so we
+            # can tell whether Claude returned empty or formatting ate the
+            # content (e.g. markdown table → HTML conversion stripped to ""
+            # after .strip()).
+            logger.warning(
+                "format_claude_response_empty_placeholder",
+                original_text_len=len(text),
+                original_first_chars=text[:200],
+                original_last_chars=text[-200:] if len(text) > 200 else "",
+                used_semantic_chunking=self._should_use_semantic_chunking(text),
+            )
+            return [FormattedMessage("<i>(No content to display)</i>")]
+
+        return messages
 
     def _should_use_semantic_chunking(self, text: str) -> bool:
         """Determine if semantic chunking is needed."""
