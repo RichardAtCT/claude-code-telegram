@@ -749,21 +749,54 @@ class ClaudeSDKManager:
                     previous_session_id=session_id,
                 )
 
-            # Use ResultMessage.result if available, fall back to message extraction
-            if result_content is not None:
+            # Use ResultMessage.result if available; treat empty/whitespace
+            # values as missing so we fall back to message-level extraction
+            # (JAR-114: avoid the TASK_COMPLETED_MSG fallback when Claude
+            # actually produced text via AssistantMessage TextBlocks or
+            # streamed text deltas).
+            content = ""
+            if result_content is not None and str(result_content).strip():
                 content = str(result_content).strip()
             else:
-                content_parts = []
+                content_parts: List[str] = []
                 for msg in messages:
                     if isinstance(msg, AssistantMessage):
                         msg_content = getattr(msg, "content", [])
                         if msg_content and isinstance(msg_content, list):
                             for block in msg_content:
-                                if hasattr(block, "text"):
+                                if isinstance(block, TextBlock):
+                                    content_parts.append(block.text)
+                                elif isinstance(block, ThinkingBlock):
+                                    # Thinking content is internal reasoning;
+                                    # skip when reconstructing the user reply.
+                                    continue
+                                elif hasattr(block, "text"):
                                     content_parts.append(block.text)
                         elif msg_content:
                             content_parts.append(str(msg_content))
                 content = "\n".join(content_parts).strip()
+
+                # Final fallback: reconstruct the assistant reply from
+                # StreamEvent text/thinking deltas when no AssistantMessage
+                # TextBlock made it into the buffer (e.g., stream-only flows
+                # where the SDK emits incremental deltas but no finalized
+                # AssistantMessage with text). Without this, JAR-114 surfaces
+                # the TASK_COMPLETED_MSG template instead of Claude's real
+                # answer.
+                if not content:
+                    delta_parts: List[str] = []
+                    for msg in messages:
+                        if not isinstance(msg, StreamEvent):
+                            continue
+                        event = getattr(msg, "event", None) or {}
+                        if event.get("type") != "content_block_delta":
+                            continue
+                        delta = event.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                delta_parts.append(text)
+                    content = "".join(delta_parts).strip()
 
             if not content and tools_used:
                 tool_names = [
