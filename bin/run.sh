@@ -20,8 +20,16 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# Token lives in macOS Keychain, not on disk. Fetch only if not already in env.
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
-  echo "fatal: TELEGRAM_BOT_TOKEN is empty" >&2
+  TELEGRAM_BOT_TOKEN="$(/usr/bin/security find-generic-password \
+    -s 'claude-code-telegram::TELEGRAM_BOT_TOKEN' \
+    -a "$USER" -w 2>/dev/null || true)"
+  export TELEGRAM_BOT_TOKEN
+fi
+
+if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+  echo "fatal: TELEGRAM_BOT_TOKEN missing (not in .env, not in Keychain item 'claude-code-telegram::TELEGRAM_BOT_TOKEN')" >&2
   exit 78
 fi
 if [[ ! -x "$APP_DIR/.venv/bin/python" ]]; then
