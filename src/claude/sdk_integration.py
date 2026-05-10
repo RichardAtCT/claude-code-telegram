@@ -5,7 +5,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, Iterable, List, Mapping, Optional
 
 import structlog
 from claude_agent_sdk import (
@@ -49,6 +49,107 @@ TASK_COMPLETED_MSG = "✅ Task completed. Tools used: {tools_summary}"
 SDK_STREAM_QUEUE_MAXSIZE = 256
 SDK_STREAM_COALESCE_WINDOW_SECONDS = 1.5
 SDK_STREAM_COALESCE_MAX_BATCH = 15
+DELIVERY_KIND_TEXT = "text"
+DELIVERY_KIND_TOOL_SUMMARY_INTERNAL = "tool_summary_internal"
+DELIVERY_KIND_FINAL_USER_RESPONSE = "final_user_response"
+DELIVERY_KIND_ERROR_FALLBACK = "error_fallback"
+DELIVERY_KINDS = {
+    DELIVERY_KIND_TEXT,
+    DELIVERY_KIND_TOOL_SUMMARY_INTERNAL,
+    DELIVERY_KIND_FINAL_USER_RESPONSE,
+    DELIVERY_KIND_ERROR_FALLBACK,
+}
+
+
+def _log_delivery(
+    delivery_kind: str,
+    *,
+    content_source: str,
+    content_length: int = 0,
+    tools_count: int = 0,
+    error_type: Optional[str] = None,
+) -> None:
+    """Log delivery metadata without user/assistant response bodies."""
+    if delivery_kind not in DELIVERY_KINDS:
+        delivery_kind = DELIVERY_KIND_TEXT
+
+    log_fields: Dict[str, Any] = {
+        "delivery_kind": delivery_kind,
+        "content_source": content_source,
+        "content_length": max(0, int(content_length)),
+        "tools_count": max(0, int(tools_count)),
+    }
+    if error_type:
+        log_fields["error_type"] = error_type
+
+    logger.info("delivery", **log_fields)
+
+
+def _log_error_delivery(error_type: str) -> None:
+    _log_delivery(
+        DELIVERY_KIND_ERROR_FALLBACK,
+        content_source="exception",
+        error_type=error_type,
+    )
+
+
+def delivery_metrics_report(
+    events: Iterable[Mapping[str, Any]], alert_threshold: float = 0.05
+) -> List[Dict[str, Any]]:
+    """Build a daily tool-summary rate report from structured delivery events."""
+    daily: Dict[str, Dict[str, int]] = {}
+    for event in events:
+        delivery_kind = event.get("delivery_kind")
+        if delivery_kind not in DELIVERY_KINDS:
+            continue
+
+        timestamp = event.get("timestamp") or event.get("date")
+        if not isinstance(timestamp, str) or len(timestamp) < 10:
+            continue
+
+        day = timestamp[:10]
+        day_counts = daily.setdefault(day, {"total": 0, "tool_summary_internal": 0})
+        day_counts["total"] += 1
+        if delivery_kind == DELIVERY_KIND_TOOL_SUMMARY_INTERNAL:
+            day_counts["tool_summary_internal"] += 1
+
+    report: List[Dict[str, Any]] = []
+    for day in sorted(daily):
+        counts = daily[day]
+        total = counts["total"]
+        tool_summary_count = counts["tool_summary_internal"]
+        rate = tool_summary_count / total if total else 0.0
+        report.append(
+            {
+                "date": day,
+                "total": total,
+                "tool_summary_internal": tool_summary_count,
+                "tool_summary_internal_rate": rate,
+                "alert": rate > alert_threshold,
+            }
+        )
+
+    return report
+
+
+def format_delivery_metrics_dashboard(report: Iterable[Mapping[str, Any]]) -> str:
+    """Format delivery metrics as an operator-readable daily dashboard."""
+    rows = list(report)
+    if not rows:
+        return "Delivery metrics dashboard\nNo delivery events found."
+
+    lines = [
+        "Delivery metrics dashboard",
+        "date | total | tool_summary_internal | rate | status",
+    ]
+    for row in rows:
+        rate = float(row.get("tool_summary_internal_rate") or 0.0)
+        status = "ALERT" if row.get("alert") else "OK"
+        lines.append(
+            f"{row.get('date')} | {row.get('total', 0)} | "
+            f"{row.get('tool_summary_internal', 0)} | {rate:.2%} | {status}"
+        )
+    return "\n".join(lines)
 
 
 def _format_ask_user_question_tool(tool_input: Dict[str, Any]) -> str:
@@ -770,8 +871,12 @@ class ClaudeSDKManager:
             # actually produced text via AssistantMessage TextBlocks or
             # streamed text deltas).
             content = ""
+            content_source = "empty"
+            delivery_kind = DELIVERY_KIND_TEXT
             if result_content is not None and str(result_content).strip():
                 content = str(result_content).strip()
+                content_source = "result_message"
+                delivery_kind = DELIVERY_KIND_FINAL_USER_RESPONSE
             else:
                 content_parts: List[str] = []
                 for msg in messages:
@@ -797,6 +902,9 @@ class ClaudeSDKManager:
                         elif msg_content:
                             content_parts.append(str(msg_content))
                 content = "\n".join(content_parts).strip()
+                if content:
+                    content_source = "assistant_text"
+                    delivery_kind = DELIVERY_KIND_FINAL_USER_RESPONSE
 
                 # Final fallback: reconstruct the assistant reply from
                 # StreamEvent text/thinking deltas when no AssistantMessage
@@ -819,6 +927,9 @@ class ClaudeSDKManager:
                             if text:
                                 delta_parts.append(text)
                     content = "".join(delta_parts).strip()
+                    if content:
+                        content_source = "stream_delta"
+                        delivery_kind = DELIVERY_KIND_FINAL_USER_RESPONSE
 
             if not content and tools_used:
                 tool_names = [
@@ -829,6 +940,15 @@ class ClaudeSDKManager:
                 unique_tool_names = list(dict.fromkeys(tool_names))
                 tools_summary = ", ".join(unique_tool_names) or "unknown"
                 content = TASK_COMPLETED_MSG.format(tools_summary=tools_summary)
+                content_source = "tool_summary_fallback"
+                delivery_kind = DELIVERY_KIND_TOOL_SUMMARY_INTERNAL
+
+            _log_delivery(
+                delivery_kind,
+                content_source=content_source,
+                content_length=len(content),
+                tools_count=len(tools_used),
+            )
 
             logger.info(
                 "claude_run_complete",
@@ -851,6 +971,7 @@ class ClaudeSDKManager:
             )
 
         except asyncio.TimeoutError:
+            _log_error_delivery("TimeoutError")
             logger.error(
                 "Claude SDK command timed out",
                 timeout_seconds=self.config.claude_timeout_seconds,
@@ -860,6 +981,7 @@ class ClaudeSDKManager:
             )
 
         except CLINotFoundError as e:
+            _log_error_delivery(type(e).__name__)
             logger.error("Claude CLI not found", error=str(e))
             error_msg = (
                 "Claude Code not found. Please ensure Claude is installed:\n"
@@ -872,6 +994,7 @@ class ClaudeSDKManager:
             raise ClaudeProcessError(error_msg)
 
         except ProcessError as e:
+            _log_error_delivery(type(e).__name__)
             error_str = str(e)
             # Include captured stderr for better diagnostics
             captured_stderr = "\n".join(stderr_lines[-20:]) if stderr_lines else ""
@@ -889,6 +1012,7 @@ class ClaudeSDKManager:
             raise ClaudeProcessError(f"Claude process error: {error_str}")
 
         except CLIConnectionError as e:
+            _log_error_delivery(type(e).__name__)
             error_str = str(e)
             logger.error("Claude connection error", error=error_str)
             # Check if the connection error is MCP-related
@@ -897,14 +1021,17 @@ class ClaudeSDKManager:
             raise ClaudeProcessError(f"Failed to connect to Claude: {error_str}")
 
         except CLIJSONDecodeError as e:
+            _log_error_delivery(type(e).__name__)
             logger.error("Claude SDK JSON decode error", error=str(e))
             raise ClaudeParsingError(f"Failed to decode Claude response: {str(e)}")
 
         except ClaudeSDKError as e:
+            _log_error_delivery(type(e).__name__)
             logger.error("Claude SDK error", error=str(e))
             raise ClaudeProcessError(f"Claude SDK error: {str(e)}")
 
         except Exception as e:
+            _log_error_delivery(type(e).__name__)
             exceptions = getattr(e, "exceptions", None)
             if exceptions is not None:
                 # ExceptionGroup from TaskGroup operations (Python 3.11+)
