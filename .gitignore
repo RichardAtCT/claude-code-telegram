@@ -147,3 +147,7 @@ sessions/
 backups/
 uploads/
 config/mcp.json
+# Local env backups (ignored)
+.env.bak
+.env.bak2
+.env.kai
