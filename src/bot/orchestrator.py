@@ -319,6 +319,12 @@ class MessageOrchestrator:
     def _register_agentic_handlers(self, app: Application) -> None:
         """Register agentic handlers: commands + text/file/photo."""
         from .handlers import command
+        from .dex_handlers import (
+            CUSTOM_VERBS,
+            handle_no,
+            handle_yes,
+            make_verb_handler,
+        )
 
         # Commands
         handlers = [
@@ -329,7 +335,12 @@ class MessageOrchestrator:
             ("repo", self.agentic_repo),
             ("model", command.model_command),
             ("restart", command.restart_command),
+            # Dex async decision queue
+            ("yes", handle_yes),
+            ("no", handle_no),
         ]
+        for verb in CUSTOM_VERBS:
+            handlers.append((verb, make_verb_handler(verb)))
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
@@ -410,6 +421,12 @@ class MessageOrchestrator:
     def _register_classic_handlers(self, app: Application) -> None:
         """Register full classic handler set (moved from core.py)."""
         from .handlers import callback, command, message
+        from .dex_handlers import (
+            CUSTOM_VERBS,
+            handle_no,
+            handle_yes,
+            make_verb_handler,
+        )
 
         handlers = [
             ("start", command.start_command),
@@ -427,7 +444,12 @@ class MessageOrchestrator:
             ("git", command.git_command),
             ("model", command.model_command),
             ("restart", command.restart_command),
+            # Dex async decision queue
+            ("yes", handle_yes),
+            ("no", handle_no),
         ]
+        for verb in CUSTOM_VERBS:
+            handlers.append((verb, make_verb_handler(verb)))
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
@@ -472,6 +494,8 @@ class MessageOrchestrator:
                 BotCommand("repo", "List repos / switch workspace"),
                 BotCommand("model", "Switch Claude model and effort"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("yes", "Approve a pending Dex decision"),
+                BotCommand("no", "Reject a pending Dex decision"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -493,6 +517,8 @@ class MessageOrchestrator:
                 BotCommand("git", "Git repository commands"),
                 BotCommand("model", "Switch Claude model and effort"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("yes", "Approve a pending Dex decision"),
+                BotCommand("no", "Reject a pending Dex decision"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
