@@ -22,6 +22,150 @@ from telegram.ext import ContextTypes
 
 CUSTOM_VERBS = {"revive", "archive", "fold", "delete", "pause", "resume"}
 
+# Plain-English meaning + inverse-verb hint for every confirmation reply.
+# Keys are the verb passed to ``_compose_echo``.
+_VERB_INFO: dict[str, dict[str, str]] = {
+    "yes_approval": {
+        "meaning": "KEEP ACTIVE",
+        "next": "Dex applies next tick.",
+        "reverse": "/no <id> to snooze 7d · /pause <id> · /archive <id>",
+    },
+    "yes_dispatch": {
+        "meaning": "DISPATCH (Writer/Coder/Researcher will run)",
+        "next": "Dex applies next tick.",
+        "reverse": "/no <id> to skip",
+    },
+    "yes_dispatch_now": {
+        "meaning": "DISPATCH IMMEDIATELY (fires within 1 min)",
+        "next": "Dex fires within 1 min.",
+        "reverse": "/no <id> to skip (must reply before tick fires)",
+    },
+    "no": {
+        "meaning": "SKIP (7-day cooldown)",
+        "next": "Dex applies next tick.",
+        "reverse": "/yes <id> to reverse",
+    },
+    "pause": {
+        "meaning": "PAUSE (flip status to paused)",
+        "next": "Dex applies next tick.",
+        "reverse": "/yes <id> to keep active · /revive <id>",
+    },
+    "revive": {
+        "meaning": "REVIVE (flip status to active)",
+        "next": "Dex applies next tick.",
+        "reverse": "/pause <id> to re-pause",
+    },
+    "archive": {
+        "meaning": "ARCHIVE (move to 11 Archive/)",
+        "next": "Dex applies next tick.",
+        "reverse": "/yes <id> to keep active (cannot undo archive easily)",
+    },
+    "fold": {
+        "meaning": "FOLD (inline + delete source file)",
+        "next": "Dex applies next tick.",
+        "reverse": "/no <id> to skip (cannot undo)",
+    },
+    "delete": {
+        "meaning": "DELETE",
+        "next": "Dex applies next tick.",
+        "reverse": "/no <id> to skip (cannot undo)",
+    },
+    "resume": {
+        "meaning": "RESUME (flip status to active)",
+        "next": "Dex applies next tick.",
+        "reverse": "/pause <id> to re-pause",
+    },
+}
+
+
+def _read_decision_meta(path: Path) -> dict:
+    """Parse the YAML frontmatter of a decision file.
+
+    Simple line-by-line parser — no external deps. Returns a dict with at
+    least ``project``, ``agent``, ``type``, and ``task`` keys if present.
+    Missing fields are simply absent from the returned dict.
+    """
+    meta: dict[str, str] = {}
+    if not path.exists():
+        return meta
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return meta
+    lines = text.splitlines()
+    # Frontmatter must start at the very first line with ``---``.
+    if not lines or lines[0].strip() != "---":
+        return meta
+    in_frontmatter = True
+    body_lines: list[str] = []
+    for line in lines[1:]:
+        if in_frontmatter:
+            if line.strip() == "---":
+                in_frontmatter = False
+                continue
+            if ":" in line:
+                key, _, value = line.partition(":")
+                meta[key.strip()] = value.strip()
+        else:
+            body_lines.append(line)
+    # Capture the first non-empty line under ``## Task`` for dispatch context.
+    for idx, line in enumerate(body_lines):
+        if line.strip().lower() == "## task":
+            for follow in body_lines[idx + 1 :]:
+                if follow.strip():
+                    meta["task"] = follow.strip()[:80]
+                    break
+            break
+    return meta
+
+
+def _decision_context(meta: dict) -> str:
+    """Return a short human label for the decision (project, or agent + task)."""
+    dtype = (meta.get("type") or "").lower()
+    if dtype == "dispatch":
+        agent = meta.get("agent") or "<no context>"
+        task = meta.get("task")
+        if task:
+            return f"{agent}: {task}"
+        return agent
+    project = meta.get("project")
+    if project:
+        return project
+    return "<no context>"
+
+
+def _compose_echo(
+    verb: str, decision_id: str, meta: dict, fire_now: bool = False
+) -> str:
+    """Build the confirmation reply for a resolved decision.
+
+    ``verb`` is the bare command verb (e.g. ``"yes"``, ``"no"``, ``"pause"``).
+    For ``yes`` the dispatch vs approval branch (and ``/now`` variant) is
+    chosen from ``meta`` and ``fire_now``.
+    """
+    if verb == "yes":
+        dtype = (meta.get("type") or "").lower()
+        if dtype == "dispatch":
+            key = "yes_dispatch_now" if fire_now else "yes_dispatch"
+        else:
+            key = "yes_approval"
+    else:
+        key = verb
+    info = _VERB_INFO.get(key)
+    if info is None:
+        # Defensive fallback — unknown verb, keep terse but still informative.
+        return (
+            f"{decision_id} {_decision_context(meta)} "
+            f"→ {verb.upper()}. Dex applies next tick."
+        )
+    context_label = _decision_context(meta)
+    reverse_hint = info["reverse"].replace("<id>", decision_id)
+    return (
+        f"{decision_id} {context_label} → {info['meaning']}. "
+        f"{info['next']}\n"
+        f"↩ If wrong: {reverse_hint}"
+    )
+
 
 def _pending_dir() -> Path:
     """Return the directory holding pending-decision markdown files.
@@ -100,15 +244,16 @@ async def handle_yes(
     fire_now = (
         len(context.args) > 1 and context.args[1].lower() == "/now"
     )
+    path = _decision_path(decision_id)
+    meta = _read_decision_meta(path)
     ok = _append_resolution(decision_id, "resolved-yes", fire_now=fire_now)
     if not ok:
         await update.message.reply_text(f"Decision {decision_id} not found.")
         return
     if fire_now:
         await _fire_now_dex()
-    suffix = " (fire-now requested)" if fire_now else ""
     await update.message.reply_text(
-        f"Resolved {decision_id} = yes{suffix}. Dex picks up next tick."
+        _compose_echo("yes", decision_id, meta, fire_now=fire_now)
     )
 
 
@@ -120,12 +265,14 @@ async def handle_no(
         await update.message.reply_text("Usage: /no <id>")
         return
     decision_id = context.args[0]
+    path = _decision_path(decision_id)
+    meta = _read_decision_meta(path)
     ok = _append_resolution(decision_id, "resolved-no")
     if not ok:
         await update.message.reply_text(f"Decision {decision_id} not found.")
         return
     await update.message.reply_text(
-        f"Resolved {decision_id} = no. Cooldown 7 days."
+        _compose_echo("no", decision_id, meta)
     )
 
 
@@ -137,12 +284,14 @@ async def handle_custom_verb(
         await update.message.reply_text(f"Usage: /{verb} <id>")
         return
     decision_id = context.args[0]
+    path = _decision_path(decision_id)
+    meta = _read_decision_meta(path)
     ok = _append_resolution(decision_id, f"resolved-{verb}")
     if not ok:
         await update.message.reply_text(f"Decision {decision_id} not found.")
         return
     await update.message.reply_text(
-        f"Resolved {decision_id} = {verb}. Dex picks up next tick."
+        _compose_echo(verb, decision_id, meta)
     )
 
 
