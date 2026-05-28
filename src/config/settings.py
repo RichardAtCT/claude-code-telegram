@@ -10,10 +10,10 @@ Features:
 
 import json
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from src.utils.constants import (
     DEFAULT_CLAUDE_MAX_COST_PER_REQUEST,
@@ -330,6 +330,21 @@ class Settings(BaseSettings):
         ge=0.0,
     )
 
+    # Session cost threshold warnings — alert user when cumulative session cost
+    # crosses configured tiers. Fires once per tier per session, resets on /new.
+    # Helps avoid silent Claude Max quota burn from long-running sessions.
+    enable_cost_warnings: bool = Field(
+        True,
+        description="Enable per-session cumulative cost threshold warnings",
+    )
+    session_cost_tiers: Annotated[List[float], NoDecode] = Field(
+        default=[5.0, 10.0, 20.0],
+        description=(
+            "Cost thresholds (USD) at which to warn per-session. "
+            "Comma-separated in env: SESSION_COST_TIERS=5,10,20"
+        ),
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
     )
@@ -346,6 +361,20 @@ class Settings(BaseSettings):
             return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
         if isinstance(v, list):
             return [int(uid) for uid in v]
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("session_cost_tiers", mode="before")
+    @classmethod
+    def parse_float_list(cls, v: Any) -> List[float]:
+        """Parse comma-separated float lists for cost tiers."""
+        if v is None:
+            return [5.0, 10.0, 20.0]
+        if isinstance(v, (int, float)):
+            return [float(v)]
+        if isinstance(v, str):
+            return [float(t.strip()) for t in v.split(",") if t.strip()]
+        if isinstance(v, list):
+            return [float(t) for t in v]
         return v  # type: ignore[no-any-return]
 
     @field_validator("claude_allowed_tools", mode="before")

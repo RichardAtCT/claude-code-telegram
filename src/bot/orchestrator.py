@@ -319,6 +319,13 @@ class MessageOrchestrator:
     def _register_agentic_handlers(self, app: Application) -> None:
         """Register agentic handlers: commands + text/file/photo."""
         from .handlers import command
+        from .dex_handlers import (
+            CUSTOM_VERBS,
+            handle_no,
+            handle_yes,
+            make_verb_handler,
+        )
+        from .builder_handlers import handle_builder
 
         # Commands
         handlers = [
@@ -327,8 +334,16 @@ class MessageOrchestrator:
             ("status", self.agentic_status),
             ("verbose", self.agentic_verbose),
             ("repo", self.agentic_repo),
+            ("model", command.model_command),
             ("restart", command.restart_command),
+            # Dex async decision queue
+            ("yes", handle_yes),
+            ("no", handle_no),
+            # Dex Phase 2 Builder
+            ("builder", handle_builder),
         ]
+        for verb in CUSTOM_VERBS:
+            handlers.append((verb, make_verb_handler(verb)))
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
@@ -388,6 +403,14 @@ class MessageOrchestrator:
             )
         )
 
+        # Model/effort selection callbacks
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(command.model_callback),
+                pattern=r"^(model|effort):",
+            )
+        )
+
         # Only cd: callbacks (for project selection), scoped by pattern
         app.add_handler(
             CallbackQueryHandler(
@@ -401,6 +424,13 @@ class MessageOrchestrator:
     def _register_classic_handlers(self, app: Application) -> None:
         """Register full classic handler set (moved from core.py)."""
         from .handlers import callback, command, message
+        from .dex_handlers import (
+            CUSTOM_VERBS,
+            handle_no,
+            handle_yes,
+            make_verb_handler,
+        )
+        from .builder_handlers import handle_builder
 
         handlers = [
             ("start", command.start_command),
@@ -416,8 +446,16 @@ class MessageOrchestrator:
             ("export", command.export_session),
             ("actions", command.quick_actions),
             ("git", command.git_command),
+            ("model", command.model_command),
             ("restart", command.restart_command),
+            # Dex async decision queue
+            ("yes", handle_yes),
+            ("no", handle_no),
+            # Dex Phase 2 Builder
+            ("builder", handle_builder),
         ]
+        for verb in CUSTOM_VERBS:
+            handlers.append((verb, make_verb_handler(verb)))
         if self.settings.enable_project_threads:
             handlers.append(("sync_threads", command.sync_threads))
 
@@ -460,7 +498,11 @@ class MessageOrchestrator:
                 BotCommand("status", "Show session status"),
                 BotCommand("verbose", "Set output verbosity (0/1/2)"),
                 BotCommand("repo", "List repos / switch workspace"),
+                BotCommand("model", "Switch Claude model and effort"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("yes", "Approve a pending Dex decision"),
+                BotCommand("no", "Reject a pending Dex decision"),
+                BotCommand("builder", "Builder status/kill/queue"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -480,7 +522,11 @@ class MessageOrchestrator:
                 BotCommand("export", "Export current session"),
                 BotCommand("actions", "Show quick actions"),
                 BotCommand("git", "Git repository commands"),
+                BotCommand("model", "Switch Claude model and effort"),
                 BotCommand("restart", "Restart the bot"),
+                BotCommand("yes", "Approve a pending Dex decision"),
+                BotCommand("no", "Reject a pending Dex decision"),
+                BotCommand("builder", "Builder status/kill/queue"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -549,6 +595,10 @@ class MessageOrchestrator:
         context.user_data["claude_session_id"] = None
         context.user_data["session_started"] = True
         context.user_data["force_new_session"] = True
+        # Reset session cost tracking — new session, fresh tiers
+        context.user_data["session_total_cost"] = 0.0
+        context.user_data["session_turn_count"] = 0
+        context.user_data["cost_warning_tiers"] = set()
 
         await update.message.reply_text("Session reset. What's next?")
 
@@ -1014,13 +1064,51 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 interrupt_event=interrupt_event,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             # New session created successfully — clear the one-shot flag
             if force_new:
                 context.user_data["force_new_session"] = False
+                # Reset cost tracking for the brand-new session
+                context.user_data["session_total_cost"] = 0.0
+                context.user_data["session_turn_count"] = 0
+                context.user_data["cost_warning_tiers"] = set()
 
             context.user_data["claude_session_id"] = claude_response.session_id
+
+            # Track cumulative session cost + fire tiered warnings (fire-once-per-tier).
+            # Resets on /new or model swap (force_new path above).
+            if self.settings.enable_cost_warnings:
+                cumulative = (
+                    context.user_data.get("session_total_cost", 0.0)
+                    + claude_response.cost
+                )
+                turn_count = context.user_data.get("session_turn_count", 0) + 1
+                context.user_data["session_total_cost"] = cumulative
+                context.user_data["session_turn_count"] = turn_count
+
+                fired_tiers = context.user_data.setdefault(
+                    "cost_warning_tiers", set()
+                )
+                # Fire the lowest unfired tier that we've crossed (one warning per turn).
+                for tier in sorted(self.settings.session_cost_tiers):
+                    if cumulative >= tier and tier not in fired_tiers:
+                        fired_tiers.add(tier)
+                        try:
+                            await update.message.reply_text(
+                                f"⚠️ Session at ${cumulative:.2f} / "
+                                f"{turn_count} turns. Consider /new."
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to send cost warning",
+                                error=str(e),
+                                tier=tier,
+                                cumulative=cumulative,
+                            )
+                        break
 
             # Track directory changes
             from .handlers.message import _update_working_directory_from_claude_response
@@ -1264,6 +1352,8 @@ class MessageOrchestrator:
                 session_id=session_id,
                 on_stream=on_stream,
                 force_new=force_new,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
 
             if force_new:
@@ -1474,6 +1564,8 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 images=images,
+                model_override=context.user_data.get("model_override"),
+                effort_override=context.user_data.get("effort_override"),
             )
         finally:
             heartbeat.cancel()
