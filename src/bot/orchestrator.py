@@ -325,6 +325,7 @@ class MessageOrchestrator:
             handle_yes,
             make_verb_handler,
         )
+        from .builder_handlers import handle_builder
 
         # Commands
         handlers = [
@@ -338,6 +339,8 @@ class MessageOrchestrator:
             # Dex async decision queue
             ("yes", handle_yes),
             ("no", handle_no),
+            # Dex Phase 2 Builder
+            ("builder", handle_builder),
         ]
         for verb in CUSTOM_VERBS:
             handlers.append((verb, make_verb_handler(verb)))
@@ -427,6 +430,7 @@ class MessageOrchestrator:
             handle_yes,
             make_verb_handler,
         )
+        from .builder_handlers import handle_builder
 
         handlers = [
             ("start", command.start_command),
@@ -447,6 +451,8 @@ class MessageOrchestrator:
             # Dex async decision queue
             ("yes", handle_yes),
             ("no", handle_no),
+            # Dex Phase 2 Builder
+            ("builder", handle_builder),
         ]
         for verb in CUSTOM_VERBS:
             handlers.append((verb, make_verb_handler(verb)))
@@ -496,6 +502,7 @@ class MessageOrchestrator:
                 BotCommand("restart", "Restart the bot"),
                 BotCommand("yes", "Approve a pending Dex decision"),
                 BotCommand("no", "Reject a pending Dex decision"),
+                BotCommand("builder", "Builder status/kill/queue"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
@@ -519,6 +526,7 @@ class MessageOrchestrator:
                 BotCommand("restart", "Restart the bot"),
                 BotCommand("yes", "Approve a pending Dex decision"),
                 BotCommand("no", "Reject a pending Dex decision"),
+                BotCommand("builder", "Builder status/kill/queue"),
             ]
             if self.settings.enable_project_threads:
                 commands.append(BotCommand("sync_threads", "Sync project topics"))
