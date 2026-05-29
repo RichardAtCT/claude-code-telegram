@@ -331,17 +331,18 @@ class TestAuditLogger:
             user_id=123, command="rm", args=["-rf", "/tmp/test"], success=True
         )
 
-        events = await storage.get_events()
-        high_risk_event = events[0]
-        assert high_risk_event.risk_level == "high"
-
         # Test low-risk command
         await audit_logger.log_command(
             user_id=123, command="echo", args=["hello"], success=True
         )
 
         events = await storage.get_events()
-        low_risk_event = events[0]  # Most recent
+        # Filter by command content rather than list position: two events can
+        # share the same microsecond timestamp, making sort order ambiguous.
+        high_risk_event = next(e for e in events if e.details["command"] == "rm")
+        assert high_risk_event.risk_level == "high"
+
+        low_risk_event = next(e for e in events if e.details["command"] == "echo")
         assert low_risk_event.risk_level == "low"
 
     async def test_log_file_access(self, audit_logger, storage):
@@ -369,17 +370,22 @@ class TestAuditLogger:
             user_id=123, file_path="/etc/passwd", action="delete", success=True
         )
 
-        events = await storage.get_events()
-        high_risk_event = events[0]
-        assert high_risk_event.risk_level == "high"
-
         # Low-risk: read normal file
         await audit_logger.log_file_access(
             user_id=123, file_path="/projects/readme.txt", action="read", success=True
         )
 
         events = await storage.get_events()
-        low_risk_event = events[0]  # Most recent
+        # Filter by file path rather than list position: two events can share
+        # the same microsecond timestamp, making sort order ambiguous.
+        high_risk_event = next(
+            e for e in events if e.details["file_path"] == "/etc/passwd"
+        )
+        assert high_risk_event.risk_level == "high"
+
+        low_risk_event = next(
+            e for e in events if e.details["file_path"] == "/projects/readme.txt"
+        )
         assert low_risk_event.risk_level == "low"
 
     async def test_log_security_violation(self, audit_logger, storage):

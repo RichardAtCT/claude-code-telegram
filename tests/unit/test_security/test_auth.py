@@ -249,6 +249,12 @@ class TestAuthenticationManager:
         assert session is not None
         assert session.user_id == user_id
 
+        # Backdate the session so refresh produces a strictly later
+        # last_activity: without this, refresh can land in the same microsecond
+        # as creation, making last_activity == created_at and the comparison flaky.
+        session.created_at = datetime.now(UTC) - timedelta(seconds=1)
+        session.last_activity = session.created_at
+
         # Refresh session
         old_activity = session.last_activity
         result = auth_manager.refresh_session(user_id)
