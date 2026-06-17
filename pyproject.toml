@@ -54,6 +54,7 @@ apscheduler = "^3.10"
 PyYAML = "^6.0.2"
 mistralai = {version = "^1.0.0", optional = true}
 openai = {version = "^1.0.0", optional = true}
+requests = "^2.34.2"
 
 [tool.poetry.extras]
 voice = ["mistralai", "openai"]
