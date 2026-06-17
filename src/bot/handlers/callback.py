@@ -1379,7 +1379,7 @@ async def handle_check_match_callback(
     p2_name = player_match.group(2)
 
     # Step 3 -- Look up match in poly_dashboard DB to get sofa_id
-    db_path = os.path.expanduser("~/poly_dashboard/data/app.db")
+    db_path = os.path.expanduser("~/tennis/data/app.db")
     sofa_id = None
     match_id = None
     try:
@@ -1505,7 +1505,7 @@ async def handle_check_match_callback(
             text=True,
             timeout=30,
             env=env,
-            cwd="/home/ubuntu/poly_dashboard",
+            cwd="/home/deploy/tennis",
         )
         if result.stdout.strip():
             raw = result.stdout.strip()
@@ -1606,8 +1606,8 @@ async def handle_investigate_trade_callback(
         "---\n\n"
         "Your job: deep-dive into this trade using the local database and logs, then report findings.\n\n"
         "## Tools Available\n"
-        "- Run `sqlite3 /home/ubuntu/poly_dashboard/data/app.db \"<query>\"` for database queries\n"
-        "- Run `grep` / `tail` on log files in `/home/ubuntu/poly_dashboard/data/logs/`\n"
+        "- Run `sqlite3 /home/deploy/tennis/data/app.db \"<query>\"` for database queries\n"
+        "- Run `grep` / `tail` on log files in `/home/deploy/tennis/data/logs/`\n"
         "- Use web search to find the current match score if needed\n\n"
         "## Investigation Steps\n\n"
         "### 1. Trade Details\n"
@@ -1653,7 +1653,7 @@ async def handle_investigate_trade_callback(
         "### 5. Log Context\n"
         "Check trader.log around the trade time for signal evaluation details:\n"
         "```bash\n"
-        "grep -A2 -B2 \"<player1_surname>\" /home/ubuntu/poly_dashboard/data/logs/trader.log | tail -40\n"
+        "grep -A2 -B2 \"<player1_surname>\" /home/deploy/tennis/data/logs/trader.log | tail -40\n"
         "```\n\n"
         "### 6. Current Match State\n"
         "Web search for the current score of this match.\n\n"
