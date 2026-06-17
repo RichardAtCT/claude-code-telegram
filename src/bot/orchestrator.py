@@ -390,6 +390,17 @@ class MessageOrchestrator:
             )
         )
 
+        # Escalation-message buttons (check-match / investigate) from the trader's
+        # trade notifications and scripts/escalate.sh. These live in the classic
+        # callback router; register them here too so they work in agentic mode.
+        from .handlers import callback as _escalation_callback
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(_escalation_callback.handle_callback_query),
+                pattern=r"^(check_match|investigate_trade)$",
+            )
+        )
+
         logger.info("Agentic handlers registered")
 
     def _register_classic_handlers(self, app: Application) -> None:
