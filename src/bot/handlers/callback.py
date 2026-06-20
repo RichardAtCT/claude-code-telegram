@@ -1328,6 +1328,34 @@ async def handle_export_callback(
 MATCH_SEPARATOR = "\u2501" * 14  # ━━━━━━━━━━━━━━
 
 
+_VERDICT_STATUS_PREFIXES = ("✅", "❌", "⏳", "❓")  # WON LOST UNDETERMINED UNKNOWN
+
+
+def _parse_verdict_block(raw: str) -> str:
+    """Extract a SINGLE verdict block (STATUS + Score + Reason) from model output.
+
+    The model is told to emit exactly one 3-line block, but it sometimes waffles
+    and emits two contradictory blocks (e.g. a WON block followed by a LOST block)
+    or prepends reasoning. We keep ONLY the first block: the first status line plus
+    the Score/Reason lines that follow it, stopping as soon as a second status line
+    appears. Falls back to the raw text if no status line is found.
+    """
+    keep = []
+    seen_status = False
+    for ln in raw.split("\n"):
+        s = ln.strip()
+        if not s:
+            continue
+        if any(s.startswith(p) for p in _VERDICT_STATUS_PREFIXES):
+            if seen_status:
+                break  # second verdict block -> stop, keep only the first
+            seen_status = True
+            keep.append(s)
+        elif seen_status and (s.startswith("Score:") or s.startswith("Reason:")):
+            keep.append(s)
+    return "\n".join(keep) if len(keep) >= 2 else raw.strip()
+
+
 async def handle_check_match_callback(
     query, _param: str, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -1479,58 +1507,70 @@ async def handle_check_match_callback(
 
     # Step 6 -- Use Claude (no tools) for assessment
     prompt = (
-        "You output EXACTLY 3 lines. No analysis, no reasoning, no markdown, no extra text.\n\n"
+        "You are settling ONE tennis bet. Output EXACTLY ONE verdict block of 3 lines "
+        "and NOTHING else \u2014 no preamble, no working, no markdown, and NEVER a second block.\n\n"
         "TRADE:\n"
         f"{original_text[:1500]}\n\n"
         "LIVE SCORE:\n"
         f"{score_summary}\n\n"
-        "MARKET TYPE DEFINITIONS (read carefully before deciding):\n"
-        "\n"
-        "fs_p1  \u2014 First Set Winner is Player 1 (the first-named player in the notification).\n"
-        "         ONLY set 1 matters. Ignore sets 2 and 3 entirely.\n"
-        "         WON if Player 1 won set 1 (more games in set 1). LOST if Player 2 won set 1.\n"
-        "         Example: set 1 = 6-2 and Player 1 is home \u2192 Player 1 won set 1 \u2192 WON.\n"
-        "\n"
-        "fs_p2  \u2014 First Set Winner is Player 2 (the second-named player in the notification).\n"
-        "         ONLY set 1 matters. Ignore sets 2 and 3 entirely.\n"
-        "         WON if Player 2 won set 1. LOST if Player 1 won set 1.\n"
-        "\n"
-        "fsg_X.Y_under \u2014 First Set Games UNDER X.Y.\n"
-        "         ONLY set 1 matters. Ignore sets 2 and 3 entirely.\n"
-        "         Add home games + away games in SET 1 ONLY. WON if that total < X.Y.\n"
-        "         Example: fsg_8.5_under, set 1 = 6-2 \u2192 6+2=8 games \u2192 8 < 8.5 \u2192 WON.\n"
-        "         Example: fsg_8.5_under, set 1 = 6-3 \u2192 6+3=9 games \u2192 9 > 8.5 \u2192 LOST.\n"
-        "         Example: fsg_9.5_under, set 1 = 6-4 \u2192 6+4=10 games \u2192 10 > 9.5 \u2192 LOST.\n"
-        "\n"
-        "fsg_X.Y_over  \u2014 First Set Games OVER X.Y.\n"
-        "         ONLY set 1 matters. Ignore sets 2 and 3 entirely.\n"
-        "         Add home games + away games in SET 1 ONLY. WON if that total > X.Y.\n"
-        "         Example: fsg_8.5_over, set 1 = 6-4 \u2192 6+4=10 games \u2192 10 > 8.5 \u2192 WON.\n"
-        "\n"
-        "match_winner / p1_win \u2014 WON if Player 1 (home) won the full match.\n"
-        "p2_win               \u2014 WON if Player 2 (away) won the full match.\n"
-        "sets_over / tg_X.Y_over  \u2014 Full match total sets or games OVER the line.\n"
-        "sets_under / tg_X.Y_under \u2014 Full match total sets or games UNDER the line.\n"
-        "\n"
         "HOW TO READ THE SCORE:\n"
-        "- The sets are listed in order: first item = set 1, second item = set 2, etc.\n"
-        "- Each set is shown as home_games-away_games (e.g. '6-2' means home won 6, away won 2).\n"
-        "- 'home' = the first player name shown in the score summary.\n"
-        "- Match Player 1 from the notification to home or away using the player names.\n"
-        "\n"
-        "INSTRUCTIONS:\n"
-        "1. Read the Market field from the TRADE section.\n"
-        "2. Apply the correct definition above.\n"
-        "3. For fs_* and fsg_* markets: use SET 1 score only (first set in the list).\n"
-        "4. Output these 3 lines and NOTHING else:\n"
+        "- Sets are listed in order: first item = set 1, second = set 2, etc.\n"
+        "- Each set is home_games-away_games (e.g. '6-2' = home won 6, away won 2).\n"
+        "- 'home' = the first player in the LIVE SCORE summary. Map Player 1 from the\n"
+        "  notification to home or away using the player names.\n"
+        "- The Status line tells you if the match is finished or still in progress.\n"
+        "- A SET is finished only when a player has \u22656 games AND leads by \u22652 (e.g. 6-4),\n"
+        "  or it ended 7-5 or 7-6. Otherwise that set is still in progress.\n\n"
+        "MARKET TYPE DEFINITIONS:\n"
+        "fs_p1 \u2014 first-set winner is Player 1. ONLY set 1 matters; ignore later sets.\n"
+        "        WON if Player 1 won set 1, LOST if Player 2 won set 1.\n"
+        "fs_p2 \u2014 first-set winner is Player 2. ONLY set 1 matters.\n"
+        "        WON if Player 2 won set 1, LOST if Player 1 won set 1.\n"
+        "fsg_X.Y_under \u2014 first-set total games UNDER X.Y. Add set 1 home+away games. WON if < X.Y.\n"
+        "fsg_X.Y_over  \u2014 first-set total games OVER X.Y. Add set 1 home+away games. WON if > X.Y.\n"
+        "match_winner / p1_win \u2014 WON if Player 1 (home) wins the WHOLE match.\n"
+        "p2_win \u2014 WON if Player 2 (away) wins the WHOLE match.\n"
+        "sets_over_N.5 / sets_under_N.5 \u2014 total number of SETS played in the match vs N.5.\n"
+        "tg_X.Y_over / tg_X.Y_under \u2014 total GAMES across the WHOLE match (all sets) vs X.Y.\n\n"
+        "DECISION PROCEDURE \u2014 follow in order:\n"
+        "STEP 1. Read the Market field and apply its definition above.\n"
+        "STEP 2. fs_* and fsg_* depend ONLY on set 1:\n"
+        "  \u2022 set 1 finished \u2192 settle WON/LOST now (later sets are irrelevant).\n"
+        "  \u2022 set 1 still in progress \u2192 \u23f3 UNDETERMINED.\n"
+        "STEP 3. Full-match markets (match_winner, p1_win, p2_win, sets_*, tg_*):\n"
+        "  \u2022 match finished \u2192 compute the final value, settle WON/LOST.\n"
+        "  \u2022 match in progress \u2192 settle ONLY if the result is already mathematically\n"
+        "    LOCKED no matter how the rest is played; otherwise \u23f3 UNDETERMINED.\n\n"
+        "LOCKED-RESULT REASONING for in-progress tg_* (total games) markets:\n"
+        "- current_total = sum of home+away games across ALL sets, including the in-progress set.\n"
+        "- An unfinished set still owes AT LEAST (6 \u2212 the higher game count in that set) more\n"
+        "  games before it can end. min_final = current_total + that amount (a lower bound;\n"
+        "  more sets/games can only add to it).\n"
+        "- tg_X.Y_over:  WON if min_final > X.Y (games can only increase); else \u23f3 UNDETERMINED.\n"
+        "- tg_X.Y_under: LOST if current_total > X.Y OR min_final > X.Y (it must bust); else \u23f3 UNDETERMINED.\n"
+        "For in-progress sets_* / match_winner: settle only if already clinched (a player has\n"
+        "won 2 sets; or the match is 1-1 so a 3rd set is guaranteed for sets_over_2.5); else \u23f3 UNDETERMINED.\n\n"
+        "WORKED EXAMPLES:\n"
+        "1) fs_p1, set 1 = 6-2 (P1 home), set 1 finished \u2192 \u2705 WON (P1 took set 1).\n"
+        "2) fsg_8.5_under, set 1 = 6-3 \u2192 6+3=9 > 8.5 \u2192 \u274c LOST.\n"
+        "3) fsg_9.5_over, set 1 = 6-4 \u2192 6+4=10 > 9.5 \u2192 \u2705 WON.\n"
+        "4) fs_p1, set 1 in progress 4-3 \u2192 set 1 not finished \u2192 \u23f3 UNDETERMINED.\n"
+        "5) tg_23.5_over, sets 5-7 | 6-1 | 0-4, set 3 in progress \u2192 current_total=12+7+4=23; "
+        "set 3 owes \u2265(6\u22124)=2 \u2192 min_final \u226525 > 23.5 \u2192 \u2705 WON (over is locked).\n"
+        "6) tg_20.5_over, only set 1 in progress 4-3 \u2192 current_total=7, match could still finish "
+        "under or over 20.5 \u2192 \u23f3 UNDETERMINED.\n"
+        "7) tg_21.5_under, sets 6-4 | 7-5, match finished \u2192 total 10+12=22 > 21.5 \u2192 \u274c LOST.\n"
+        "8) match_winner, P1 won 6-4 | 6-3 (finished) \u2192 \u2705 WON. If 1-0 with set 2 in progress \u2192 \u23f3 UNDETERMINED.\n\n"
+        "OUTPUT \u2014 exactly these 3 lines, ONE block only:\n"
         "<STATUS>\n"
-        "Score: <score>\n"
-        "Reason: <one sentence \u2014 state the set 1 score and exact calculation>\n\n"
-        "STATUS must be exactly one of: \u2705 WON | \u274c LOST | \u2705 WINNING | \u274c LOSING | \u2753 UNKNOWN\n"
-        "If the relevant set/match is finished: WON or LOST.\n"
-        "If still in progress: WINNING or LOSING.\n"
-        "If score data is missing or unclear: UNKNOWN.\n\n"
-        "IMPORTANT: Your entire response must be exactly 3 lines. Do not explain your reasoning."
+        "Score: <the sets summary>\n"
+        "Reason: <one sentence stating the exact numbers/calculation>\n\n"
+        "STATUS is EXACTLY one of: \u2705 WON | \u274c LOST | \u23f3 UNDETERMINED | \u2753 UNKNOWN\n"
+        "- \u2705 WON / \u274c LOST \u2014 decided (match/set finished, or result mathematically locked).\n"
+        "- \u23f3 UNDETERMINED \u2014 still in progress and NOT yet locked; do NOT guess a final result.\n"
+        "- \u2753 UNKNOWN \u2014 score data is missing or unclear.\n\n"
+        "CRITICAL: never output two verdicts; never write reasoning before the block; if torn "
+        "between a final result and 'still open', choose \u23f3 UNDETERMINED."
     )
 
     verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: Assessment failed."
@@ -1547,14 +1587,7 @@ async def handle_check_match_callback(
             cwd="/home/deploy/tennis",
         )
         if result.stdout.strip():
-            raw = result.stdout.strip()
-            # Extract only the 3 verdict lines, skip any preamble
-            lines = raw.split("\n")
-            verdict_lines = []
-            for ln in lines:
-                if any(ln.startswith(p) for p in ("\u2705", "\u274c", "\u2753", "Score:", "Reason:")):
-                    verdict_lines.append(ln)
-            verdict = "\n".join(verdict_lines) if len(verdict_lines) >= 2 else raw
+            verdict = _parse_verdict_block(result.stdout.strip())
     except subprocess.TimeoutExpired:
         verdict = f"\u2753 UNKNOWN\nScore: {sets_str or 'unavailable'}\nReason: Claude timed out."
     except Exception as e:
@@ -1737,14 +1770,7 @@ async def handle_investigate_trade_callback(
             env=env,
         )
         if result.stdout.strip():
-            raw = result.stdout.strip()
-            # Extract only the 3 verdict lines, skip any preamble
-            lines = raw.split("\n")
-            verdict_lines = []
-            for ln in lines:
-                if any(ln.startswith(p) for p in ("\u2705", "\u274c", "\u2753", "Score:", "Reason:")):
-                    verdict_lines.append(ln)
-            verdict = "\n".join(verdict_lines) if len(verdict_lines) >= 2 else raw
+            verdict = _parse_verdict_block(result.stdout.strip())
     except FileNotFoundError:
         verdict = (
             "\U0001f50e Investigation failed \u2014 Claude CLI not available on this machine."
