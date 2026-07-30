@@ -157,6 +157,49 @@ class TestClaudeSDKManager:
             if original_api_key:
                 os.environ["ANTHROPIC_API_KEY"] = original_api_key
 
+    async def test_sdk_manager_initialization_with_base_url(self, tmp_path):
+        """Test SDK manager sets ANTHROPIC_BASE_URL when configured."""
+        from src.config.settings import Settings
+
+        config_with_base_url = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            anthropic_base_url="https://custom.example.com/anthropic",
+            claude_timeout_seconds=2,
+        )
+
+        original_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+
+        try:
+            ClaudeSDKManager(config_with_base_url)
+
+            assert (
+                os.environ.get("ANTHROPIC_BASE_URL")
+                == "https://custom.example.com/anthropic"
+            )
+        finally:
+            if original_base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = original_base_url
+            elif "ANTHROPIC_BASE_URL" in os.environ:
+                del os.environ["ANTHROPIC_BASE_URL"]
+
+    async def test_sdk_manager_initialization_without_base_url(self, config):
+        """Test SDK manager does not set ANTHROPIC_BASE_URL when not configured."""
+        original_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+
+        try:
+            if "ANTHROPIC_BASE_URL" in os.environ:
+                del os.environ["ANTHROPIC_BASE_URL"]
+
+            ClaudeSDKManager(config)
+
+            assert config.anthropic_base_url_str is None
+            assert "ANTHROPIC_BASE_URL" not in os.environ
+        finally:
+            if original_base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = original_base_url
+
     async def test_execute_command_success(self, sdk_manager):
         """Test successful command execution."""
         mock_factory = _mock_client_factory(

@@ -258,6 +258,17 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
+        # Configure a custom base URL (proxy/enterprise or Anthropic-compatible
+        # endpoint) when provided. The Claude Code SDK reads ANTHROPIC_BASE_URL
+        # from the environment, so the existing SDK/session flow is preserved.
+        if config.anthropic_base_url_str:
+            os.environ["ANTHROPIC_BASE_URL"] = config.anthropic_base_url_str
+            logger.info(
+                "Using custom Anthropic base URL for Claude SDK",
+            )
+        else:
+            os.environ.pop("ANTHROPIC_BASE_URL", None)
+
     def _is_retryable_error(self, exc: BaseException) -> bool:
         """Return True for transient errors that warrant a retry.
         asyncio.TimeoutError is intentional (user-configured timeout) — not retried.

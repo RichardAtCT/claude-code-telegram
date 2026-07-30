@@ -560,6 +560,40 @@ def test_computed_properties(tmp_path):
     assert sqlite_settings.database_path == Path("data/bot.db").resolve()
 
 
+def test_anthropic_base_url_property(tmp_path):
+    """Test the anthropic_base_url_str computed property."""
+    test_dir = tmp_path / "projects"
+    test_dir.mkdir()
+
+    # Defaults to None when not configured
+    unset_settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+    )
+    assert unset_settings.anthropic_base_url_str is None
+
+    # Returns the configured base URL
+    set_settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+        anthropic_base_url="https://custom.example.com/anthropic",
+    )
+    assert set_settings.anthropic_base_url_str == "https://custom.example.com/anthropic"
+
+    # Whitespace is trimmed
+    padded_settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+        anthropic_base_url="  https://custom.example.com/anthropic  ",
+    )
+    assert (
+        padded_settings.anthropic_base_url_str == "https://custom.example.com/anthropic"
+    )
+
+
 def test_feature_flags():
     """Test feature flag system."""
     # Create test MCP config file with valid structure before creating settings
