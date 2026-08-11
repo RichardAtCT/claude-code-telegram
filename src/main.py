@@ -103,105 +103,117 @@ async def create_application(config: Settings) -> Dict[str, Any]:
     storage = Storage(config.database_url)
     await storage.initialize()
 
-    # Create security components
-    providers = []
+    try:
+        # Create security components
+        providers = []
 
-    # Add whitelist provider if users are configured
-    if config.allowed_users:
-        providers.append(WhitelistAuthProvider(config.allowed_users))
+        # Add whitelist provider if users are configured
+        if config.allowed_users:
+            providers.append(WhitelistAuthProvider(config.allowed_users))
 
-    # Add token provider if enabled
-    if config.enable_token_auth:
-        token_storage = InMemoryTokenStorage()  # TODO: Use database storage
-        providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
+        # Add token provider if enabled
+        if config.enable_token_auth:
+            token_storage = InMemoryTokenStorage()  # TODO: Use database storage
+            providers.append(TokenAuthProvider(config.auth_token_secret, token_storage))
 
-    # Fall back to allowing all users in development mode
-    if not providers and config.development_mode:
-        logger.warning(
-            "No auth providers configured"
-            " - creating development-only allow-all provider"
+        # Fall back to allowing all users in development mode
+        if not providers and config.development_mode:
+            logger.warning(
+                "No auth providers configured"
+                " - creating development-only allow-all provider"
+            )
+            providers.append(WhitelistAuthProvider([], allow_all_dev=True))
+        elif not providers:
+            raise ConfigurationError("No authentication providers configured")
+
+        auth_manager = AuthenticationManager(providers)
+        security_validator = SecurityValidator(
+            config.approved_directory,
+            disable_security_patterns=config.disable_security_patterns,
         )
-        providers.append(WhitelistAuthProvider([], allow_all_dev=True))
-    elif not providers:
-        raise ConfigurationError("No authentication providers configured")
+        rate_limiter = RateLimiter(config)
 
-    auth_manager = AuthenticationManager(providers)
-    security_validator = SecurityValidator(
-        config.approved_directory,
-        disable_security_patterns=config.disable_security_patterns,
-    )
-    rate_limiter = RateLimiter(config)
+        # Create audit storage and logger
+        # TODO: Use database storage in production
+        audit_storage = InMemoryAuditStorage()
+        audit_logger = AuditLogger(audit_storage)
 
-    # Create audit storage and logger
-    audit_storage = InMemoryAuditStorage()  # TODO: Use database storage in production
-    audit_logger = AuditLogger(audit_storage)
+        # Create Claude integration components with persistent storage
+        session_storage = SQLiteSessionStorage(storage.db_manager)
+        session_manager = SessionManager(config, session_storage)
 
-    # Create Claude integration components with persistent storage
-    session_storage = SQLiteSessionStorage(storage.db_manager)
-    session_manager = SessionManager(config, session_storage)
+        # Create Claude SDK manager and integration facade
+        logger.info("Using Claude Python SDK integration")
+        sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
 
-    # Create Claude SDK manager and integration facade
-    logger.info("Using Claude Python SDK integration")
-    sdk_manager = ClaudeSDKManager(config, security_validator=security_validator)
+        claude_integration = ClaudeIntegration(
+            config=config,
+            sdk_manager=sdk_manager,
+            session_manager=session_manager,
+        )
 
-    claude_integration = ClaudeIntegration(
-        config=config,
-        sdk_manager=sdk_manager,
-        session_manager=session_manager,
-    )
+        # --- Event bus and agentic platform components ---
+        event_bus = EventBus()
 
-    # --- Event bus and agentic platform components ---
-    event_bus = EventBus()
+        # Event security middleware
+        event_security = EventSecurityMiddleware(
+            event_bus=event_bus,
+            security_validator=security_validator,
+            auth_manager=auth_manager,
+        )
+        event_security.register()
 
-    # Event security middleware
-    event_security = EventSecurityMiddleware(
-        event_bus=event_bus,
-        security_validator=security_validator,
-        auth_manager=auth_manager,
-    )
-    event_security.register()
+        # Agent handler — translates events into Claude executions
+        agent_handler = AgentHandler(
+            event_bus=event_bus,
+            claude_integration=claude_integration,
+            default_working_directory=config.approved_directory,
+            default_user_id=config.allowed_users[0] if config.allowed_users else 0,
+        )
+        agent_handler.register()
 
-    # Agent handler — translates events into Claude executions
-    agent_handler = AgentHandler(
-        event_bus=event_bus,
-        claude_integration=claude_integration,
-        default_working_directory=config.approved_directory,
-        default_user_id=config.allowed_users[0] if config.allowed_users else 0,
-    )
-    agent_handler.register()
+        # Create bot with all dependencies
+        dependencies = {
+            "auth_manager": auth_manager,
+            "security_validator": security_validator,
+            "rate_limiter": rate_limiter,
+            "audit_logger": audit_logger,
+            "claude_integration": claude_integration,
+            "storage": storage,
+            "event_bus": event_bus,
+            "project_registry": None,
+            "project_threads_manager": None,
+        }
 
-    # Create bot with all dependencies
-    dependencies = {
-        "auth_manager": auth_manager,
-        "security_validator": security_validator,
-        "rate_limiter": rate_limiter,
-        "audit_logger": audit_logger,
-        "claude_integration": claude_integration,
-        "storage": storage,
-        "event_bus": event_bus,
-        "project_registry": None,
-        "project_threads_manager": None,
-    }
+        bot = ClaudeCodeBot(config, dependencies)
 
-    bot = ClaudeCodeBot(config, dependencies)
+        # Notification service and scheduler need the bot's Telegram Bot instance,
+        # which is only available after bot.initialize(). We store placeholders
+        # and wire them up in run_application() after initialization.
 
-    # Notification service and scheduler need the bot's Telegram Bot instance,
-    # which is only available after bot.initialize(). We store placeholders
-    # and wire them up in run_application() after initialization.
+        logger.info("Application components created successfully")
 
-    logger.info("Application components created successfully")
-
-    return {
-        "bot": bot,
-        "claude_integration": claude_integration,
-        "storage": storage,
-        "config": config,
-        "features": features,
-        "event_bus": event_bus,
-        "agent_handler": agent_handler,
-        "auth_manager": auth_manager,
-        "security_validator": security_validator,
-    }
+        return {
+            "bot": bot,
+            "claude_integration": claude_integration,
+            "storage": storage,
+            "config": config,
+            "features": features,
+            "event_bus": event_bus,
+            "agent_handler": agent_handler,
+            "auth_manager": auth_manager,
+            "security_validator": security_validator,
+        }
+    except BaseException:
+        # Storage has already started aiosqlite's connection pool, whose
+        # threads are non-daemon. run_application() owns the only other
+        # close() call, and it never runs if we fail here, so those threads
+        # would keep the interpreter alive: sys.exit() then blocks forever
+        # in wait_for_thread_shutdown() and the process hangs instead of
+        # exiting. Supervisors read that as a healthy service.
+        logger.debug("Closing storage after failed application creation")
+        await storage.close()
+        raise
 
 
 async def run_application(app: Dict[str, Any]) -> None:
