@@ -157,6 +157,74 @@ class TestClaudeSDKManager:
             if original_api_key:
                 os.environ["ANTHROPIC_API_KEY"] = original_api_key
 
+    async def test_sdk_manager_initialization_with_base_url(self, tmp_path):
+        """Test SDK manager sets ANTHROPIC_BASE_URL when configured."""
+        from src.config.settings import Settings
+
+        config_with_base_url = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            anthropic_base_url="https://custom.example.com/anthropic",
+            claude_timeout_seconds=2,
+        )
+
+        original_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+
+        try:
+            ClaudeSDKManager(config_with_base_url)
+
+            assert (
+                os.environ.get("ANTHROPIC_BASE_URL")
+                == "https://custom.example.com/anthropic"
+            )
+        finally:
+            if original_base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = original_base_url
+            elif "ANTHROPIC_BASE_URL" in os.environ:
+                del os.environ["ANTHROPIC_BASE_URL"]
+
+    async def test_sdk_manager_initialization_without_base_url(self, config):
+        """Test SDK manager does not set ANTHROPIC_BASE_URL when not configured."""
+        original_base_url = os.environ.get("ANTHROPIC_BASE_URL")
+
+        try:
+            if "ANTHROPIC_BASE_URL" in os.environ:
+                del os.environ["ANTHROPIC_BASE_URL"]
+
+            ClaudeSDKManager(config)
+
+            assert config.anthropic_base_url_str is None
+            assert "ANTHROPIC_BASE_URL" not in os.environ
+        finally:
+            if original_base_url:
+                os.environ["ANTHROPIC_BASE_URL"] = original_base_url
+
+    @pytest.mark.parametrize(
+        ("region", "expected_url"),
+        [
+            ("global_en", "https://api.minimax.io/anthropic"),
+            ("cn_zh", "https://api.minimaxi.com/anthropic"),
+        ],
+    )
+    async def test_sdk_manager_initialization_with_minimax_region(
+        self, tmp_path, monkeypatch, region, expected_url
+    ):
+        """Test SDK manager exports the selected MiniMax endpoint."""
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_provider="minimax",
+            minimax_region=region,
+            claude_timeout_seconds=2,
+        )
+
+        ClaudeSDKManager(config)
+
+        assert os.environ["ANTHROPIC_BASE_URL"] == expected_url
+
     async def test_execute_command_success(self, sdk_manager):
         """Test successful command execution."""
         mock_factory = _mock_client_factory(
@@ -779,6 +847,37 @@ class TestClaudeSandboxSettings:
 
         assert len(captured_options) == 1
         assert captured_options[0].model is None
+
+    @pytest.mark.parametrize("model", ["MiniMax-M3", "MiniMax-M2.7"])
+    async def test_minimax_model_passed_to_options(self, tmp_path, model):
+        """Test supported MiniMax model selections reach ClaudeAgentOptions."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            claude_provider="minimax",
+            claude_model=model,
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert len(captured_options) == 1
+        assert captured_options[0].model == model
 
 
 class TestClaudeMCPErrors:

@@ -560,6 +560,81 @@ def test_computed_properties(tmp_path):
     assert sqlite_settings.database_path == Path("data/bot.db").resolve()
 
 
+def test_anthropic_base_url_property(tmp_path):
+    """Test the anthropic_base_url_str computed property."""
+    test_dir = tmp_path / "projects"
+    test_dir.mkdir()
+
+    # Defaults to None when not configured
+    unset_settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+    )
+    assert unset_settings.anthropic_base_url_str is None
+
+    # Returns the configured base URL
+    set_settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+        anthropic_base_url="https://custom.example.com/anthropic",
+    )
+    assert set_settings.anthropic_base_url_str == "https://custom.example.com/anthropic"
+
+    # Whitespace is trimmed
+    padded_settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=str(test_dir),
+        anthropic_base_url="  https://custom.example.com/anthropic  ",
+    )
+    assert (
+        padded_settings.anthropic_base_url_str == "https://custom.example.com/anthropic"
+    )
+
+
+def test_minimax_provider_defaults(tmp_path):
+    """Test MiniMax resolves its global endpoint and default model."""
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=tmp_path,
+        claude_provider="minimax",
+    )
+
+    assert settings.resolved_anthropic_base_url == "https://api.minimax.io/anthropic"
+    assert settings.resolved_claude_model == "MiniMax-M3"
+
+
+def test_minimax_china_region_and_model_selection(tmp_path):
+    """Test MiniMax resolves its China endpoint and selected model."""
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=tmp_path,
+        claude_provider="minimax",
+        minimax_region="cn_zh",
+        claude_model="MiniMax-M2.7",
+    )
+
+    assert settings.resolved_anthropic_base_url == "https://api.minimaxi.com/anthropic"
+    assert settings.resolved_claude_model == "MiniMax-M2.7"
+
+
+def test_explicit_base_url_overrides_provider_endpoint(tmp_path):
+    """Test an explicit base URL takes precedence over provider resolution."""
+    settings = Settings(
+        telegram_bot_token="test_token",
+        telegram_bot_username="test_bot",
+        approved_directory=tmp_path,
+        claude_provider="minimax",
+        anthropic_base_url="https://proxy.example.com/anthropic",
+    )
+
+    assert settings.resolved_anthropic_base_url == "https://proxy.example.com/anthropic"
+
+
 def test_feature_flags():
     """Test feature flag system."""
     # Create test MCP config file with valid structure before creating settings

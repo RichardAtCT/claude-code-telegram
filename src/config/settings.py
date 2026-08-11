@@ -33,6 +33,12 @@ from src.utils.constants import (
     DEFAULT_SESSION_TIMEOUT_HOURS,
 )
 
+MINIMAX_ANTHROPIC_BASE_URLS = {
+    "global_en": "https://api.minimax.io/anthropic",
+    "cn_zh": "https://api.minimaxi.com/anthropic",
+}
+MINIMAX_DEFAULT_MODEL = "MiniMax-M3"
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -76,7 +82,22 @@ class Settings(BaseSettings):
     )
     anthropic_api_key: Optional[SecretStr] = Field(
         None,
-        description="Anthropic API key for SDK (optional if CLI logged in)",
+        description="API key for the selected SDK provider (optional if CLI logged in)",
+    )
+    claude_provider: Literal["anthropic", "minimax"] = Field(
+        "anthropic",
+        description="Provider used by the Claude Agent SDK",
+    )
+    minimax_region: Literal["global_en", "cn_zh"] = Field(
+        "global_en",
+        description="MiniMax API region used to resolve the Anthropic-compatible URL",
+    )
+    anthropic_base_url: Optional[str] = Field(
+        None,
+        description=(
+            "Custom base URL for the Anthropic API (optional, for "
+            "proxy/enterprise or Anthropic-compatible endpoints)"
+        ),
     )
     claude_model: Optional[str] = Field(
         None, description="Claude model to use (defaults to CLI default if unset)"
@@ -534,6 +555,31 @@ class Settings(BaseSettings):
             if self.anthropic_api_key
             else None
         )
+
+    @property
+    def anthropic_base_url_str(self) -> Optional[str]:
+        """Get the custom Anthropic base URL as string, if configured."""
+        base_url = self.anthropic_base_url
+        return base_url.strip() if base_url else None
+
+    @property
+    def resolved_anthropic_base_url(self) -> Optional[str]:
+        """Resolve an explicit base URL or the selected provider endpoint."""
+        if self.anthropic_base_url_str:
+            return self.anthropic_base_url_str
+        if self.claude_provider == "minimax":
+            return MINIMAX_ANTHROPIC_BASE_URLS[self.minimax_region]
+        return None
+
+    @property
+    def resolved_claude_model(self) -> Optional[str]:
+        """Resolve the configured model, including the MiniMax default."""
+        model = self.claude_model.strip() if self.claude_model else None
+        if model:
+            return model
+        if self.claude_provider == "minimax":
+            return MINIMAX_DEFAULT_MODEL
+        return None
 
     @property
     def mistral_api_key_str(self) -> Optional[str]:

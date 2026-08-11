@@ -229,7 +229,11 @@ ALLOWED_USERS=123456789          # Comma-separated Telegram user IDs
 
 ```bash
 # Claude
-ANTHROPIC_API_KEY=sk-ant-...     # API key (optional if using CLI auth)
+ANTHROPIC_API_KEY=...            # Anthropic or MiniMax API key (optional if using CLI auth)
+CLAUDE_PROVIDER=anthropic        # anthropic or minimax
+MINIMAX_REGION=global_en         # global_en or cn_zh (MiniMax only)
+CLAUDE_MODEL=                    # MiniMax-M3 or MiniMax-M2.7
+ANTHROPIC_BASE_URL=...           # Optional override for the provider endpoint
 CLAUDE_MAX_COST_PER_USER=10.0    # Spending limit per user (USD)
 CLAUDE_TIMEOUT_SECONDS=300       # Operation timeout
 

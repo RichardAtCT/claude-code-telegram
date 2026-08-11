@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **MiniMax provider configuration**: Select global or China Anthropic-compatible endpoints, use `MiniMax-M3` by default, choose `MiniMax-M2.7` with `CLAUDE_MODEL`, or override the endpoint with `ANTHROPIC_BASE_URL` while preserving the existing SDK/session flow.
+
 ## [1.6.0] - 2026-03-30
 
 ### Added
