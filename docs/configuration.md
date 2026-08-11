@@ -62,10 +62,21 @@ DISABLE_TOOL_VALIDATION=false
 
 ```bash
 # Authentication
-ANTHROPIC_API_KEY=sk-ant-api03-...    # Optional: API key for SDK (uses CLI auth if omitted)
+ANTHROPIC_API_KEY=...    # Anthropic or MiniMax API key; optional with Claude CLI auth
 
-# Custom API endpoint (optional, for proxy/enterprise or Anthropic-compatible endpoints)
-ANTHROPIC_BASE_URL=https://your-proxy.example.com/anthropic    # Optional: custom base URL for Anthropic API
+# Provider used by the Claude Agent SDK: anthropic or minimax
+CLAUDE_PROVIDER=anthropic
+
+# MiniMax configuration (used when CLAUDE_PROVIDER=minimax)
+MINIMAX_REGION=global_en    # global_en or cn_zh
+CLAUDE_MODEL=MiniMax-M3     # MiniMax-M3 (default) or MiniMax-M2.7
+
+# MiniMax resolves these Anthropic-compatible endpoints automatically:
+# global_en: https://api.minimax.io/anthropic
+# cn_zh: https://api.minimaxi.com/anthropic
+
+# Optional endpoint override for any provider
+ANTHROPIC_BASE_URL=https://your-proxy.example.com/anthropic
 
 # Maximum conversation turns before requiring new session
 CLAUDE_MAX_TURNS=10

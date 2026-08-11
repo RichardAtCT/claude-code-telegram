@@ -258,13 +258,14 @@ class ClaudeSDKManager:
         else:
             logger.info("No API key provided, using existing Claude CLI authentication")
 
-        # Configure a custom base URL (proxy/enterprise or Anthropic-compatible
-        # endpoint) when provided. The Claude Code SDK reads ANTHROPIC_BASE_URL
-        # from the environment, so the existing SDK/session flow is preserved.
-        if config.anthropic_base_url_str:
-            os.environ["ANTHROPIC_BASE_URL"] = config.anthropic_base_url_str
+        # Configure an explicit URL or the selected provider endpoint. The SDK
+        # reads ANTHROPIC_BASE_URL, so the existing client/session flow is unchanged.
+        resolved_base_url = config.resolved_anthropic_base_url
+        if resolved_base_url:
+            os.environ["ANTHROPIC_BASE_URL"] = resolved_base_url
             logger.info(
-                "Using custom Anthropic base URL for Claude SDK",
+                "Using Anthropic-compatible base URL for Claude SDK",
+                provider=config.claude_provider,
             )
         else:
             os.environ.pop("ANTHROPIC_BASE_URL", None)
@@ -332,7 +333,7 @@ class ClaudeSDKManager:
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
-                model=self.config.claude_model or None,
+                model=self.config.resolved_claude_model,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,
