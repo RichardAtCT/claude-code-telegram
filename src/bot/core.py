@@ -64,6 +64,15 @@ class ClaudeCodeBot:
         builder.write_timeout(30)
         builder.pool_timeout(30)
 
+        # Long polling uses a separate HTTP client whose connection pool holds a
+        # single connection by default. If a long-running getUpdates request is
+        # torn down mid-flight (unstable network, proxy or tunnel drop), that
+        # connection can stay checked out, and every later getUpdates call then
+        # fails with "Pool timeout: All connections in the connection pool are
+        # occupied", permanently, even after the network recovers. A small pool
+        # leaves headroom so polling can recover on its own.
+        builder.get_updates_connection_pool_size(8)
+
         # Explicitly set proxy from environment variables.
         # This is necessary because python-telegram-bot's Application.builder()
         # does not automatically use HTTP_PROXY/HTTPS_PROXY environment variables.
