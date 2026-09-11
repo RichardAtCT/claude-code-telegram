@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-11
+
+### Security
+- **Proxy credentials no longer logged**: `HTTPS_PROXY`/`HTTP_PROXY` URLs of the form `scheme://user:pass@host` had their password written to the structured logs in plaintext. The password is now masked before logging, keeping the scheme, user and host readable (#218, closes #169)
+
+### Documentation
+- **Security reporting channel**: `SECURITY.md` advertised no working private disclosure channel — the contact line was still a template placeholder. Reporters are now directed to GitHub Security Advisories. Requires private vulnerability reporting to be enabled on the repository (#218, closes #215)
+- **Corrected security policy claims**: the supported-versions table listed `0.1.x`, and token-based auth was listed as "implemented and active" despite still being backed by `InMemoryTokenStorage`. Token auth is now documented as a known gap pointing at #58, with `ALLOWED_USERS` named as the access control to use (#218)
+
 ## [1.6.0] - 2026-03-30
 
 ### Added
