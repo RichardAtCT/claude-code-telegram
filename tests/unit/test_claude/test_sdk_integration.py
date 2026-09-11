@@ -17,6 +17,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import StreamEvent
 
 from src.claude.sdk_integration import (
+    GUARDED_TOOLS,
     ClaudeResponse,
     ClaudeSDKManager,
     StreamUpdate,
@@ -908,6 +909,34 @@ class TestCanUseToolCallback:
         assert isinstance(result, PermissionResultDeny)
         assert "boundary violation" in result.message.lower()
 
+    async def test_denies_invalid_multiedit_path(
+        self, callback, context, security_validator
+    ):
+        """MultiEdit mutates files and is validated like Write/Edit."""
+        security_validator.validate_path.return_value = (
+            False,
+            None,
+            "Outside approved",
+        )
+        result = await callback("MultiEdit", {"file_path": "/etc/hosts"}, context)
+        assert isinstance(result, PermissionResultDeny)
+
+    async def test_denies_invalid_notebook_path(
+        self, callback, context, security_validator
+    ):
+        """NotebookEdit passes its target as notebook_path, not file_path."""
+        security_validator.validate_path.return_value = (
+            False,
+            None,
+            "Outside approved",
+        )
+        result = await callback(
+            "NotebookEdit", {"notebook_path": "/etc/evil.ipynb"}, context
+        )
+        assert isinstance(result, PermissionResultDeny)
+        security_validator.validate_path.assert_called_once()
+        assert security_validator.validate_path.call_args[0][0] == "/etc/evil.ipynb"
+
     async def test_allows_unknown_tool(self, callback, context):
         """Tools not in file/bash sets are allowed through."""
         result = await callback("Grep", {"pattern": "foo"}, context)
@@ -975,6 +1004,121 @@ class TestCanUseToolCallback:
 
         assert len(captured_options) == 1
         assert captured_options[0].can_use_tool is None
+
+
+class TestGuardedToolsNotPreApproved:
+    """Regression tests for #219.
+
+    ``can_use_tool`` is purely reactive: the SDK invokes it only when the CLI
+    sends a ``can_use_tool`` control request, and the CLI resolves allow rules
+    before consulting the permission prompt tool. A guarded tool left in
+    ``allowed_tools`` is therefore pre-approved and its boundary check never
+    runs. These tests pin that the guarded tools are absent from the
+    ``ClaudeAgentOptions`` actually handed to the SDK.
+    """
+
+    @staticmethod
+    def _config(tmp_path, **overrides):
+        return Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            **overrides,
+        )
+
+    @staticmethod
+    def _validator(tmp_path):
+        validator = MagicMock()
+        validator.validate_path = MagicMock(return_value=(True, tmp_path, None))
+        return validator
+
+    @staticmethod
+    async def _capture(manager, tmp_path):
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(prompt="Test", working_directory=tmp_path)
+        assert len(captured_options) == 1
+        return captured_options[0]
+
+    async def test_guarded_tools_stripped_from_allowed_tools(self, tmp_path):
+        """Default config: no guarded tool is pre-approved via allowed_tools."""
+        manager = ClaudeSDKManager(
+            self._config(tmp_path), security_validator=self._validator(tmp_path)
+        )
+        options = await self._capture(manager, tmp_path)
+
+        assert options.allowed_tools is not None
+        overlap = GUARDED_TOOLS & set(options.allowed_tools)
+        assert overlap == set(), f"guarded tools pre-approved by the CLI: {overlap}"
+        # Write, Edit, Read and Bash are the tools the callback guards.
+        for tool in ("Write", "Edit", "Read", "Bash"):
+            assert tool not in options.allowed_tools
+
+    async def test_unguarded_tools_still_allowed(self, tmp_path):
+        """Tools the callback does not guard keep their allow rule."""
+        manager = ClaudeSDKManager(
+            self._config(tmp_path), security_validator=self._validator(tmp_path)
+        )
+        options = await self._capture(manager, tmp_path)
+
+        for tool in ("Glob", "Grep", "LS", "WebSearch", "TodoWrite"):
+            assert tool in options.allowed_tools
+
+    async def test_sandbox_auto_allow_bash_disabled(self, tmp_path):
+        """autoAllowBashIfSandboxed would bypass the bash boundary check."""
+        manager = ClaudeSDKManager(
+            self._config(tmp_path), security_validator=self._validator(tmp_path)
+        )
+        options = await self._capture(manager, tmp_path)
+
+        assert options.sandbox["autoAllowBashIfSandboxed"] is False
+
+    async def test_no_security_validator_leaves_allowed_tools_untouched(self, tmp_path):
+        """Without a validator there is no check to route to; nothing is gated."""
+        config = self._config(tmp_path)
+        manager = ClaudeSDKManager(config)
+        options = await self._capture(manager, tmp_path)
+
+        assert options.allowed_tools == config.claude_allowed_tools
+        assert options.sandbox["autoAllowBashIfSandboxed"] is True
+
+    async def test_disable_tool_validation_restores_permissive_behavior(self, tmp_path):
+        """DISABLE_TOOL_VALIDATION=true remains the documented escape hatch."""
+        manager = ClaudeSDKManager(
+            self._config(tmp_path, disable_tool_validation=True),
+            security_validator=self._validator(tmp_path),
+        )
+        options = await self._capture(manager, tmp_path)
+
+        assert options.allowed_tools is None
+        assert options.sandbox["autoAllowBashIfSandboxed"] is True
+
+    async def test_custom_allowed_tools_are_filtered_too(self, tmp_path):
+        """A user-supplied allowlist is filtered on the same rule."""
+        manager = ClaudeSDKManager(
+            self._config(tmp_path, claude_allowed_tools=["Read", "Bash", "Grep"]),
+            security_validator=self._validator(tmp_path),
+        )
+        options = await self._capture(manager, tmp_path)
+
+        assert options.allowed_tools == ["Grep"]
+
+    async def test_config_allowed_tools_not_mutated(self, tmp_path):
+        """Filtering builds a new list; the Settings value is left intact."""
+        config = self._config(tmp_path)
+        original = list(config.claude_allowed_tools)
+        manager = ClaudeSDKManager(config, security_validator=self._validator(tmp_path))
+        await self._capture(manager, tmp_path)
+
+        assert config.claude_allowed_tools == original
 
 
 class TestSessionIdFallback:
