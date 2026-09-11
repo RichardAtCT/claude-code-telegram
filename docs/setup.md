@@ -47,13 +47,13 @@ Choose your preferred installation method:
 
 ```bash
 # Using uv (recommended — installs in an isolated environment)
-uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+uv tool install git+https://github.com/overwirehq/claude-code-telegram@v1.3.0
 
 # Or using pip
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+pip install git+https://github.com/overwirehq/claude-code-telegram@v1.3.0
 
 # Track the latest stable release
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+pip install git+https://github.com/overwirehq/claude-code-telegram@latest
 ```
 
 > **Don't have uv?** Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
@@ -61,12 +61,12 @@ pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
 #### Option B: From source (for development)
 
 ```bash
-git clone https://github.com/RichardAtCT/claude-code-telegram.git
+git clone https://github.com/overwirehq/claude-code-telegram.git
 cd claude-code-telegram
 make dev
 ```
 
-> **Important:** Always install from a [tagged release](https://github.com/RichardAtCT/claude-code-telegram/releases), not `main`, for stability.
+> **Important:** Always install from a [tagged release](https://github.com/overwirehq/claude-code-telegram/releases), not `main`, for stability.
 
 ### 4. Configure Environment
 
@@ -362,4 +362,4 @@ ENABLE_TELEMETRY=true
 - **Documentation**: Check the main [README.md](../README.md)
 - **Configuration**: See [configuration.md](configuration.md) for all options
 - **Security**: See [SECURITY.md](../SECURITY.md) for security concerns
-- **Issues**: [Open an issue](https://github.com/RichardAtCT/claude-code-telegram/issues)
+- **Issues**: [Open an issue](https://github.com/overwirehq/claude-code-telegram/issues)

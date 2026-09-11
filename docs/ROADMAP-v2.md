@@ -106,12 +106,12 @@ Agentic tasks routinely need 30 to 50 tool round-trips. Raise the default to
 
 **0.4 Distribution.** Add a `Dockerfile` (python:3.12-slim, Node for the
 Claude Code CLI, non-root user, `data/` volume) and a `docker-compose.yml`
-with the three required variables. Publish to GHCR from `release.yml` on
-tag. Publish the wheel to PyPI from the same workflow so
-`pipx install claude-code-telegram` works. Fix the project URLs in
-`pyproject.toml`, which point at `richardatkinson/...` instead of
-`RichardAtCT/...`. Done when a fresh machine goes from zero to a responding
-bot with `docker compose up` and a three-line `.env`.
+with the three required variables. Publish to
+`ghcr.io/overwirehq/claude-code-telegram` from `release.yml` on tag. Publish
+the wheel to PyPI from the same workflow so
+`pipx install claude-code-telegram` works. Done when a fresh machine goes
+from zero to a responding bot with `docker compose up` and a three-line
+`.env`.
 
 **0.5 Hygiene.** Add `.github/ISSUE_TEMPLATE/` (bug, feature, question),
 `CODEOWNERS`, and a label set (`bug`, `enhancement`, `sdk`, `security`,

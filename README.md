@@ -45,24 +45,24 @@ Choose your preferred method:
 
 ```bash
 # Using uv (recommended — installs in an isolated environment)
-uv tool install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+uv tool install git+https://github.com/overwirehq/claude-code-telegram@v1.3.0
 
 # Or using pip
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@v1.3.0
+pip install git+https://github.com/overwirehq/claude-code-telegram@v1.3.0
 
 # Track the latest stable release
-pip install git+https://github.com/RichardAtCT/claude-code-telegram@latest
+pip install git+https://github.com/overwirehq/claude-code-telegram@latest
 ```
 
 #### Option B: From source (for development)
 
 ```bash
-git clone https://github.com/RichardAtCT/claude-code-telegram.git
+git clone https://github.com/overwirehq/claude-code-telegram.git
 cd claude-code-telegram
 make dev  # requires Poetry
 ```
 
-> **Note:** Always install from a tagged release (not `main`) for stability. See [Releases](https://github.com/RichardAtCT/claude-code-telegram/releases) for available versions.
+> **Note:** Always install from a tagged release (not `main`) for stability. See [Releases](https://github.com/overwirehq/claude-code-telegram/releases) for available versions.
 
 ### 3. Configure
 
@@ -369,7 +369,7 @@ MIT License -- see [LICENSE](LICENSE).
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=RichardAtCT/claude-code-telegram&type=Date)](https://star-history.com/#RichardAtCT/claude-code-telegram&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=overwirehq/claude-code-telegram&type=Date)](https://star-history.com/#overwirehq/claude-code-telegram&Date)
 
 ## Acknowledgments
 

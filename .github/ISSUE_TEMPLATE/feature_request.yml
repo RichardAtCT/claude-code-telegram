@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, check the [v2 roadmap](https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/ROADMAP-v2.md) and the open pull requests. If it is already planned, comment on that item instead so effort is not duplicated.
+        Before filing, check the [v2 roadmap](https://github.com/overwirehq/claude-code-telegram/blob/main/docs/ROADMAP-v2.md) and the open pull requests. If it is already planned, comment on that item instead so effort is not duplicated.
   - type: textarea
     id: problem
     attributes:

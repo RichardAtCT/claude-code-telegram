@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Check [docs/setup.md](https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/setup.md) and [docs/configuration.md](https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/configuration.md) first. If GitHub Discussions is enabled for this repository, questions are better asked there so other users can answer too.
+        Check [docs/setup.md](https://github.com/overwirehq/claude-code-telegram/blob/main/docs/setup.md) and [docs/configuration.md](https://github.com/overwirehq/claude-code-telegram/blob/main/docs/configuration.md) first. If GitHub Discussions is enabled for this repository, questions are better asked there so other users can answer too.
   - type: textarea
     id: question
     attributes:
