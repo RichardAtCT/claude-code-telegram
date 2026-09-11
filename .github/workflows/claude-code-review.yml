@@ -15,8 +15,10 @@ name: Claude Code Review
 # Review comments then come from `github-actions[bot]`, not `claude[bot]`.
 #
 # `pull_request_target` is used so the workflow definition always comes
-# from the base branch: a PR cannot edit this file to reach the secrets.
-# Because it runs with base-repo secrets against untrusted code, the tool
+# from the default branch: a PR cannot edit this file to reach the
+# secrets. The flip side is that changes here only take effect once
+# merged to main, so they cannot be tested on their own PR. Because the
+# job runs with repository secrets against untrusted code, the tool
 # allowlist is read-only plus `gh pr comment`; no arbitrary Bash.
 #
 # The action refuses actors without write access to the repository, so the
