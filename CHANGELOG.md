@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.6.2] - 2026-09-11
+## [1.7.0] - 2026-09-11
+
+Released as a minor rather than a patch: the security fix below changes runtime
+behaviour for every deployment. See the upgrade note under **Changed**.
 
 ### Security
 - **Tool boundary checks now actually run** (#220, closes #219). The `can_use_tool` callback enforces the `APPROVED_DIRECTORY` boundary on Claude's own tool calls, but the SDK only consults it when the Claude CLI sends a `can_use_tool` control request — and the CLI resolves allow rules first, so any tool named in `CLAUDE_ALLOWED_TOOLS` was pre-approved and never reached it. Since the default list contains `Read`, `Write`, `Edit` and `Bash`, the checks were silently inert on every default install. Guarded tools are now stripped from the `allowed_tools` passed to the SDK, and `autoAllowBashIfSandboxed` — a second, independent bypass — is disabled whenever the checks are meant to run. Guarding also now covers `MultiEdit`, `NotebookEdit` and `NotebookRead`, which were never included.
