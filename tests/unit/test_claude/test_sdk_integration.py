@@ -602,8 +602,13 @@ class TestClaudeSandboxSettings:
         assert len(captured_options) == 1
         assert captured_options[0].allowed_tools == ["Read", "Write", "Bash"]
 
-    async def test_disable_tool_validation_sets_allowed_tools_none(self, tmp_path):
-        """allowed_tools=None when DISABLE_TOOL_VALIDATION=true."""
+    async def test_disable_tool_validation_sets_allowed_tools_empty(self, tmp_path):
+        """allowed_tools=[] when DISABLE_TOOL_VALIDATION=true.
+
+        Empty rather than None: ClaudeAgentOptions declares these as
+        list[str], and both values are falsy so the CLI omits the flags
+        either way -- no tool restriction, which is the intent. See #206.
+        """
         config = Settings(
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
@@ -631,8 +636,8 @@ class TestClaudeSandboxSettings:
             )
 
         assert len(captured_options) == 1
-        assert captured_options[0].allowed_tools is None
-        assert captured_options[0].disallowed_tools is None
+        assert captured_options[0].allowed_tools == []
+        assert captured_options[0].disallowed_tools == []
 
     async def test_tool_validation_enabled_passes_configured_tools(self, tmp_path):
         """allowed/disallowed_tools passed when DISABLE_TOOL_VALIDATION=false."""
@@ -1091,14 +1096,20 @@ class TestGuardedToolsNotPreApproved:
         assert options.sandbox["autoAllowBashIfSandboxed"] is True
 
     async def test_disable_tool_validation_restores_permissive_behavior(self, tmp_path):
-        """DISABLE_TOOL_VALIDATION=true remains the documented escape hatch."""
+        """DISABLE_TOOL_VALIDATION=true remains the documented escape hatch.
+
+        The escape hatch passes [] rather than None since #206 -- both are
+        falsy, so the CLI omits --allowedTools either way and nothing is
+        restricted, but [] matches the list[str] ClaudeAgentOptions declares.
+        """
         manager = ClaudeSDKManager(
             self._config(tmp_path, disable_tool_validation=True),
             security_validator=self._validator(tmp_path),
         )
         options = await self._capture(manager, tmp_path)
 
-        assert options.allowed_tools is None
+        assert options.allowed_tools == []
+        assert options.disallowed_tools == []
         assert options.sandbox["autoAllowBashIfSandboxed"] is True
 
     async def test_custom_allowed_tools_are_filtered_too(self, tmp_path):
