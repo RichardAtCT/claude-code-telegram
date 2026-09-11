@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The Claude Code Review workflow runs again**: every run since 2026-02-19 died in about 30 seconds with `Invalid OIDC token`, before reading any code, and left a misleading red `review` check on each PR. The action mints its GitHub token by trading the Actions OIDC token with Anthropic, which requires the Claude GitHub App on the repository; that exchange returned `401`. The workflow now passes the built-in `GITHUB_TOKEN` as `github_token`, which skips the exchange, and drops the `id-token: write` permission it no longer needs. Checkout uses the PR head instead of `refs/pull/N/merge`, which GitHub computes asynchronously and drops on conflicted PRs. The job is also gated on the author having write access, matching the action's own check, so an outside contributor's PR skips the review instead of failing it.
 - **CI now catches lockfile drift**: the `lint` and `test` jobs ran `poetry lock && poetry install`, which regenerated `poetry.lock` in place. A `pyproject.toml` dependency change with a stale lock therefore passed every PR and failed only at release time, as it did for v1.7.0 (#196). Both jobs now verify the lock with `poetry check --lock` and install from the committed lock, so CI tests the dependency set that actually ships rather than resolving a fresh one on every run.
 
 ## [1.7.0] - 2026-09-11
