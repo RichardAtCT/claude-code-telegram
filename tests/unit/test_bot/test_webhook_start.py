@@ -1,7 +1,7 @@
 """Tests for webhook startup mode — verifies start_webhook is used instead of run_webhook."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

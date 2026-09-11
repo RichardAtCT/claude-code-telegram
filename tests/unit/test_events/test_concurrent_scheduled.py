@@ -59,7 +59,9 @@ class TestConcurrentScheduledHandling:
         for task in list(getattr(agent_handler, "_background_tasks", set())):
             task.cancel()
         if getattr(agent_handler, "_background_tasks", None):
-            await asyncio.gather(*agent_handler._background_tasks, return_exceptions=True)
+            await asyncio.gather(
+                *agent_handler._background_tasks, return_exceptions=True
+            )
 
     def test_scheduled_semaphore_limits_concurrency(
         self, agent_handler: AgentHandler

@@ -343,11 +343,15 @@ class ClaudeSDKManager:
                 )
 
             # When DISABLE_TOOL_VALIDATION=true, pass [] (not None) for
-            # allowed/disallowed tools. claude-agent-sdk subprocess_cli.py
-            # calls list(options.allowed_tools) unconditionally and crashes
-            # with "'NoneType' object is not iterable". Empty list is treated
-            # by the CLI as "no --allowedTools flag" → no restriction, which
-            # is the intent of DISABLE_TOOL_VALIDATION=true.
+            # allowed/disallowed tools. ClaudeAgentOptions declares these
+            # as list[str] with default_factory=list, so None violates the
+            # dataclass contract. The pinned SDK guards with a truthiness
+            # check and tolerates None, but the project floats on ^0.1.39
+            # and nothing promises that guard survives a minor bump. Both
+            # values are falsy, so the CLI omits the flags either way --
+            # which is the intent of DISABLE_TOOL_VALIDATION=true (#206).
+            sdk_allowed_tools: Optional[List[str]]
+            sdk_disallowed_tools: Optional[List[str]]
             if self.config.disable_tool_validation:
                 sdk_allowed_tools = []
                 sdk_disallowed_tools = []

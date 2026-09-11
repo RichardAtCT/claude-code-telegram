@@ -35,7 +35,7 @@ class JobScheduler:
         self._scheduler = AsyncIOScheduler(
             job_defaults={
                 "misfire_grace_time": None,  # Always run, no matter how late
-                "coalesce": True,            # Merge multiple missed runs into one
+                "coalesce": True,  # Merge multiple missed runs into one
             }
         )
 
