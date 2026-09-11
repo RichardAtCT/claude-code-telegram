@@ -7,18 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Documentation
-- **v2 roadmap**: `docs/ROADMAP-v2.md` plans the 2.0 release (SDK 0.2, interactive permission and question UX, per-conversation concurrency, session browser, classic-mode removal, container distribution), scoped to work not already covered by open pull requests
-- **Community files**: issue forms (bug, feature, question), a pull request template with a hand-testing section, `CODEOWNERS`, `MAINTAINERS.md` (roles, one-week response promise, label set, path to maintainership), a Contributor Covenant 2.1 `CODE_OF_CONDUCT.md`, and a rewritten `CONTRIBUTING.md` (PR scope rules, AI-assisted contribution policy, current project layout)
+## [1.7.0] - 2026-09-11
 
-### Fixed
-- **Project URLs**: the Homepage, Repository and Documentation links in `pyproject.toml` pointed at `github.com/richardatkinson/...`; they now point at `RichardAtCT`, so `pip show` and any future PyPI listing link to this repository
-
-### Added
-- **Dependabot**: weekly PRs for `claude-agent-sdk`, `python-telegram-bot` and `anthropic`; monthly grouped PRs for other Python dependencies and GitHub Actions
-- **Claude Code Review workflow**: read-only first-pass review comment on every non-draft pull request, including fork PRs. Requires the `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret
-
-## [1.6.2] - 2026-09-11
+Released as a minor rather than a patch: the security fix below changes runtime
+behaviour for every deployment. See the upgrade note under **Changed**.
 
 ### Security
 - **Tool boundary checks now actually run** (#220, closes #219). The `can_use_tool` callback enforces the `APPROVED_DIRECTORY` boundary on Claude's own tool calls, but the SDK only consults it when the Claude CLI sends a `can_use_tool` control request — and the CLI resolves allow rules first, so any tool named in `CLAUDE_ALLOWED_TOOLS` was pre-approved and never reached it. Since the default list contains `Read`, `Write`, `Edit` and `Bash`, the checks were silently inert on every default install. Guarded tools are now stripped from the `allowed_tools` passed to the SDK, and `autoAllowBashIfSandboxed` — a second, independent bypass — is disabled whenever the checks are meant to run. Guarding also now covers `MultiEdit`, `NotebookEdit` and `NotebookRead`, which were never included.

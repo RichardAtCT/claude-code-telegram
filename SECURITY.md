@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.6.x   | Yes                |
-| < 1.6   | No -- please upgrade |
+| 1.7.x   | Yes                |
+| < 1.7   | No -- please upgrade |
 
 ## Security Model
 
