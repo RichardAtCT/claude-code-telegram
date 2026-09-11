@@ -8,9 +8,10 @@ classic mode, delegates to existing full-featured handlers.
 import asyncio
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import structlog
 from telegram import (
@@ -127,6 +128,14 @@ class ActiveRequest:
     progress_msg: Any = None  # telegram Message object
 
 
+@dataclass
+class PendingToolApproval:
+    """Tracks an in-flight interactive tool-approval prompt."""
+
+    user_id: int
+    future: "asyncio.Future[bool]"
+
+
 class MessageOrchestrator:
     """Routes messages based on mode. Single entry point for all Telegram updates."""
 
@@ -134,6 +143,7 @@ class MessageOrchestrator:
         self.settings = settings
         self.deps = deps
         self._active_requests: Dict[int, ActiveRequest] = {}
+        self._pending_tool_approvals: Dict[str, PendingToolApproval] = {}
         self._known_commands: frozenset[str] = frozenset()
 
     def _inject_deps(self, handler: Callable) -> Callable:  # type: ignore[type-arg]
@@ -385,6 +395,14 @@ class MessageOrchestrator:
             CallbackQueryHandler(
                 self._inject_deps(self._handle_stop_callback),
                 pattern=r"^stop:",
+            )
+        )
+
+        # Interactive tool-approval callback (Allow/Deny buttons)
+        app.add_handler(
+            CallbackQueryHandler(
+                self._inject_deps(self._handle_tool_approval_callback),
+                pattern=r"^tapv:",
             )
         )
 
@@ -1004,6 +1022,15 @@ class MessageOrchestrator:
         # Independent typing heartbeat — stays alive even with no stream events
         heartbeat = self._start_typing_heartbeat(chat)
 
+        approval_cb = None
+        if self.settings.interactive_tool_approval:
+            approval_cb = self._make_tool_approval_callback(
+                user_id=user_id,
+                chat_id=chat.id,
+                bot=context.bot,
+                message_thread_id=update.message.message_thread_id,
+            )
+
         success = True
         try:
             claude_response = await claude_integration.run_command(
@@ -1014,6 +1041,7 @@ class MessageOrchestrator:
                 on_stream=on_stream,
                 force_new=force_new,
                 interrupt_event=interrupt_event,
+                approval_callback=approval_cb,
             )
 
             # New session created successfully — clear the one-shot flag
@@ -1698,6 +1726,104 @@ class MessageOrchestrator:
 
         try:
             await active.progress_msg.edit_text("Stopping...", reply_markup=None)
+        except Exception:
+            pass
+
+    def _make_tool_approval_callback(
+        self,
+        user_id: int,
+        chat_id: int,
+        bot: Any,
+        message_thread_id: Optional[int],
+    ) -> Callable[[str, Dict[str, Any]], Awaitable[bool]]:
+        """Build an approval_callback closure for a single Claude run.
+
+        Sends a Telegram Allow/Deny prompt for a tool call and blocks (with a
+        timeout) until the user responds via the ``tapv:`` callback handler.
+        Fails closed (denies) on timeout.
+        """
+
+        async def request_approval(tool_name: str, tool_input: Dict[str, Any]) -> bool:
+            request_id = uuid.uuid4().hex[:12]
+            summary = self._summarize_tool_input(tool_name, tool_input)
+            text = f"⚠️ Claude wants to run <b>{escape_html(tool_name)}</b>"
+            if summary:
+                text += f"\n<code>{escape_html(summary)}</code>"
+            text += "\n\nAllow this action?"
+
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "✅ Allow", callback_data=f"tapv:allow:{request_id}"
+                        ),
+                        InlineKeyboardButton(
+                            "❌ Deny", callback_data=f"tapv:deny:{request_id}"
+                        ),
+                    ]
+                ]
+            )
+
+            msg = await bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+                message_thread_id=message_thread_id,
+            )
+
+            future: "asyncio.Future[bool]" = asyncio.get_event_loop().create_future()
+            self._pending_tool_approvals[request_id] = PendingToolApproval(
+                user_id=user_id, future=future
+            )
+
+            try:
+                return await asyncio.wait_for(
+                    future,
+                    timeout=self.settings.interactive_tool_approval_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                try:
+                    await msg.edit_text(
+                        text + "\n\n⏱ Timed out — denied",
+                        parse_mode="HTML",
+                        reply_markup=None,
+                    )
+                except Exception:
+                    pass
+                return False
+            finally:
+                self._pending_tool_approvals.pop(request_id, None)
+
+        return request_approval
+
+    async def _handle_tool_approval_callback(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle tapv: callbacks — resolve a pending tool-approval prompt."""
+        query = update.callback_query
+        _, action, request_id = query.data.split(":", 2)
+
+        pending = self._pending_tool_approvals.get(request_id)
+        if pending is None:
+            await query.answer("Already handled.", show_alert=False)
+            return
+
+        if query.from_user.id != pending.user_id:
+            await query.answer("Only the requesting user can respond.", show_alert=True)
+            return
+
+        if pending.future.done():
+            await query.answer("Already handled.", show_alert=False)
+            return
+
+        approved = action == "allow"
+        pending.future.set_result(approved)
+        await query.answer("Allowed" if approved else "Denied", show_alert=False)
+
+        try:
+            status = "✅ Allowed" if approved else "❌ Denied"
+            await query.edit_message_text(status, reply_markup=None)
         except Exception:
             pass
 

@@ -88,6 +88,8 @@ context.bot_data["security_validator"]
 
 `ToolMonitor` validates Claude's tool calls against allowlist/disallowlist, file path boundaries, and dangerous bash patterns. Tool name validation can be bypassed with `DISABLE_TOOL_VALIDATION=true`.
 
+Optional interactive approval layer: when `INTERACTIVE_TOOL_APPROVAL=true`, tool calls matching `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`) additionally require the user to click Allow/Deny on a Telegram inline keyboard before executing, after the static checks above pass. Fails closed (denies) if the user doesn't respond within `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60).
+
 Webhook authentication: GitHub HMAC-SHA256 signature verification, generic Bearer token for other providers, atomic deduplication via `webhook_events` table.
 
 ### Configuration
@@ -97,6 +99,8 @@ Settings loaded from environment variables via Pydantic Settings. Required: `TEL
 Agentic platform settings: `AGENTIC_MODE` (default true), `ENABLE_API_SERVER`, `API_SERVER_PORT` (default 8080), `GITHUB_WEBHOOK_SECRET`, `WEBHOOK_API_SECRET`, `ENABLE_SCHEDULER`, `NOTIFICATION_CHAT_IDS`.
 
 Security relaxation (trusted environments only): `DISABLE_SECURITY_PATTERNS` (default false), `DISABLE_TOOL_VALIDATION` (default false).
+
+Interactive tool approval: `INTERACTIVE_TOOL_APPROVAL` (default false), `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`), `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60).
 
 Multi-project topics: `ENABLE_PROJECT_THREADS` (default false), `PROJECT_THREADS_MODE` (`private`|`group`), `PROJECT_THREADS_CHAT_ID` (required for group mode), `PROJECTS_CONFIG_PATH` (path to YAML project registry), `PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS` (default `1.1`, set `0` to disable pacing). See `config/projects.example.yaml`.
 

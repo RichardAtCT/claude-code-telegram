@@ -40,6 +40,10 @@ class TestIsPriorityCallback:
         update = _make_update("stop:123")
         assert StopAwareUpdateProcessor._is_priority_callback(update) is True
 
+    def test_tool_approval_callback_detected(self):
+        update = _make_update("tapv:allow:abc123")
+        assert StopAwareUpdateProcessor._is_priority_callback(update) is True
+
     def test_cd_callback_not_priority(self):
         update = _make_update("cd:my_project")
         assert StopAwareUpdateProcessor._is_priority_callback(update) is False

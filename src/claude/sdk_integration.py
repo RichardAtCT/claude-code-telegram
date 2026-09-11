@@ -4,7 +4,16 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+)
 
 import structlog
 from claude_agent_sdk import (
@@ -181,11 +190,18 @@ def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
     approved_directory: Path,
+    approval_callback: Optional[
+        Callable[[str, Dict[str, Any]], Awaitable[bool]]
+    ] = None,
+    approval_tool_names: FrozenSet[str] = frozenset(),
 ) -> Any:
     """Create a can_use_tool callback for SDK-level tool permission validation.
 
     The callback validates file path boundaries and bash directory boundaries
     *before* the SDK executes the tool, providing preventive security enforcement.
+    If `approval_callback` is set, tools in `approval_tool_names` additionally
+    require interactive human approval (e.g. via a Telegram Allow/Deny prompt)
+    after the static checks pass.
     """
     _FILE_TOOLS = {"Write", "Edit", "Read", "create_file", "edit_file", "read_file"}
     _BASH_TOOLS = {"Bash", "bash", "shell"}
@@ -233,6 +249,16 @@ def _make_can_use_tool_callback(
                         message=error or "Bash directory boundary violation"
                     )
 
+        # Interactive human-in-the-loop approval for configured tools
+        if approval_callback is not None and tool_name in approval_tool_names:
+            approved = await approval_callback(tool_name, tool_input)
+            if not approved:
+                logger.info(
+                    "can_use_tool denied by interactive approval",
+                    tool_name=tool_name,
+                )
+                return PermissionResultDeny(message="Denied by user via Telegram")
+
         return PermissionResultAllow()
 
     return can_use_tool
@@ -277,6 +303,9 @@ class ClaudeSDKManager:
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        approval_callback: Optional[
+            Callable[[str, Dict[str, Any]], Awaitable[bool]]
+        ] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -352,6 +381,14 @@ class ClaudeSDKManager:
                     security_validator=self.security_validator,
                     working_directory=working_directory,
                     approved_directory=self.config.approved_directory,
+                    approval_callback=(
+                        approval_callback
+                        if self.config.interactive_tool_approval
+                        else None
+                    ),
+                    approval_tool_names=frozenset(
+                        self.config.interactive_tool_approval_tools or ()
+                    ),
                 )
 
             # Resume previous session if we have a session_id

@@ -66,6 +66,20 @@ class Settings(BaseSettings):
         False,
         description="Allow all Claude tools by bypassing tool validation checks",
     )
+    interactive_tool_approval: bool = Field(
+        False,
+        description=(
+            "Require interactive Telegram approval before executing risky tool calls"
+        ),
+    )
+    interactive_tool_approval_tools: Optional[List[str]] = Field(
+        default=["Bash", "Write", "Edit"],
+        description="Tool names that require interactive approval when enabled",
+    )
+    interactive_tool_approval_timeout_seconds: int = Field(
+        60,
+        description="Seconds to wait for user approval before auto-denying",
+    )
 
     # Claude settings
     claude_binary_path: Optional[str] = Field(
@@ -348,7 +362,9 @@ class Settings(BaseSettings):
             return [int(uid) for uid in v]
         return v  # type: ignore[no-any-return]
 
-    @field_validator("claude_allowed_tools", mode="before")
+    @field_validator(
+        "claude_allowed_tools", "interactive_tool_approval_tools", mode="before"
+    )
     @classmethod
     def parse_claude_allowed_tools(cls, v: Any) -> Optional[List[str]]:
         """Parse comma-separated tool names."""
