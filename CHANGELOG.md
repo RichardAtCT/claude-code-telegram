@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Repository moved to the `overwirehq` organisation**: the canonical location is now `github.com/overwirehq/claude-code-telegram`. GitHub redirects the old URLs, but every link in the README, docs, issue templates and packaging metadata has been updated. Existing clones keep working; `git remote set-url origin https://github.com/overwirehq/claude-code-telegram.git` points one at the new location directly
 
 ### Fixed
+- **Green test suite**: `test_allowed_tools_none_unaffected_by_approval_filter` asserted that `allowed_tools` is `None` under `DISABLE_TOOL_VALIDATION`, but #206 had already changed that value to `[]` for type correctness. #217 was written against a base without #206, so the collision only surfaced once both were on `main`, leaving the default branch red. The expectation is now `[]`, and the test is renamed to say so
 - **Project URLs**: the Homepage, Repository and Documentation links in `pyproject.toml` pointed at `github.com/richardatkinson/...`, an owner unrelated to this project, so `pip show` and any future PyPI listing linked to the wrong place
 
 ### Added

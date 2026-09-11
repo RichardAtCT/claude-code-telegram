@@ -658,8 +658,8 @@ class TestClaudeSandboxSettings:
 
         assert captured_options[0].allowed_tools == config.claude_allowed_tools
 
-    async def test_allowed_tools_none_unaffected_by_approval_filter(self, tmp_path):
-        """When allowed_tools is None (DISABLE_TOOL_VALIDATION), filtering is a no-op."""
+    async def test_empty_allowed_tools_unaffected_by_approval_filter(self, tmp_path):
+        """When DISABLE_TOOL_VALIDATION empties allowed_tools, filtering is a no-op."""
         config = Settings(
             telegram_bot_token="test:token",
             telegram_bot_username="testbot",
@@ -686,7 +686,7 @@ class TestClaudeSandboxSettings:
                 working_directory=tmp_path,
             )
 
-        assert captured_options[0].allowed_tools is None
+        assert captured_options[0].allowed_tools == []
 
     async def test_system_prompt_set_with_working_directory(
         self, sdk_manager, tmp_path
