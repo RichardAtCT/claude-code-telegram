@@ -95,6 +95,10 @@ five-layer security model. Read it before touching `src/security/` or
 
 - Tests for behaviour changes. `make test` and `make lint` pass. CI runs
   black, isort, flake8 and the test suite on every PR.
+- **If you change dependencies, run `poetry lock` and commit the updated
+  `poetry.lock` in the same PR.** CI installs from the committed lock and
+  fails the build if the lock and `pyproject.toml` disagree, so a
+  `pyproject.toml` dependency change without a matching lock update goes red.
 - A line under `[Unreleased]` in `CHANGELOG.md`, in the Keep a Changelog
   style already used there.
 - Docs updated where a setting or command changed: `README.md`,

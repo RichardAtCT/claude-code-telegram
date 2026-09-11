@@ -32,6 +32,9 @@ jobs:
           path: .venv
           key: venv-${{ runner.os }}-3.11-${{ hashFiles('**/poetry.lock') }}
 
+      - name: Verify lockfile is up to date
+        run: poetry check --lock
+
       - name: Install dependencies
         run: poetry install --no-interaction
 

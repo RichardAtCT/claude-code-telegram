@@ -25,6 +25,7 @@ Closes #
 
 - [ ] One concern per PR; unrelated changes are split out
 - [ ] `CHANGELOG.md` has an entry under `[Unreleased]`
+- [ ] If `pyproject.toml` dependencies changed, `poetry lock` was run and the updated `poetry.lock` is committed
 - [ ] Documentation updated (`README.md`, `docs/`, `.env.example`, `CLAUDE.md`) where settings or commands changed
 - [ ] New settings default to current behaviour
 - [ ] If AI tools helped write this change, I reviewed every line and the hand-testing above is mine
