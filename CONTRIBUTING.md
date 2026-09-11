@@ -12,9 +12,7 @@ For what is planned, see [docs/ROADMAP-v2.md](docs/ROADMAP-v2.md).
 - New issues and PRs are labelled `needs-triage` until a maintainer has
   looked at them; that label is cleared weekly.
 - A first-pass review comment from the Claude Code Review workflow on every
-  non-draft PR from a maintainer, followed by a human review before merge.
-  The workflow needs repository secrets, so it skips PRs from outside
-  contributors; those get the human review only.
+  non-draft PR, followed by a human review before merge.
 
 ## Before you start
 
@@ -138,8 +136,7 @@ refactor: key active requests by conversation
 
 ### Review and merge
 
-1. The review workflow comments first on maintainer PRs; address anything
-   real it finds. It does not run on PRs from outside contributors.
+1. The review workflow comments first; address anything real it finds.
 2. A maintainer reviews. Expect questions about tests and security before
    style. Style is handled by the hooks.
 3. Merge needs green CI and one approving review; security-sensitive paths
