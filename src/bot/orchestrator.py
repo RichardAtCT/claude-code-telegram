@@ -707,6 +707,47 @@ class MessageOrchestrator:
         return ""
 
     @staticmethod
+    def _summarize_tool_input_for_approval(
+        tool_name: str, tool_input: Dict[str, Any]
+    ) -> str:
+        """Return a detailed summary of tool input for an approval prompt.
+
+        Unlike ``_summarize_tool_input`` (built for compact verbose-log
+        lines), this needs to give a human enough detail to make an
+        allow/deny security decision: the full file path rather than just
+        the filename, and a long window for Bash commands rather than an
+        80-character preview that hides everything after it.
+        """
+        if not tool_input:
+            return ""
+        if tool_name in ("Read", "Write", "Edit", "MultiEdit"):
+            path = tool_input.get("file_path") or tool_input.get("path", "")
+            if path:
+                return path
+        if tool_name in ("Glob", "Grep"):
+            pattern = tool_input.get("pattern", "")
+            if pattern:
+                return pattern[:200]
+        if tool_name == "Bash":
+            cmd = tool_input.get("command", "")
+            if cmd:
+                redacted = _redact_secrets(cmd)
+                if len(redacted) > 1000:
+                    return redacted[:1000] + "…"
+                return redacted
+        if tool_name in ("WebFetch", "WebSearch"):
+            return (tool_input.get("url", "") or tool_input.get("query", ""))[:200]
+        if tool_name == "Task":
+            desc = tool_input.get("description", "")
+            if desc:
+                return desc[:200]
+        # Generic: show first key's value
+        for v in tool_input.values():
+            if isinstance(v, str) and v:
+                return v[:200]
+        return ""
+
+    @staticmethod
     def _start_typing_heartbeat(
         chat: Any,
         interval: float = 2.0,
@@ -1745,7 +1786,7 @@ class MessageOrchestrator:
 
         async def request_approval(tool_name: str, tool_input: Dict[str, Any]) -> bool:
             request_id = uuid.uuid4().hex[:12]
-            summary = self._summarize_tool_input(tool_name, tool_input)
+            summary = self._summarize_tool_input_for_approval(tool_name, tool_input)
             text = f"⚠️ Claude wants to run <b>{escape_html(tool_name)}</b>"
             if summary:
                 text += f"\n<code>{escape_html(summary)}</code>"
@@ -1764,18 +1805,26 @@ class MessageOrchestrator:
                 ]
             )
 
-            msg = await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-                message_thread_id=message_thread_id,
-            )
-
-            future: "asyncio.Future[bool]" = asyncio.get_event_loop().create_future()
+            # Register the pending approval *before* sending the prompt, so a
+            # click that races the send (fast tapper, slow network) always
+            # finds an entry instead of hitting "Already handled." and
+            # stalling the future until timeout.
+            future: "asyncio.Future[bool]" = asyncio.get_running_loop().create_future()
             self._pending_tool_approvals[request_id] = PendingToolApproval(
                 user_id=user_id, future=future
             )
+
+            try:
+                msg = await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                    message_thread_id=message_thread_id,
+                )
+            except Exception:
+                self._pending_tool_approvals.pop(request_id, None)
+                raise
 
             try:
                 return await asyncio.wait_for(

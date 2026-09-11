@@ -101,6 +101,51 @@ class TestMakeToolApprovalCallback:
         edit_text_args = bot.send_message.return_value.edit_text.await_args
         assert "denied" in edit_text_args.args[0].lower()
 
+    async def test_pending_entry_registered_before_send_message(self, orchestrator):
+        """The request must be resolvable the instant send_message returns.
+
+        Regression test: previously the pending entry was registered *after*
+        send_message, so a click landing in that window found nothing,
+        answered "Already handled.", and left the future unresolved until
+        the full timeout elapsed. Registering first closes the window.
+        """
+        registered_before_send = False
+
+        async def fake_send_message(**kwargs):
+            nonlocal registered_before_send
+            registered_before_send = len(orchestrator._pending_tool_approvals) == 1
+            return AsyncMock()
+
+        bot = AsyncMock()
+        bot.send_message = AsyncMock(side_effect=fake_send_message)
+
+        request_approval = orchestrator._make_tool_approval_callback(
+            user_id=100, chat_id=555, bot=bot, message_thread_id=None
+        )
+
+        task = asyncio.ensure_future(request_approval("Bash", {"command": "echo hi"}))
+        await asyncio.sleep(0)
+
+        assert registered_before_send is True
+
+        request_id = next(iter(orchestrator._pending_tool_approvals))
+        orchestrator._pending_tool_approvals[request_id].future.set_result(True)
+        assert await task is True
+
+    async def test_pending_entry_removed_if_send_message_fails(self, orchestrator):
+        """A failed send must not leave a dangling pending entry."""
+        bot = AsyncMock()
+        bot.send_message = AsyncMock(side_effect=RuntimeError("network error"))
+
+        request_approval = orchestrator._make_tool_approval_callback(
+            user_id=100, chat_id=555, bot=bot, message_thread_id=None
+        )
+
+        with pytest.raises(RuntimeError):
+            await request_approval("Bash", {"command": "echo hi"})
+
+        assert orchestrator._pending_tool_approvals == {}
+
     async def test_timeout_allows_when_configured(self, orchestrator):
         """timeout_action='allow' makes an unanswered request resolve to True."""
         orchestrator.settings.interactive_tool_approval_timeout_seconds = 0

@@ -632,6 +632,51 @@ class TestRedactSecrets:
         assert result == ".env"
 
 
+class TestSummarizeToolInputForApproval:
+    """_summarize_tool_input_for_approval shows full detail for security decisions."""
+
+    def test_write_shows_full_path_not_just_filename(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Write", {"file_path": "/home/user/project/settings.py"}
+        )
+        assert result == "/home/user/project/settings.py"
+
+    def test_edit_shows_full_path(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Edit", {"file_path": "/etc/secrets/config.yaml"}
+        )
+        assert result == "/etc/secrets/config.yaml"
+
+    def test_bash_short_command_not_truncated(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Bash", {"command": "echo hi"}
+        )
+        assert result == "echo hi"
+
+    def test_bash_long_command_truncated_at_1000_with_marker(
+        self, agentic_settings, deps
+    ):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        long_cmd = "echo " + ("a" * 2000)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Bash", {"command": long_cmd}
+        )
+        assert len(result) == 1001  # 1000 chars + the "…" marker
+        assert result.endswith("…")
+
+    def test_bash_redacts_secrets(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Bash",
+            {"command": "curl --token=mysupersecrettoken123 https://api.example.com"},
+        )
+        assert "mysupersecrettoken123" not in result
+        assert "***" in result
+
+
 # --- Typing heartbeat tests ---
 
 
