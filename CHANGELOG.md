@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **CI now catches lockfile drift**: the `lint` and `test` jobs ran `poetry lock && poetry install`, which regenerated `poetry.lock` in place. A `pyproject.toml` dependency change with a stale lock therefore passed every PR and failed only at release time, as it did for v1.7.0 (#196). Both jobs now verify the lock with `poetry check --lock` and install from the committed lock, so CI tests the dependency set that actually ships rather than resolving a fresh one on every run.
+
 ## [1.7.0] - 2026-09-11
 
 Released as a minor rather than a patch: the security fix below changes runtime
