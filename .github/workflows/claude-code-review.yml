@@ -1,0 +1,83 @@
+name: Claude Code Review
+
+# First-pass review on every pull request. It comments; it never approves,
+# merges, or pushes. A human maintainer still reviews and merges.
+#
+# Requires one repository secret: CLAUDE_CODE_OAUTH_TOKEN (from
+# `claude setup-token`) or ANTHROPIC_API_KEY. Swap the `with:` key below
+# to match. See https://github.com/anthropics/claude-code-action
+#
+# `pull_request_target` is used so PRs from forks are reviewed (plain
+# `pull_request` has no access to secrets on fork PRs). Because the
+# workflow then runs with base-repo secrets against untrusted code, the
+# tool allowlist is read-only plus `gh pr comment`; no arbitrary Bash.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - name: Checkout PR merge ref
+        uses: actions/checkout@v6
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          use_sticky_comment: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are the first-pass reviewer for a Telegram bot that gives
+            remote access to Claude Code. Read CLAUDE.md for the
+            architecture and the five-layer security model, then review
+            the diff of this pull request.
+
+            Report only findings you are confident about, most severe
+            first. Focus on:
+            1. Security regressions: anything that widens what a Telegram
+               user can make Claude do on the host. Path checks against
+               APPROVED_DIRECTORY, the can_use_tool callback, the
+               SecurityValidator patterns, webhook signature checks,
+               secrets in logs, new settings that relax defaults.
+            2. Correctness: async misuse (blocking calls, missing awaits,
+               shared state across concurrent updates), datetime handling
+               (must be timezone-aware UTC), SQLite migrations, Telegram
+               API limits (message length, rate limits, HTML escaping).
+            3. Scope: does the PR do one thing? Does CHANGELOG.md have an
+               entry? Are new settings documented in .env.example and
+               docs/configuration.md and defaulted to current behaviour?
+            4. Tests: are behaviour changes covered? Do tests assert the
+               new behaviour rather than mock it away?
+
+            Post one review comment using `gh pr comment` with a short
+            summary, then the findings as a list with file:line
+            references. If there is nothing worth raising, say so in one
+            line. Do not approve, request changes, merge, or push.
+          claude_args: >-
+            --allowed-tools "Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(git diff:*),Bash(git log:*)"
+            --disallowed-tools "Write,Edit,MultiEdit,NotebookEdit,WebFetch,WebSearch"
+            --max-turns 40
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

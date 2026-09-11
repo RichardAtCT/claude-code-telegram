@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 - **v2 roadmap**: `docs/ROADMAP-v2.md` plans the 2.0 release (SDK 0.2, interactive permission and question UX, per-conversation concurrency, session browser, classic-mode removal, container distribution), scoped to work not already covered by open pull requests
+- **Community files**: issue forms (bug, feature, question), a pull request template with a hand-testing section, `CODEOWNERS`, `MAINTAINERS.md` (roles, one-week response promise, label set, path to maintainership), a Contributor Covenant 2.1 `CODE_OF_CONDUCT.md`, and a rewritten `CONTRIBUTING.md` (PR scope rules, AI-assisted contribution policy, current project layout)
+
+### Added
+- **Dependabot**: weekly PRs for `claude-agent-sdk`, `python-telegram-bot` and `anthropic`; monthly grouped PRs for other Python dependencies and GitHub Actions
+- **Claude Code Review workflow**: read-only first-pass review comment on every non-draft pull request, including fork PRs. Requires the `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret
 
 ## [1.6.1] - 2026-09-11
 

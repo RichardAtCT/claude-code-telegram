@@ -1,0 +1,12 @@
+# Reviewers automatically requested for pull requests.
+# Add co-maintainers per area as they join; see MAINTAINERS.md.
+
+*                       @RichardAtCT
+
+# Security-sensitive paths: always include the maintainer even when
+# an area owner is added later.
+/src/security/          @RichardAtCT
+/src/claude/            @RichardAtCT
+/src/api/               @RichardAtCT
+/.github/workflows/     @RichardAtCT
+/SECURITY.md            @RichardAtCT

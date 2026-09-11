@@ -1,0 +1,75 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The fields below are what a maintainer needs to reproduce the problem without a round trip. Please fill in as many as you can.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: Sent a photo with a caption; the bot replied "Working..." and never finished.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the bot with AGENTIC_MODE=true
+        2. Send ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Bot version
+      description: Output of `/status`, or the tag you installed. Say `main` and the commit if you run from source.
+      placeholder: v1.6.1
+    validations:
+      required: true
+  - type: input
+    id: sdk
+    attributes:
+      label: claude-agent-sdk and Claude Code CLI versions
+      description: "`poetry run pip show claude-agent-sdk | grep Version` and `claude --version`"
+      placeholder: 0.1.39 / 2.1.x
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Agentic (default)
+        - Classic (AGENTIC_MODE=false)
+        - Project threads (ENABLE_PROJECT_THREADS=true)
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Claude authentication
+      options:
+        - Claude CLI login (subscription)
+        - ANTHROPIC_API_KEY
+        - Other provider or custom base URL
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Python version
+      placeholder: Ubuntu 24.04, Python 3.12.3
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Run with `make run-debug` and paste the lines around the failure. Remove tokens, chat IDs and file paths you do not want public.
+      render: shell
+  - type: textarea
+    id: config
+    attributes:
+      label: Non-default settings
+      description: Any `.env` values you changed from `.env.example`, with secrets removed.
+      render: shell

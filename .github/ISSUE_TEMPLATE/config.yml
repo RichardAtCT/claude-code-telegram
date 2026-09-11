@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/RichardAtCT/claude-code-telegram/security/advisories/new
+    about: Report a vulnerability privately. Please do not open a public issue for security problems.
+  - name: v2 roadmap
+    url: https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/ROADMAP-v2.md
+    about: Check whether your idea is already planned before opening a feature request.

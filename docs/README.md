@@ -25,5 +25,7 @@ Quick links to every doc in this project. Start with the [README](../README.md) 
 | Document | Description |
 |----------|-------------|
 | [Contributing](../CONTRIBUTING.md) | How to contribute: branching, code standards, PR process |
+| [Maintainers](../MAINTAINERS.md) | Who maintains the project, response-time promise, labels, how to become a maintainer |
+| [Code of Conduct](../CODE_OF_CONDUCT.md) | Community expectations and how to report a problem |
 | [Security Policy](../SECURITY.md) | Supported versions, vulnerability reporting, and security architecture |
 | [Changelog](../CHANGELOG.md) | Release history following Keep a Changelog format |
