@@ -8,7 +8,9 @@ Features:
 """
 
 import asyncio
+import os
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse, urlunparse
 
 import structlog
 from telegram import Update
@@ -27,6 +29,28 @@ from .features.registry import FeatureRegistry
 from .orchestrator import MessageOrchestrator
 
 logger = structlog.get_logger()
+
+
+def _redact_proxy_url(proxy_url: str) -> str:
+    """Mask the password in a proxy URL so it is safe to log.
+
+    ``HTTPS_PROXY``/``HTTP_PROXY`` commonly carry credentials as
+    ``scheme://user:pass@host:port``. Logging the URL verbatim writes that
+    password into the structured logs in plaintext, so replace it with
+    ``***`` while keeping the scheme, user and host readable.
+    """
+    try:
+        parsed = urlparse(proxy_url)
+    except ValueError:
+        # Never let a malformed proxy URL reach the logs unmasked.
+        return "<unparsable proxy URL>"
+
+    if not parsed.password:
+        return proxy_url
+
+    userinfo, _, hostport = parsed.netloc.rpartition("@")
+    username = userinfo.split(":", 1)[0]
+    return urlunparse(parsed._replace(netloc=f"{username}:***@{hostport}"))
 
 
 class ClaudeCodeBot:
@@ -69,12 +93,10 @@ class ClaudeCodeBot:
         # does not automatically use HTTP_PROXY/HTTPS_PROXY environment variables.
         # Without this, the httpx connection pool can become corrupted when running
         # behind a proxy, causing the bot to stop responding to messages.
-        import os
-
         proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
         if proxy_url:
             builder.proxy(proxy_url)
-            logger.info("Proxy configured", proxy=proxy_url)
+            logger.info("Proxy configured", proxy=_redact_proxy_url(proxy_url))
 
         self.app = builder.build()
 

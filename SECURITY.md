@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | Current development |
+| 1.6.x   | Yes                |
+| < 1.6   | No -- please upgrade |
 
 ## Security Model
 
@@ -13,12 +14,17 @@ The Claude Code Telegram Bot implements a defense-in-depth security model with m
 ### 1. Authentication & Authorization
 - **User Whitelist**: Only pre-approved Telegram user IDs can access the bot
 - **Token-Based Auth**: Optional token-based authentication for additional security
+  (see the caveat under *Current Security Status* before relying on it)
 - **Session Management**: Secure session handling with timeout and cleanup
 
 ### 2. Directory Boundaries
 - **Approved Directory**: All operations confined to a pre-configured directory tree
 - **Path Validation**: Prevents directory traversal attacks (../../../etc/passwd)
 - **Permission Checks**: Validates file system permissions before operations
+- **Pre-execution Tool Checks**: Claude's own tool calls are validated before they run
+  via the SDK `can_use_tool` callback -- file paths for `Read`, `Write`, `Edit`,
+  `MultiEdit`, `NotebookEdit` and `NotebookRead`, and directory escapes for `Bash`.
+  Active by default; see *Tool Call Enforcement* below for exactly when it applies.
 
 ### 3. Input Validation
 - **Command Sanitization**: All user inputs sanitized to prevent injection attacks
@@ -45,9 +51,9 @@ The Claude Code Telegram Bot implements a defense-in-depth security model with m
 
 ## Current Security Status
 
-All planned security features are implemented and active:
+The following are implemented and active:
 
-- Multi-provider authentication system (whitelist + token)
+- Whitelist authentication (`ALLOWED_USERS`)
 - Rate limiting with token bucket algorithm (request and cost-based)
 - Input validation with path traversal, command injection, and zip bomb protection
 - Directory isolation with approved directory boundaries
@@ -56,6 +62,51 @@ All planned security features are implemented and active:
 - Webhook signature verification (GitHub HMAC-SHA256, generic Bearer token)
 - Event security middleware for webhook and scheduled event validation
 - Configuration security via Pydantic validators and SecretStr
+- Pre-execution boundary checks on Claude's tool calls (`can_use_tool`)
+
+### Tool Call Enforcement
+
+The `can_use_tool` callback in `src/claude/sdk_integration.py` is what enforces the
+approved-directory boundary on tool calls **Claude itself initiates** -- the case
+where Claude is steered off course by content it reads mid-task, rather than by
+the user's message (user input is covered by layer 3).
+
+The callback is reactive: the SDK runs it only when the Claude CLI sends a
+`can_use_tool` control request, and the CLI resolves its allow rules before asking.
+A tool named in `CLAUDE_ALLOWED_TOOLS` is therefore pre-approved and never reaches
+the callback. To keep the checks live, `ClaudeSDKManager.execute_command` removes
+the guarded tools from the `allowed_tools` it hands the SDK and disables
+`autoAllowBashIfSandboxed` (a second bypass, which auto-approves sandboxed Bash
+without a control request). Before this was fixed the checks were wired up but
+never consulted on a default configuration
+([#219](https://github.com/RichardAtCT/claude-code-telegram/issues/219)).
+
+Routing a tool call through the callback costs one local stdio round trip to the
+CLI subprocess plus ~30-90 microseconds of validation -- negligible against the
+model latency of the tool call itself, so `Read` is gated along with the mutating
+tools.
+
+**When it is active:** whenever a `SecurityValidator` is wired (the default for the
+bot) and `DISABLE_TOOL_VALIDATION` is `false` (the default).
+
+**When it is not:**
+
+- `DISABLE_TOOL_VALIDATION=true` -- no allow/deny lists are sent to the SDK, guarded
+  tools are left pre-approved, and sandboxed Bash is auto-approved. This is the
+  documented escape hatch for trusted environments, and it turns these checks off.
+- Direct use of `ClaudeSDKManager` without a `SecurityValidator` (there is no
+  validator to consult).
+
+Note that `CLAUDE_ALLOWED_TOOLS` is not itself an enforcement boundary while the
+callback is wired: a tool left out of the list is not blocked, it is simply routed
+to the callback, which allows anything that passes the boundary checks. Use
+`CLAUDE_DISALLOWED_TOOLS` to actually block a tool.
+
+**Known gap:** token-based authentication is not usable end to end. The provider
+exists, but `src/main.py` still backs it with `InMemoryTokenStorage`, so issued
+tokens are lost on restart and there is no supported flow for issuing one.
+**Use `ALLOWED_USERS` as the access control for any real deployment.** Tracked in
+[#58](https://github.com/RichardAtCT/claude-code-telegram/issues/58).
 
 ## Security Configuration
 
@@ -69,8 +120,9 @@ APPROVED_DIRECTORY=/path/to/approved/projects
 ALLOWED_USERS=123456789,987654321  # Telegram user IDs
 
 # Optional: Token-based authentication
-ENABLE_TOKEN_AUTH=true
-AUTH_TOKEN_SECRET=your-secret-here  # Generate with: openssl rand -hex 32
+# NOTE: incomplete -- see the known gap under "Current Security Status" (#58).
+# ENABLE_TOKEN_AUTH=true
+# AUTH_TOKEN_SECRET=your-secret-here  # Generate with: openssl rand -hex 32
 ```
 
 ### Webhook Security Settings
@@ -174,18 +226,42 @@ ENVIRONMENT=production  # Enables strict security defaults
 
 ## Reporting a Vulnerability
 
-**Do not create public GitHub issues for security vulnerabilities.**
+**Please do not open a public GitHub issue for a security vulnerability.**
 
-For security issues, please email: [Insert security contact email]
+Report it privately through GitHub Security Advisories:
 
-Include: description, steps to reproduce, potential impact, and suggested mitigation.
+**https://github.com/RichardAtCT/claude-code-telegram/security/advisories/new**
+
+That form is private to you and the maintainers, supports attachments and
+follow-up discussion, and lets us credit you on the published advisory. You can
+also reach it from the repository's **Security** tab -> **Report a vulnerability**.
+
+Please include:
+
+- A description of the issue and the component it affects
+- Steps to reproduce, ideally with a minimal configuration
+- The potential impact, and any preconditions an attacker would need
+- A suggested mitigation, if you have one
+
+Note that this bot is designed to execute commands on a host machine on behalf
+of authorised Telegram users. Reports are most useful when they show a way to
+cross one of the boundaries described in the threat model above -- for example
+escaping `APPROVED_DIRECTORY`, bypassing the user whitelist or rate limits,
+forging a webhook, or reaching a secret the validator is meant to block.
 
 ### Response Process
 
 1. **Acknowledgment** within 48 hours
 2. **Initial assessment** within 1 week
 3. **Fix development** as soon as possible
-4. **Security advisory** published after fix
+4. **Security advisory** published after the fix, crediting the reporter unless
+   they ask otherwise
+
+### Maintainer setup
+
+Private vulnerability reporting must be enabled for the advisory link above to
+work: **Settings -> Advanced Security -> Private vulnerability reporting ->
+Enable**. Keep it on; it is the only private channel this policy advertises.
 
 ## Production Checklist
 

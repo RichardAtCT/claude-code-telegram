@@ -186,6 +186,36 @@ class StreamUpdate:
         return None
 
 
+# Tools whose file path the can_use_tool callback validates against the
+# approved directory.
+FILE_TOOLS = frozenset(
+    {
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Read",
+        "NotebookEdit",
+        "NotebookRead",
+        "create_file",
+        "edit_file",
+        "read_file",
+    }
+)
+
+# Tools whose command the can_use_tool callback checks for directory escapes.
+BASH_TOOLS = frozenset({"Bash", "bash", "shell"})
+
+# Every tool the callback actually guards. These must be kept out of the
+# ``allowed_tools`` list handed to the SDK: the CLI's permission engine resolves
+# allow rules before consulting the permission prompt tool, so a tool named in
+# ``allowed_tools`` is pre-approved and never produces a ``can_use_tool``
+# control request -- leaving the checks below inert. See issue #219.
+GUARDED_TOOLS = FILE_TOOLS | BASH_TOOLS
+
+# Keys under which the guarded file tools pass their target path.
+_FILE_PATH_KEYS = ("file_path", "path", "notebook_path")
+
+
 def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
@@ -203,17 +233,20 @@ def _make_can_use_tool_callback(
     require interactive human approval (e.g. via a Telegram Allow/Deny prompt)
     after the static checks pass.
     """
-    _FILE_TOOLS = {"Write", "Edit", "Read", "create_file", "edit_file", "read_file"}
-    _BASH_TOOLS = {"Bash", "bash", "shell"}
 
     async def can_use_tool(
         tool_name: str,
         tool_input: Dict[str, Any],
         context: ToolPermissionContext,
     ) -> Any:
+        logger.debug("can_use_tool consulted", tool_name=tool_name)
+
         # File path validation
-        if tool_name in _FILE_TOOLS:
-            file_path = tool_input.get("file_path") or tool_input.get("path")
+        if tool_name in FILE_TOOLS:
+            file_path = next(
+                (tool_input.get(key) for key in _FILE_PATH_KEYS if tool_input.get(key)),
+                None,
+            )
             if file_path:
                 # Allow Claude Code internal paths (~/.claude/plans/, etc.)
                 if _is_claude_internal_path(file_path):
@@ -232,7 +265,7 @@ def _make_can_use_tool_callback(
                     return PermissionResultDeny(message=error or "Invalid file path")
 
         # Bash directory boundary validation
-        if tool_name in _BASH_TOOLS:
+        if tool_name in BASH_TOOLS:
             command = tool_input.get("command", "")
             if command:
                 valid, error = check_bash_directory_boundary(
@@ -347,29 +380,49 @@ class ClaudeSDKManager:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
-            # The SDK's can_use_tool callback is only consulted for tools that
-            # are NOT already in allowed_tools -- a tool present in
-            # allowed_tools is pre-approved by the CLI and never reaches
-            # can_use_tool at all. So a tool gated behind interactive approval
-            # must be removed from allowed_tools, or the approval prompt (and
-            # the static per-tool checks below) would never fire for it.
+            # The can_use_tool callback below is purely reactive: the SDK only
+            # invokes it when the CLI sends a can_use_tool control request, and
+            # the CLI resolves allow rules first. Any guarded tool left in
+            # allowed_tools is therefore pre-approved and its boundary check
+            # never runs. Strip them so each call is routed to the callback,
+            # which allows everything that passes validation. Issue #219.
+            boundary_checks_active = (
+                self.security_validator is not None
+                and not self.config.disable_tool_validation
+            )
+
+            # Interactive approval has the same requirement for its own gated
+            # tools: a tool left in allowed_tools is pre-approved by the CLI
+            # and never reaches can_use_tool, so the approval prompt (and the
+            # static checks above) would never fire for it. This can gate
+            # tools beyond GUARDED_TOOLS (INTERACTIVE_TOOL_APPROVAL_TOOLS is
+            # user-configured), so it is a separate, additive strip.
             approval_tool_names_set: FrozenSet[str] = frozenset()
             if self.config.interactive_tool_approval:
                 approval_tool_names_set = frozenset(
                     self.config.interactive_tool_approval_tools or ()
                 )
-            if sdk_allowed_tools is not None and approval_tool_names_set:
-                sdk_allowed_tools = [
-                    tool
-                    for tool in sdk_allowed_tools
-                    if tool not in approval_tool_names_set
-                ]
+
+            tools_to_strip: FrozenSet[str] = approval_tool_names_set
+            if boundary_checks_active:
+                tools_to_strip = tools_to_strip | GUARDED_TOOLS
+
+            if sdk_allowed_tools is not None and tools_to_strip:
+                gated = [t for t in sdk_allowed_tools if t in tools_to_strip]
+                if gated:
+                    sdk_allowed_tools = [
+                        tool for tool in sdk_allowed_tools if tool not in tools_to_strip
+                    ]
+                    logger.debug(
+                        "Routing guarded tools through can_use_tool",
+                        gated_tools=gated,
+                    )
 
             # The SDK auto-approves sandboxed Bash calls without ever invoking
-            # can_use_tool (see ClaudeAgentOptions sandbox settings). If Bash
-            # is one of the tools gated behind interactive approval, that
-            # auto-allow must be disabled or the approval prompt (and the
-            # static bash-boundary check) would never fire for Bash.
+            # can_use_tool (see ClaudeAgentOptions sandbox settings). That is
+            # a second bypass of both the bash-boundary check and the
+            # interactive-approval prompt, so it must be disabled whenever
+            # either of those depends on Bash going through can_use_tool.
             bash_needs_approval = "Bash" in approval_tool_names_set
 
             # Build Claude Agent options
@@ -384,7 +437,13 @@ class ClaudeSDKManager:
                 include_partial_messages=stream_callback is not None,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
-                    "autoAllowBashIfSandboxed": not bash_needs_approval,
+                    # Auto-approving sandboxed bash is a second bypass of the
+                    # control request the bash boundary check (and, if Bash is
+                    # gated, the approval prompt) depends on, so it stays off
+                    # whenever either is meant to run (#219).
+                    "autoAllowBashIfSandboxed": not (
+                        boundary_checks_active or bash_needs_approval
+                    ),
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
