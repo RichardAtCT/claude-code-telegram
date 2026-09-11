@@ -7,10 +7,23 @@ name: Claude Code Review
 # `claude setup-token`) or ANTHROPIC_API_KEY. Swap the `with:` key below
 # to match. See https://github.com/anthropics/claude-code-action
 #
-# `pull_request_target` is used so PRs from forks are reviewed (plain
-# `pull_request` has no access to secrets on fork PRs). Because the
-# workflow then runs with base-repo secrets against untrusted code, the
-# tool allowlist is read-only plus `gh pr comment`; no arbitrary Bash.
+# `github_token` is passed explicitly. Without it the action mints its
+# GitHub token by trading the Actions OIDC token with Anthropic, which
+# needs the Claude GitHub App installed on this repository. That exchange
+# returns `401 Invalid OIDC token` here, so every run died in ~30s before
+# reading any code. Passing the built-in GITHUB_TOKEN skips the exchange.
+# Review comments then come from `github-actions[bot]`, not `claude[bot]`.
+#
+# `pull_request_target` is used so the workflow definition always comes
+# from the default branch: a PR cannot edit this file to reach the
+# secrets. The flip side is that changes here only take effect once
+# merged to main, so they cannot be tested on their own PR. Because the
+# job runs with repository secrets against untrusted code, the tool
+# allowlist is read-only plus `gh pr comment`; no arbitrary Bash.
+#
+# The action refuses actors without write access to the repository, so the
+# job is gated on the same condition. An outside contributor's PR skips
+# the job instead of failing it with a red check.
 
 on:
   pull_request_target:
@@ -25,18 +38,23 @@ concurrency:
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.draft == false &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+      github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       issues: read
-      id-token: write
     steps:
-      - name: Checkout PR merge ref
+      # The PR head, not `refs/pull/N/merge`: GitHub computes the merge ref
+      # asynchronously and drops it entirely when the PR conflicts or is
+      # merged mid-run, which fails the checkout.
+      - name: Checkout PR head
         uses: actions/checkout@v6
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Review
@@ -44,6 +62,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
           prompt: |
             REPO: ${{ github.repository }}
