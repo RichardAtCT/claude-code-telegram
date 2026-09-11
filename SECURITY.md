@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | Current development |
+| 1.6.x   | Yes                |
+| < 1.6   | No -- please upgrade |
 
 ## Security Model
 
@@ -13,6 +14,7 @@ The Claude Code Telegram Bot implements a defense-in-depth security model with m
 ### 1. Authentication & Authorization
 - **User Whitelist**: Only pre-approved Telegram user IDs can access the bot
 - **Token-Based Auth**: Optional token-based authentication for additional security
+  (see the caveat under *Current Security Status* before relying on it)
 - **Session Management**: Secure session handling with timeout and cleanup
 
 ### 2. Directory Boundaries
@@ -45,9 +47,9 @@ The Claude Code Telegram Bot implements a defense-in-depth security model with m
 
 ## Current Security Status
 
-All planned security features are implemented and active:
+The following are implemented and active:
 
-- Multi-provider authentication system (whitelist + token)
+- Whitelist authentication (`ALLOWED_USERS`)
 - Rate limiting with token bucket algorithm (request and cost-based)
 - Input validation with path traversal, command injection, and zip bomb protection
 - Directory isolation with approved directory boundaries
@@ -56,6 +58,12 @@ All planned security features are implemented and active:
 - Webhook signature verification (GitHub HMAC-SHA256, generic Bearer token)
 - Event security middleware for webhook and scheduled event validation
 - Configuration security via Pydantic validators and SecretStr
+
+**Known gap:** token-based authentication is not usable end to end. The provider
+exists, but `src/main.py` still backs it with `InMemoryTokenStorage`, so issued
+tokens are lost on restart and there is no supported flow for issuing one.
+**Use `ALLOWED_USERS` as the access control for any real deployment.** Tracked in
+[#58](https://github.com/RichardAtCT/claude-code-telegram/issues/58).
 
 ## Security Configuration
 
@@ -69,8 +77,9 @@ APPROVED_DIRECTORY=/path/to/approved/projects
 ALLOWED_USERS=123456789,987654321  # Telegram user IDs
 
 # Optional: Token-based authentication
-ENABLE_TOKEN_AUTH=true
-AUTH_TOKEN_SECRET=your-secret-here  # Generate with: openssl rand -hex 32
+# NOTE: incomplete -- see the known gap under "Current Security Status" (#58).
+# ENABLE_TOKEN_AUTH=true
+# AUTH_TOKEN_SECRET=your-secret-here  # Generate with: openssl rand -hex 32
 ```
 
 ### Webhook Security Settings
@@ -174,18 +183,42 @@ ENVIRONMENT=production  # Enables strict security defaults
 
 ## Reporting a Vulnerability
 
-**Do not create public GitHub issues for security vulnerabilities.**
+**Please do not open a public GitHub issue for a security vulnerability.**
 
-For security issues, please email: [Insert security contact email]
+Report it privately through GitHub Security Advisories:
 
-Include: description, steps to reproduce, potential impact, and suggested mitigation.
+**https://github.com/RichardAtCT/claude-code-telegram/security/advisories/new**
+
+That form is private to you and the maintainers, supports attachments and
+follow-up discussion, and lets us credit you on the published advisory. You can
+also reach it from the repository's **Security** tab -> **Report a vulnerability**.
+
+Please include:
+
+- A description of the issue and the component it affects
+- Steps to reproduce, ideally with a minimal configuration
+- The potential impact, and any preconditions an attacker would need
+- A suggested mitigation, if you have one
+
+Note that this bot is designed to execute commands on a host machine on behalf
+of authorised Telegram users. Reports are most useful when they show a way to
+cross one of the boundaries described in the threat model above -- for example
+escaping `APPROVED_DIRECTORY`, bypassing the user whitelist or rate limits,
+forging a webhook, or reaching a secret the validator is meant to block.
 
 ### Response Process
 
 1. **Acknowledgment** within 48 hours
 2. **Initial assessment** within 1 week
 3. **Fix development** as soon as possible
-4. **Security advisory** published after fix
+4. **Security advisory** published after the fix, crediting the reporter unless
+   they ask otherwise
+
+### Maintainer setup
+
+Private vulnerability reporting must be enabled for the advisory link above to
+work: **Settings -> Advanced Security -> Private vulnerability reporting ->
+Enable**. Keep it on; it is the only private channel this policy advertises.
 
 ## Production Checklist
 
