@@ -92,6 +92,8 @@ The SDK consults this callback only when the Claude CLI sends a `can_use_tool` c
 
 `DISABLE_TOOL_VALIDATION=true` restores the fully permissive behaviour: no `allowed_tools`/`disallowed_tools` are sent, guarded tools are not routed through the callback, and sandboxed Bash is auto-approved. Trusted environments only.
 
+Optional interactive approval layer: when `INTERACTIVE_TOOL_APPROVAL=true`, tool calls matching `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`) additionally require the user to click Allow/Deny on a Telegram inline keyboard before executing, after the static checks above pass. If the user doesn't respond within `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60), `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_ACTION` (default `deny`, fail closed; can be set to `allow`) decides the outcome. The SDK's `can_use_tool` hook is only consulted for tools *not* already present in `allowed_tools` (a listed tool is pre-approved by the CLI and never reaches the callback), so gated tools are automatically removed from the `allowed_tools` sent to the SDK while this is enabled.
+
 Webhook authentication: GitHub HMAC-SHA256 signature verification, generic Bearer token for other providers, atomic deduplication via `webhook_events` table.
 
 ### Configuration
@@ -101,6 +103,8 @@ Settings loaded from environment variables via Pydantic Settings. Required: `TEL
 Agentic platform settings: `AGENTIC_MODE` (default true), `ENABLE_API_SERVER`, `API_SERVER_PORT` (default 8080), `GITHUB_WEBHOOK_SECRET`, `WEBHOOK_API_SECRET`, `ENABLE_SCHEDULER`, `NOTIFICATION_CHAT_IDS`.
 
 Security relaxation (trusted environments only): `DISABLE_SECURITY_PATTERNS` (default false), `DISABLE_TOOL_VALIDATION` (default false).
+
+Interactive tool approval: `INTERACTIVE_TOOL_APPROVAL` (default false), `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`), `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60), `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_ACTION` (default `deny`).
 
 Multi-project topics: `ENABLE_PROJECT_THREADS` (default false), `PROJECT_THREADS_MODE` (`private`|`group`), `PROJECT_THREADS_CHAT_ID` (required for group mode), `PROJECTS_CONFIG_PATH` (path to YAML project registry), `PROJECT_THREADS_SYNC_ACTION_INTERVAL_SECONDS` (default `1.1`, set `0` to disable pacing). See `config/projects.example.yaml`.
 

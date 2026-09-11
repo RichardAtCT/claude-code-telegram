@@ -59,6 +59,22 @@ DISABLE_SECURITY_PATTERNS=false
 DISABLE_TOOL_VALIDATION=false
 ```
 
+#### Interactive Tool Approval
+
+```bash
+# Require interactive Telegram Allow/Deny approval before executing risky tool calls (default: false)
+INTERACTIVE_TOOL_APPROVAL=false
+
+# Comma-separated tool names gated behind approval when enabled (default: Bash,Write,Edit)
+INTERACTIVE_TOOL_APPROVAL_TOOLS=Bash,Write,Edit
+
+# Seconds to wait for a response before applying the timeout action (default: 60)
+INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS=60
+
+# Decision applied automatically on timeout: deny (fail-closed) or allow (default: deny)
+INTERACTIVE_TOOL_APPROVAL_TIMEOUT_ACTION=deny
+```
+
 #### Claude Configuration
 
 ```bash
