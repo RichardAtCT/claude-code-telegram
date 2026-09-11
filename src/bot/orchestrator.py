@@ -1783,15 +1783,23 @@ class MessageOrchestrator:
                     timeout=self.settings.interactive_tool_approval_timeout_seconds,
                 )
             except asyncio.TimeoutError:
+                timeout_allow = (
+                    self.settings.interactive_tool_approval_timeout_action == "allow"
+                )
                 try:
+                    suffix = (
+                        "\n\n⏱ Timed out — auto-allowed"
+                        if timeout_allow
+                        else "\n\n⏱ Timed out — denied"
+                    )
                     await msg.edit_text(
-                        text + "\n\n⏱ Timed out — denied",
+                        text + suffix,
                         parse_mode="HTML",
                         reply_markup=None,
                     )
                 except Exception:
                     pass
-                return False
+                return timeout_allow
             finally:
                 self._pending_tool_approvals.pop(request_id, None)
 

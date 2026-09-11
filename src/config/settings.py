@@ -78,7 +78,14 @@ class Settings(BaseSettings):
     )
     interactive_tool_approval_timeout_seconds: int = Field(
         60,
-        description="Seconds to wait for user approval before auto-denying",
+        description="Seconds to wait for user approval before applying the timeout action",
+    )
+    interactive_tool_approval_timeout_action: Literal["deny", "allow"] = Field(
+        "deny",
+        description=(
+            "Decision applied automatically when the user doesn't respond "
+            "within the timeout: 'deny' (fail closed) or 'allow'"
+        ),
     )
 
     # Claude settings

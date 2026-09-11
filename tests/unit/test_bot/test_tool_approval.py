@@ -86,7 +86,7 @@ class TestMakeToolApprovalCallback:
         assert await task is False
 
     async def test_timeout_denies_and_cleans_up(self, orchestrator):
-        """With no response, wait_for(timeout=0) times out immediately -> deny."""
+        """With no response, wait_for(timeout=0) times out immediately -> deny (default)."""
         orchestrator.settings.interactive_tool_approval_timeout_seconds = 0
         bot = _make_bot()
         request_approval = orchestrator._make_tool_approval_callback(
@@ -98,6 +98,24 @@ class TestMakeToolApprovalCallback:
         assert result is False
         assert orchestrator._pending_tool_approvals == {}
         bot.send_message.return_value.edit_text.assert_awaited_once()
+        edit_text_args = bot.send_message.return_value.edit_text.await_args
+        assert "denied" in edit_text_args.args[0].lower()
+
+    async def test_timeout_allows_when_configured(self, orchestrator):
+        """timeout_action='allow' makes an unanswered request resolve to True."""
+        orchestrator.settings.interactive_tool_approval_timeout_seconds = 0
+        orchestrator.settings.interactive_tool_approval_timeout_action = "allow"
+        bot = _make_bot()
+        request_approval = orchestrator._make_tool_approval_callback(
+            user_id=100, chat_id=555, bot=bot, message_thread_id=None
+        )
+
+        result = await request_approval("Bash", {"command": "echo hi"})
+
+        assert result is True
+        assert orchestrator._pending_tool_approvals == {}
+        edit_text_args = bot.send_message.return_value.edit_text.await_args
+        assert "auto-allowed" in edit_text_args.args[0].lower()
 
 
 # ---------------------------------------------------------------------------
