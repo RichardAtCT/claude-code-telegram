@@ -24,11 +24,6 @@ name: Claude Code Review
 # the job instead of failing it with a red check.
 
 on:
-  # TEMPORARY: `pull_request_target` loads this file from the default branch,
-  # so the fix below cannot run until it is on main. This second trigger runs
-  # the file from the PR head once, to prove the fix works. Remove before merge.
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
   pull_request_target:
     types: [opened, synchronize, ready_for_review, reopened]
     paths-ignore:
