@@ -347,6 +347,31 @@ class ClaudeSDKManager:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
+            # The SDK's can_use_tool callback is only consulted for tools that
+            # are NOT already in allowed_tools -- a tool present in
+            # allowed_tools is pre-approved by the CLI and never reaches
+            # can_use_tool at all. So a tool gated behind interactive approval
+            # must be removed from allowed_tools, or the approval prompt (and
+            # the static per-tool checks below) would never fire for it.
+            approval_tool_names_set: FrozenSet[str] = frozenset()
+            if self.config.interactive_tool_approval:
+                approval_tool_names_set = frozenset(
+                    self.config.interactive_tool_approval_tools or ()
+                )
+            if sdk_allowed_tools is not None and approval_tool_names_set:
+                sdk_allowed_tools = [
+                    tool
+                    for tool in sdk_allowed_tools
+                    if tool not in approval_tool_names_set
+                ]
+
+            # The SDK auto-approves sandboxed Bash calls without ever invoking
+            # can_use_tool (see ClaudeAgentOptions sandbox settings). If Bash
+            # is one of the tools gated behind interactive approval, that
+            # auto-allow must be disabled or the approval prompt (and the
+            # static bash-boundary check) would never fire for Bash.
+            bash_needs_approval = "Bash" in approval_tool_names_set
+
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=self.config.claude_max_turns,
@@ -359,7 +384,7 @@ class ClaudeSDKManager:
                 include_partial_messages=stream_callback is not None,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
-                    "autoAllowBashIfSandboxed": True,
+                    "autoAllowBashIfSandboxed": not bash_needs_approval,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
@@ -386,9 +411,7 @@ class ClaudeSDKManager:
                         if self.config.interactive_tool_approval
                         else None
                     ),
-                    approval_tool_names=frozenset(
-                        self.config.interactive_tool_approval_tools or ()
-                    ),
+                    approval_tool_names=approval_tool_names_set,
                 )
 
             # Resume previous session if we have a session_id

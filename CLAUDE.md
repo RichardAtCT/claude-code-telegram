@@ -88,7 +88,7 @@ context.bot_data["security_validator"]
 
 `ToolMonitor` validates Claude's tool calls against allowlist/disallowlist, file path boundaries, and dangerous bash patterns. Tool name validation can be bypassed with `DISABLE_TOOL_VALIDATION=true`.
 
-Optional interactive approval layer: when `INTERACTIVE_TOOL_APPROVAL=true`, tool calls matching `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`) additionally require the user to click Allow/Deny on a Telegram inline keyboard before executing, after the static checks above pass. Fails closed (denies) if the user doesn't respond within `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60).
+Optional interactive approval layer: when `INTERACTIVE_TOOL_APPROVAL=true`, tool calls matching `INTERACTIVE_TOOL_APPROVAL_TOOLS` (default `Bash,Write,Edit`) additionally require the user to click Allow/Deny on a Telegram inline keyboard before executing, after the static checks above pass. Fails closed (denies) if the user doesn't respond within `INTERACTIVE_TOOL_APPROVAL_TIMEOUT_SECONDS` (default 60). The SDK's `can_use_tool` hook is only consulted for tools *not* already present in `allowed_tools` (a listed tool is pre-approved by the CLI and never reaches the callback), so gated tools are automatically removed from the `allowed_tools` sent to the SDK while this is enabled.
 
 Webhook authentication: GitHub HMAC-SHA256 signature verification, generic Bearer token for other providers, atomic deduplication via `webhook_events` table.
 

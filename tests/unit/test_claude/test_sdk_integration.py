@@ -519,6 +519,174 @@ class TestClaudeSandboxSettings:
             "excludedCommands": ["git", "npm"],
         }
 
+    async def test_sandbox_auto_allow_disabled_when_bash_gated(self, tmp_path):
+        """autoAllowBashIfSandboxed is False when Bash requires interactive approval.
+
+        Otherwise the SDK would auto-approve sandboxed Bash calls without ever
+        invoking can_use_tool, silently bypassing both the approval prompt and
+        the static bash-boundary check.
+        """
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            sandbox_enabled=True,
+            interactive_tool_approval=True,
+            interactive_tool_approval_tools=["Bash", "Write", "Edit"],
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert captured_options[0].sandbox["autoAllowBashIfSandboxed"] is False
+
+    async def test_sandbox_auto_allow_kept_when_bash_not_gated(self, tmp_path):
+        """autoAllowBashIfSandboxed stays True when Bash isn't in the gated tool list."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            sandbox_enabled=True,
+            interactive_tool_approval=True,
+            interactive_tool_approval_tools=["Write", "Edit"],
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert captured_options[0].sandbox["autoAllowBashIfSandboxed"] is True
+
+    async def test_gated_tools_removed_from_allowed_tools(self, tmp_path):
+        """Tools gated behind interactive approval are excluded from allowed_tools.
+
+        allowed_tools pre-approves a tool at the CLI level, so can_use_tool is
+        never consulted for it -- a gated tool must be excluded or its
+        approval prompt (and the static per-tool checks) would never fire.
+        """
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            interactive_tool_approval=True,
+            interactive_tool_approval_tools=["Bash", "Write"],
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        allowed = captured_options[0].allowed_tools
+        assert "Bash" not in allowed
+        assert "Write" not in allowed
+        assert "Read" in allowed  # untouched, still allowed as before
+
+    async def test_allowed_tools_untouched_when_interactive_approval_disabled(
+        self, tmp_path
+    ):
+        """allowed_tools is unaffected when interactive approval is off.
+
+        Regression guard: interactive_tool_approval_tools defaults to
+        ["Bash", "Write", "Edit"] even when the feature itself is disabled,
+        so the exclusion must key off interactive_tool_approval, not just
+        whether the tools list is non-empty.
+        """
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            interactive_tool_approval=False,
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert captured_options[0].allowed_tools == config.claude_allowed_tools
+
+    async def test_allowed_tools_none_unaffected_by_approval_filter(self, tmp_path):
+        """When allowed_tools is None (DISABLE_TOOL_VALIDATION), filtering is a no-op."""
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            claude_timeout_seconds=2,
+            disable_tool_validation=True,
+            interactive_tool_approval=True,
+            interactive_tool_approval_tools=["Bash"],
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured_options = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("Test response"),
+            _make_result_message(total_cost_usd=0.01),
+            capture_options=captured_options,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="Test prompt",
+                working_directory=tmp_path,
+            )
+
+        assert captured_options[0].allowed_tools is None
+
     async def test_system_prompt_set_with_working_directory(
         self, sdk_manager, tmp_path
     ):
