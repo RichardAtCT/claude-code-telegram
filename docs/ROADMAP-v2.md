@@ -1,7 +1,7 @@
 # v2 Roadmap
 
 **Status:** proposal, September 2026
-**Baseline:** v1.6.1, `claude-agent-sdk ^0.1.39`, 539 tests, 56% coverage
+**Baseline:** v1.6.2, `claude-agent-sdk ^0.1.39`, 559 tests, 56% coverage
 
 This document plans the 2.0 release. It deliberately excludes work that already
 exists as an open pull request (see [Out of scope](#out-of-scope-covered-by-open-prs));
@@ -38,29 +38,28 @@ Do not duplicate these in v2 work. Merge, revise, or close them during triage.
 | Area | PR(s) | Related issue |
 |------|-------|---------------|
 | Per-tool Allow/Deny approval prompt | #217 | #216 |
-| Polling stops after pool timeout | #214 | #213 |
-| Startup hang on `ConfigurationError` | #212 | #211 |
 | Alternative model providers (MiniMax, base URL) | #210, #143 | #171, #208 |
 | Voice replies (TTS) | #167 | |
-| `None` allowed/disallowed tools crash | #206 | |
 | Sending agent-mentioned images / arbitrary files | #204, #191 | |
 | Document, image and PDF uploads | #199, #193 | |
 | Daily session reset by timezone | #198 | |
 | Skill discovery and command-name normalisation | #197 | |
 | `/model` command | #160 | #138 |
-| Webhook mode startup fix | #196 | |
 | Reply/quote context in prompt | #194 | |
 | Token auth end-to-end | #190 | #58 |
 | Photo album buffering, chunked paste concat | #188, #187 | #186 |
 | Custom commands in the bot menu | #179 | #173, #176 |
-| Scheduler misfire grace and background jobs | #178, #177 | #175, #174 |
 | Per-chat routing, group trigger prefix, history buffer | #165 | |
 | `/schedule` command | #151 | #150 |
 | Streaming drafts, rich HTML, follow-up interrupts | #152 | #126 |
 
-Two of these interact with v2 work and should be merged first so v2 builds on
-them rather than around them: #217 (approval prompt, extended in M1) and
-#165 (moves session state from `user_data` to `chat_data`, extended in M2).
+Merged in 1.6.2 and therefore no longer listed: #214, #212, #196, #177, #178,
+#206, and #220 (guarded tools now routed through `can_use_tool`).
+
+Two of the remaining PRs interact with v2 work and should be merged first so
+v2 builds on them rather than around them: #217 (approval prompt, extended in
+M1) and #165 (moves session state from `user_data` to `chat_data`, extended
+in M2).
 
 ## Milestones
 
@@ -117,9 +116,8 @@ bot with `docker compose up` and a three-line `.env`.
 **0.5 Hygiene.** Add `.github/ISSUE_TEMPLATE/` (bug, feature, question),
 `CODEOWNERS`, and a label set (`bug`, `enhancement`, `sdk`, `security`,
 `good first issue`, `needs-triage`). Restore an automated first-pass review
-workflow on pull requests. Update `docs/tools.md` (still describes the
-removed `ToolMonitor`) and `CONTRIBUTING.md` (still lists "TODO-7, Next" as
-project status).
+workflow on pull requests. (`docs/tools.md` was corrected in 1.6.2 and
+`CONTRIBUTING.md` is rewritten alongside this roadmap.)
 
 **0.6 CI.** Test on 3.11, 3.12 and 3.13. Add mypy to the lint job (the
 Makefile runs it, CI does not). Fail the test job below the current coverage
@@ -144,9 +142,10 @@ terminal into something the user can do from a Telegram keyboard.
 asks questions that nobody can answer; the run stalls or Claude guesses. The
 SDK routes the call through `can_use_tool` with the questions in the tool
 input, but only for tools that are *not* pre-approved in `allowed_tools`
-(#217 established this against a live bot). So first strip
-`AskUserQuestion` from the allowlist handed to the SDK, exactly as #217 does
-for its gated tools, then intercept it in the callback: render each question as an inline keyboard (one
+(#219/#220 established this against a live bot; 1.6.2 strips the
+`GUARDED_TOOLS` set from the allowlist handed to the SDK for exactly this
+reason). So first add `AskUserQuestion` to that set, then intercept it in the
+callback: render each question as an inline keyboard (one
 row per option, plus "Other…" which switches the conversation to
 free-text reply mode), await the answer with a timeout, and return
 `PermissionResultAllow(updated_input=...)` where the input is the original
@@ -163,9 +162,9 @@ two-question clarification and receive both answers without the user typing.
 
 **1.2 Plan mode.** `/plan <task>` runs with `permission_mode="plan"`. Claude
 explores read-only and calls `ExitPlanMode` with the plan text. Intercept
-that in `can_use_tool` (strip `ExitPlanMode` from the SDK allowlist as in
-1.1 so the callback fires; a `PreToolUse` hook matcher is the fallback if it
-does not), post the plan as a message with "Approve",
+that in `can_use_tool` (add `ExitPlanMode` to `GUARDED_TOOLS` as in 1.1 so
+the callback fires; a `PreToolUse` hook matcher is the fallback if it does
+not), post the plan as a message with "Approve",
 "Revise" and "Cancel" buttons. Approve returns allow and switches the live
 client to `acceptEdits` for the remainder of the run via the client's
 permission-mode setter (documented for the TypeScript client as
