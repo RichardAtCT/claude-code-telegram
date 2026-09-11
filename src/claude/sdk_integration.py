@@ -177,6 +177,36 @@ class StreamUpdate:
         return None
 
 
+# Tools whose file path the can_use_tool callback validates against the
+# approved directory.
+FILE_TOOLS = frozenset(
+    {
+        "Write",
+        "Edit",
+        "MultiEdit",
+        "Read",
+        "NotebookEdit",
+        "NotebookRead",
+        "create_file",
+        "edit_file",
+        "read_file",
+    }
+)
+
+# Tools whose command the can_use_tool callback checks for directory escapes.
+BASH_TOOLS = frozenset({"Bash", "bash", "shell"})
+
+# Every tool the callback actually guards. These must be kept out of the
+# ``allowed_tools`` list handed to the SDK: the CLI's permission engine resolves
+# allow rules before consulting the permission prompt tool, so a tool named in
+# ``allowed_tools`` is pre-approved and never produces a ``can_use_tool``
+# control request -- leaving the checks below inert. See issue #219.
+GUARDED_TOOLS = FILE_TOOLS | BASH_TOOLS
+
+# Keys under which the guarded file tools pass their target path.
+_FILE_PATH_KEYS = ("file_path", "path", "notebook_path")
+
+
 def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
@@ -187,17 +217,20 @@ def _make_can_use_tool_callback(
     The callback validates file path boundaries and bash directory boundaries
     *before* the SDK executes the tool, providing preventive security enforcement.
     """
-    _FILE_TOOLS = {"Write", "Edit", "Read", "create_file", "edit_file", "read_file"}
-    _BASH_TOOLS = {"Bash", "bash", "shell"}
 
     async def can_use_tool(
         tool_name: str,
         tool_input: Dict[str, Any],
         context: ToolPermissionContext,
     ) -> Any:
+        logger.debug("can_use_tool consulted", tool_name=tool_name)
+
         # File path validation
-        if tool_name in _FILE_TOOLS:
-            file_path = tool_input.get("file_path") or tool_input.get("path")
+        if tool_name in FILE_TOOLS:
+            file_path = next(
+                (tool_input.get(key) for key in _FILE_PATH_KEYS if tool_input.get(key)),
+                None,
+            )
             if file_path:
                 # Allow Claude Code internal paths (~/.claude/plans/, etc.)
                 if _is_claude_internal_path(file_path):
@@ -216,7 +249,7 @@ def _make_can_use_tool_callback(
                     return PermissionResultDeny(message=error or "Invalid file path")
 
         # Bash directory boundary validation
-        if tool_name in _BASH_TOOLS:
+        if tool_name in BASH_TOOLS:
             command = tool_input.get("command", "")
             if command:
                 valid, error = check_bash_directory_boundary(
@@ -309,14 +342,43 @@ class ClaudeSDKManager:
                     path=str(claude_md_path),
                 )
 
-            # When DISABLE_TOOL_VALIDATION=true, pass None for allowed/disallowed
-            # tools so the SDK does not restrict tool usage (e.g. MCP tools).
+            # When DISABLE_TOOL_VALIDATION=true, pass [] (not None) for
+            # allowed/disallowed tools. ClaudeAgentOptions declares these
+            # as list[str] with default_factory=list, so None violates the
+            # dataclass contract. The pinned SDK guards with a truthiness
+            # check and tolerates None, but the project floats on ^0.1.39
+            # and nothing promises that guard survives a minor bump. Both
+            # values are falsy, so the CLI omits the flags either way --
+            # which is the intent of DISABLE_TOOL_VALIDATION=true (#206).
+            sdk_allowed_tools: Optional[List[str]]
+            sdk_disallowed_tools: Optional[List[str]]
             if self.config.disable_tool_validation:
-                sdk_allowed_tools = None
-                sdk_disallowed_tools = None
+                sdk_allowed_tools = []
+                sdk_disallowed_tools = []
             else:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
+
+            # The can_use_tool callback below is purely reactive: the SDK only
+            # invokes it when the CLI sends a can_use_tool control request, and
+            # the CLI resolves allow rules first. Any guarded tool left in
+            # allowed_tools is therefore pre-approved and its boundary check
+            # never runs. Strip them so each call is routed to the callback,
+            # which allows everything that passes validation. Issue #219.
+            boundary_checks_active = (
+                self.security_validator is not None
+                and not self.config.disable_tool_validation
+            )
+            if boundary_checks_active and sdk_allowed_tools is not None:
+                gated = [t for t in sdk_allowed_tools if t in GUARDED_TOOLS]
+                if gated:
+                    sdk_allowed_tools = [
+                        tool for tool in sdk_allowed_tools if tool not in GUARDED_TOOLS
+                    ]
+                    logger.debug(
+                        "Routing guarded tools through can_use_tool",
+                        gated_tools=gated,
+                    )
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
@@ -330,7 +392,10 @@ class ClaudeSDKManager:
                 include_partial_messages=stream_callback is not None,
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
-                    "autoAllowBashIfSandboxed": True,
+                    # Auto-approving sandboxed bash is a second bypass of the
+                    # control request the bash boundary check depends on, so it
+                    # stays off whenever that check is meant to run (#219).
+                    "autoAllowBashIfSandboxed": not boundary_checks_active,
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,

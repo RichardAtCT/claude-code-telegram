@@ -18,6 +18,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dependabot**: weekly PRs for `claude-agent-sdk`, `python-telegram-bot` and `anthropic`; monthly grouped PRs for other Python dependencies and GitHub Actions
 - **Claude Code Review workflow**: read-only first-pass review comment on every non-draft pull request, including fork PRs. Requires the `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret
 
+## [1.6.2] - 2026-09-11
+
+### Security
+- **Tool boundary checks now actually run** (#220, closes #219). The `can_use_tool` callback enforces the `APPROVED_DIRECTORY` boundary on Claude's own tool calls, but the SDK only consults it when the Claude CLI sends a `can_use_tool` control request — and the CLI resolves allow rules first, so any tool named in `CLAUDE_ALLOWED_TOOLS` was pre-approved and never reached it. Since the default list contains `Read`, `Write`, `Edit` and `Bash`, the checks were silently inert on every default install. Guarded tools are now stripped from the `allowed_tools` passed to the SDK, and `autoAllowBashIfSandboxed` — a second, independent bypass — is disabled whenever the checks are meant to run. Guarding also now covers `MultiEdit`, `NotebookEdit` and `NotebookRead`, which were never included.
+
+### Changed
+- **Upgrade note for #220**: tool calls targeting paths outside `APPROVED_DIRECTORY` are now denied where they previously succeeded. This restores the behaviour the documentation always described, but it is a real change for any deployment that relied on the gap. Routing each guarded call through the callback also adds one control-request round trip per call. `DISABLE_TOOL_VALIDATION=true` restores the previous permissive behaviour for trusted environments.
+- **Known limitation**: `CLAUDE_ALLOWED_TOOLS` does not block tools left off the list — unlisted tools reach the callback, which allows anything passing its boundary checks. `CLAUDE_DISALLOWED_TOOLS` is the only setting that denies a tool. Tracked in [#221](https://github.com/RichardAtCT/claude-code-telegram/issues/221); `SECURITY.md` and `docs/tools.md` now describe the actual behaviour.
+
+### Fixed
+- **Polling no longer dies permanently**: a `getUpdates` request torn down mid-flight (unstable network, proxy or tunnel drop) left its connection checked out of a pool holding exactly one, so every later poll failed with "Pool timeout" and never recovered, even after the network came back (#214, closes #213)
+- **Startup failures exit instead of hanging**: a `ConfigurationError` during startup left aiosqlite's non-daemon threads running, so `sys.exit(1)` blocked forever in `wait_for_thread_shutdown()` and the process hung rather than exiting — which supervisors read as a healthy service (#212, closes #211)
+- **Webhook mode works**: `run_webhook()` manages its own event loop and raised "Cannot close a running event loop" when called inside `asyncio.run()`. Now uses `start_webhook()`, and `pyproject.toml` declares the `webhooks` extra the path requires (#196)
+- **Scheduled jobs no longer block the event bus**: `AgentHandler` awaited Claude inline, so a scheduled job stalled every other event until it finished. Jobs now run as background tasks under a concurrency limit (#177, closes #174)
+- **Scheduler no longer drops missed jobs**: APScheduler's default `misfire_grace_time` silently discarded jobs that fired while a long Claude command was running. Now set to `None` with `coalesce` enabled (#178, closes #175)
+- **Tool lists are typed correctly**: `DISABLE_TOOL_VALIDATION=true` passes `[]` rather than `None` for allowed/disallowed tools, matching the `list[str]` that `ClaudeAgentOptions` declares. Both values are falsy so the CLI omits the flags either way; behaviour is unchanged (#206)
+
 ## [1.6.1] - 2026-09-11
 
 ### Security

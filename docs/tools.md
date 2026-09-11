@@ -4,9 +4,9 @@ This document describes the tools that Claude Code can use when interacting thro
 
 ## Overview
 
-By default, the bot allows **16 tools**. These are configured via the `CLAUDE_ALLOWED_TOOLS` environment variable and validated at runtime by the [ToolMonitor](../src/claude/monitor.py).
+By default, the bot allows **16 tools**, configured via the `CLAUDE_ALLOWED_TOOLS` environment variable. Tool calls that touch the filesystem are validated before they run by the `can_use_tool` callback in [`src/claude/sdk_integration.py`](../src/claude/sdk_integration.py), which checks file paths and Bash commands against the `APPROVED_DIRECTORY`.
 
-When Claude uses a tool during a conversation, the tool name appears in real-time if verbose output is enabled (`/verbose 1` or `/verbose 2`). If Claude attempts to use a tool that is not in the allowed list, the bot blocks the call and displays an error with the list of currently allowed tools.
+When Claude uses a tool during a conversation, the tool name appears in real-time if verbose output is enabled (`/verbose 1` or `/verbose 2`). A tool call that fails a boundary check is denied before it executes, and Claude is told why.
 
 ## Tool Reference
 
@@ -98,10 +98,17 @@ CLAUDE_ALLOWED_TOOLS=Read,Write,Edit,Bash,Glob,Grep,LS,Task,TaskOutput,MultiEdit
 CLAUDE_DISALLOWED_TOOLS=Bash,Write
 ```
 
-To allow all tools without name-based validation:
+`CLAUDE_DISALLOWED_TOOLS` is the list that actually blocks a tool. `CLAUDE_ALLOWED_TOOLS`
+pre-approves tools so they skip the permission handler; the filesystem tools are
+deliberately withheld from that pre-approval so their boundary checks run (see
+[Security](../SECURITY.md#tool-call-enforcement)), which means dropping one of them
+from the list does not disable it.
+
+To turn off tool validation entirely:
 
 ```bash
-# Skip tool allow/disallow checks (path and bash safety checks still apply)
+# WARNING: also disables the path and Bash boundary checks below.
+# Trusted environments only.
 DISABLE_TOOL_VALIDATION=true
 ```
 
@@ -109,12 +116,15 @@ DISABLE_TOOL_VALIDATION=true
 
 Even when a tool is allowed, additional security checks apply. The exact checks depend on the run mode:
 
-1. **File path validation** (all modes) — `Read`, `Write`, `Edit`, and `MultiEdit` operations must target paths within the `APPROVED_DIRECTORY`. Path traversal attempts are blocked.
+1. **File path validation** (all modes) — `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` and `NotebookRead` operations must target paths within the `APPROVED_DIRECTORY`. Path traversal attempts are blocked before the tool runs.
 
 2. **Bash command validation** (classic mode only) — Dangerous patterns (`rm -rf`, `sudo`, `chmod 777`, pipes, redirections, subshells) are blocked by default. Filesystem-modifying commands (`mkdir`, `cp`, `mv`, `rm`, etc.) must target paths within the approved directory. This layer is **not active in agentic mode**, which relies on OS-level sandboxing instead.
 
-3. **Bash directory boundary checks** (all modes) — Filesystem-modifying commands are checked to ensure their target paths stay within the approved directory, regardless of run mode.
+3. **Bash directory boundary checks** (all modes) — Filesystem-modifying commands are checked before they run to ensure their target paths stay within the approved directory, regardless of run mode.
 
 4. **Audit logging** (all modes) — All tool calls and security violations are recorded for review.
+
+Layers 1 and 3 require `DISABLE_TOOL_VALIDATION=false` (the default); setting it to
+`true` disables them along with the allow/deny lists.
 
 See [Security](../SECURITY.md) for the full security model.

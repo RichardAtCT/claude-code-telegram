@@ -88,6 +88,15 @@ class ClaudeCodeBot:
         builder.write_timeout(30)
         builder.pool_timeout(30)
 
+        # Long polling uses a separate HTTP client whose connection pool holds a
+        # single connection by default. If a long-running getUpdates request is
+        # torn down mid-flight (unstable network, proxy or tunnel drop), that
+        # connection can stay checked out, and every later getUpdates call then
+        # fails with "Pool timeout: All connections in the connection pool are
+        # occupied", permanently, even after the network recovers. A small pool
+        # leaves headroom so polling can recover on its own.
+        builder.get_updates_connection_pool_size(8)
+
         # Explicitly set proxy from environment variables.
         # This is necessary because python-telegram-bot's Application.builder()
         # does not automatically use HTTP_PROXY/HTTPS_PROXY environment variables.
@@ -234,8 +243,10 @@ class ClaudeCodeBot:
             self.is_running = True
 
             if self.settings.webhook_url:
-                # Webhook mode
-                await self.app.run_webhook(
+                # Webhook mode - use start/start_webhook instead of run_webhook
+                # to avoid "Cannot close a running event loop" in async context
+                await self.app.start()
+                await self.app.updater.start_webhook(
                     listen="0.0.0.0",
                     port=self.settings.webhook_port,
                     url_path=self.settings.webhook_path,
@@ -243,6 +254,10 @@ class ClaudeCodeBot:
                     drop_pending_updates=True,
                     allowed_updates=Update.ALL_TYPES,
                 )
+
+                # Keep running until manually stopped
+                while self.is_running:
+                    await asyncio.sleep(1)
             else:
                 # Polling mode - initialize and start polling manually
                 await self.app.initialize()
