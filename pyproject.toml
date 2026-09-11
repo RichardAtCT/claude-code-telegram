@@ -23,9 +23,9 @@ requires-python = ">=3.11"
 dynamic = ["dependencies"]
 
 [project.urls]
-Homepage = "https://github.com/RichardAtCT/claude-code-telegram"
-Repository = "https://github.com/RichardAtCT/claude-code-telegram"
-Documentation = "https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/"
+Homepage = "https://github.com/overwirehq/claude-code-telegram"
+Repository = "https://github.com/overwirehq/claude-code-telegram"
+Documentation = "https://github.com/overwirehq/claude-code-telegram/blob/main/docs/"
 
 [project.scripts]
 claude-telegram-bot = "src.main:run"

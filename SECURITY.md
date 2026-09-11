@@ -79,7 +79,7 @@ the guarded tools from the `allowed_tools` it hands the SDK and disables
 `autoAllowBashIfSandboxed` (a second bypass, which auto-approves sandboxed Bash
 without a control request). Before this was fixed the checks were wired up but
 never consulted on a default configuration
-([#219](https://github.com/RichardAtCT/claude-code-telegram/issues/219)).
+([#219](https://github.com/overwirehq/claude-code-telegram/issues/219)).
 
 Routing a tool call through the callback costs one local stdio round trip to the
 CLI subprocess plus ~30-90 microseconds of validation -- negligible against the
@@ -106,7 +106,7 @@ to the callback, which allows anything that passes the boundary checks. Use
 exists, but `src/main.py` still backs it with `InMemoryTokenStorage`, so issued
 tokens are lost on restart and there is no supported flow for issuing one.
 **Use `ALLOWED_USERS` as the access control for any real deployment.** Tracked in
-[#58](https://github.com/RichardAtCT/claude-code-telegram/issues/58).
+[#58](https://github.com/overwirehq/claude-code-telegram/issues/58).
 
 ## Security Configuration
 
@@ -230,7 +230,7 @@ ENVIRONMENT=production  # Enables strict security defaults
 
 Report it privately through GitHub Security Advisories:
 
-**https://github.com/RichardAtCT/claude-code-telegram/security/advisories/new**
+**https://github.com/overwirehq/claude-code-telegram/security/advisories/new**
 
 That form is private to you and the maintainers, supports attachments and
 follow-up discussion, and lets us credit you on the published advisory. You can

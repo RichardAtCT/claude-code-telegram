@@ -4,7 +4,7 @@ Verifies that when middleware rejects a request (auth failure, security
 violation, rate limit exceeded), ApplicationHandlerStop is raised to
 prevent subsequent handler groups from processing the update.
 
-Regression tests for: https://github.com/RichardAtCT/claude-code-telegram/issues/44
+Regression tests for: https://github.com/overwirehq/claude-code-telegram/issues/44
 """
 
 from unittest.mock import AsyncMock, MagicMock

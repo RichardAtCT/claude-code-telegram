@@ -17,7 +17,7 @@ This document provides detailed information for developers working on the Claude
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/RichardAtCT/claude-code-telegram.git
+   git clone https://github.com/overwirehq/claude-code-telegram.git
    cd claude-code-telegram
    ```
 

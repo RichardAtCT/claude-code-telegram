@@ -168,7 +168,7 @@ Discussions where enabled.
 ## Security
 
 Do not open a public issue for a vulnerability. Use
-[GitHub Security Advisories](https://github.com/RichardAtCT/claude-code-telegram/security/advisories/new)
+[GitHub Security Advisories](https://github.com/overwirehq/claude-code-telegram/security/advisories/new)
 as described in [SECURITY.md](SECURITY.md).
 
 ## Community

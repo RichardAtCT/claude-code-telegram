@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **v2 roadmap**: `docs/ROADMAP-v2.md` plans the 2.0 release (SDK 0.2, interactive permission and question UX, per-conversation concurrency, session browser, classic-mode removal, container distribution), scoped to work not already covered by open pull requests
+- **Community files**: issue forms (bug, feature, question), a pull request template with a hand-testing section, `CODEOWNERS`, `MAINTAINERS.md` (roles, one-week response promise, label set, path to maintainership), a Contributor Covenant 2.1 `CODE_OF_CONDUCT.md`, and a rewritten `CONTRIBUTING.md` (PR scope rules, AI-assisted contribution policy, current project layout)
+
+### Changed
+- **Repository moved to the `overwirehq` organisation**: the canonical location is now `github.com/overwirehq/claude-code-telegram`. GitHub redirects the old URLs, but every link in the README, docs, issue templates and packaging metadata has been updated. Existing clones keep working; `git remote set-url origin https://github.com/overwirehq/claude-code-telegram.git` points one at the new location directly
+
 ### Fixed
 - **CI now catches lockfile drift**: the `lint` and `test` jobs ran `poetry lock && poetry install`, which regenerated `poetry.lock` in place. A `pyproject.toml` dependency change with a stale lock therefore passed every PR and failed only at release time, as it did for v1.7.0 (#196). Both jobs now verify the lock with `poetry check --lock` and install from the committed lock, so CI tests the dependency set that actually ships rather than resolving a fresh one on every run.
+- **Green test suite**: `test_allowed_tools_none_unaffected_by_approval_filter` asserted that `allowed_tools` is `None` under `DISABLE_TOOL_VALIDATION`, but #206 had already changed that value to `[]` for type correctness. #217 was written against a base without #206, so the collision only surfaced once both were on `main`, leaving the default branch red. The expectation is now `[]`, and the test is renamed to say so
+- **Project URLs**: the Homepage, Repository and Documentation links in `pyproject.toml` pointed at `github.com/richardatkinson/...`, an owner unrelated to this project, so `pip show` and any future PyPI listing linked to the wrong place
+
+### Added
+- **Dependabot**: weekly PRs for `claude-agent-sdk`, `python-telegram-bot` and `anthropic`; monthly grouped PRs for other Python dependencies and GitHub Actions
+- **Claude Code Review workflow**: read-only first-pass review comment on every non-draft pull request, including fork PRs. Requires the `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) repository secret
 
 ## [1.7.0] - 2026-09-11
 
@@ -20,7 +33,7 @@ behaviour for every deployment. See the upgrade note under **Changed**.
 
 ### Changed
 - **Upgrade note for #220**: tool calls targeting paths outside `APPROVED_DIRECTORY` are now denied where they previously succeeded. This restores the behaviour the documentation always described, but it is a real change for any deployment that relied on the gap. Routing each guarded call through the callback also adds one control-request round trip per call. `DISABLE_TOOL_VALIDATION=true` restores the previous permissive behaviour for trusted environments.
-- **Known limitation**: `CLAUDE_ALLOWED_TOOLS` does not block tools left off the list — unlisted tools reach the callback, which allows anything passing its boundary checks. `CLAUDE_DISALLOWED_TOOLS` is the only setting that denies a tool. Tracked in [#221](https://github.com/RichardAtCT/claude-code-telegram/issues/221); `SECURITY.md` and `docs/tools.md` now describe the actual behaviour.
+- **Known limitation**: `CLAUDE_ALLOWED_TOOLS` does not block tools left off the list — unlisted tools reach the callback, which allows anything passing its boundary checks. `CLAUDE_DISALLOWED_TOOLS` is the only setting that denies a tool. Tracked in [#221](https://github.com/overwirehq/claude-code-telegram/issues/221); `SECURITY.md` and `docs/tools.md` now describe the actual behaviour.
 
 ### Fixed
 - **Polling no longer dies permanently**: a `getUpdates` request torn down mid-flight (unstable network, proxy or tunnel drop) left its connection checked out of a pool holding exactly one, so every later poll failed with "Pool timeout" and never recovered, even after the network came back (#214, closes #213)

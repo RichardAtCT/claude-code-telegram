@@ -1,7 +1,7 @@
 # v2 Roadmap
 
 **Status:** proposal, September 2026
-**Baseline:** v1.6.2, `claude-agent-sdk ^0.1.39`, 559 tests, 56% coverage
+**Baseline:** v1.7.0, `claude-agent-sdk ^0.1.39`, 559 tests, 56% coverage
 
 This document plans the 2.0 release. It deliberately excludes work that already
 exists as an open pull request (see [Out of scope](#out-of-scope-covered-by-open-prs));
@@ -37,7 +37,6 @@ Do not duplicate these in v2 work. Merge, revise, or close them during triage.
 
 | Area | PR(s) | Related issue |
 |------|-------|---------------|
-| Per-tool Allow/Deny approval prompt | #217 | #216 |
 | Alternative model providers (MiniMax, base URL) | #210, #143 | #171, #208 |
 | Voice replies (TTS) | #167 | |
 | Sending agent-mentioned images / arbitrary files | #204, #191 | |
@@ -53,20 +52,20 @@ Do not duplicate these in v2 work. Merge, revise, or close them during triage.
 | `/schedule` command | #151 | #150 |
 | Streaming drafts, rich HTML, follow-up interrupts | #152 | #126 |
 
-Merged in 1.6.2 and therefore no longer listed: #214, #212, #196, #177, #178,
-#206, and #220 (guarded tools now routed through `can_use_tool`).
+Merged in 1.7.0 and therefore no longer listed: #214, #212, #196, #177, #178,
+#206, #220 (guarded tools now routed through `can_use_tool`) and #217
+(per-tool Allow/Deny approval prompt, closing #216).
 
-Two of the remaining PRs interact with v2 work and should be merged first so
-v2 builds on them rather than around them: #217 (approval prompt, extended in
-M1) and #165 (moves session state from `user_data` to `chat_data`, extended
-in M2).
+One remaining PR interacts with v2 work and should be merged first so v2
+builds on it rather than around it: #165, which moves session state from
+`user_data` to `chat_data` and is extended in M2.
 
 ## Milestones
 
 Sizes: **S** under a day, **M** two to four days, **L** a week or more.
 Each item lists the files most likely to change so work can be split.
 
-### M0. Foundations (ship as 1.7, non-breaking)
+### M0. Foundations (ship as 1.8, non-breaking)
 
 Preparation that every later milestone depends on. Nothing here changes
 behaviour for a default install.
@@ -106,17 +105,17 @@ Agentic tasks routinely need 30 to 50 tool round-trips. Raise the default to
 
 **0.4 Distribution.** Add a `Dockerfile` (python:3.12-slim, Node for the
 Claude Code CLI, non-root user, `data/` volume) and a `docker-compose.yml`
-with the three required variables. Publish to GHCR from `release.yml` on
-tag. Publish the wheel to PyPI from the same workflow so
-`pipx install claude-code-telegram` works. Fix the project URLs in
-`pyproject.toml`, which point at `richardatkinson/...` instead of
-`RichardAtCT/...`. Done when a fresh machine goes from zero to a responding
-bot with `docker compose up` and a three-line `.env`.
+with the three required variables. Publish to
+`ghcr.io/overwirehq/claude-code-telegram` from `release.yml` on tag. Publish
+the wheel to PyPI from the same workflow so
+`pipx install claude-code-telegram` works. Done when a fresh machine goes
+from zero to a responding bot with `docker compose up` and a three-line
+`.env`.
 
 **0.5 Hygiene.** Add `.github/ISSUE_TEMPLATE/` (bug, feature, question),
 `CODEOWNERS`, and a label set (`bug`, `enhancement`, `sdk`, `security`,
 `good first issue`, `needs-triage`). Restore an automated first-pass review
-workflow on pull requests. (`docs/tools.md` was corrected in 1.6.2 and
+workflow on pull requests. (`docs/tools.md` was corrected in 1.7.0 and
 `CONTRIBUTING.md` is rewritten alongside this roadmap.)
 
 **0.6 CI.** Test on 3.11, 3.12 and 3.13. Add mypy to the lint job (the
@@ -142,7 +141,7 @@ terminal into something the user can do from a Telegram keyboard.
 asks questions that nobody can answer; the run stalls or Claude guesses. The
 SDK routes the call through `can_use_tool` with the questions in the tool
 input, but only for tools that are *not* pre-approved in `allowed_tools`
-(#219/#220 established this against a live bot; 1.6.2 strips the
+(#219/#220 established this against a live bot; 1.7.0 strips the
 `GUARDED_TOOLS` set from the allowlist handed to the SDK for exactly this
 reason). So first add `AskUserQuestion` to that set, then intercept it in the
 callback: render each question as an inline keyboard (one
@@ -189,7 +188,8 @@ user always knows what will and will not prompt. Files:
 session". Implement by returning `PermissionResultAllow` with a
 `PermissionUpdate` that adds an allow rule for the tool (and for Bash, the
 command prefix) scoped to the session. Persist the choice alongside the
-session record so it survives a bot restart. Depends on #217 merging.
+session record so it survives a bot restart. #217 shipped the Allow/Deny
+keyboard in 1.7.0; this adds the third button to it.
 
 **1.5 Undo.** Enable `enable_file_checkpointing` together with
 `extra_args={"replay-user-messages": None}` so the stream carries
@@ -310,7 +310,7 @@ of webhooks cannot starve chat.
 
 **4.1 Classic mode.** `src/bot/handlers/` and the classic-only parts of
 `src/bot/features/` are roughly 6,500 lines that duplicate agentic mode
-with a different UI. Deprecate in 1.7 (log a warning when
+with a different UI. Deprecate in 1.8 (log a warning when
 `AGENTIC_MODE=false`), remove in 2.0. Keep the three classic commands that
 have no agentic equivalent as agentic commands: `/cd` (alias of `/repo`),
 `/export` (session export already lives in `src/bot/features/`), and
@@ -351,7 +351,7 @@ message), and the new permission-mode default.
 
 ## Release mechanics
 
-1. **1.7.0**: M0 complete. Deprecation warning for classic mode. Announce
+1. **1.8.0**: M0 complete. Deprecation warning for classic mode. Announce
    the v2 plan in the release notes with a link to this document.
 2. **2.0.0-beta.1**: M1 and M2 complete on `main`, published as a
    pre-release tag and a `beta` Docker tag. Two to three weeks of feedback.

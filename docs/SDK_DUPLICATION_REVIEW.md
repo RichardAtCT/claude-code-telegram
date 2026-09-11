@@ -569,8 +569,8 @@ Before any refactor:
 
 | Date | PR | Findings Addressed | Summary |
 |------|:---:|:---:|---------|
-| 2026-02-20 | [#56](https://github.com/RichardAtCT/claude-code-telegram/pull/56) | F1 (partial), F8, F9 | Migrated `query()` → `ClaudeSDKClient`, eliminated `temp_*` IDs and session swapping, uses `ResultMessage.result`, removed dead `active_sessions` state |
-| 2026-02-20 | [#59](https://github.com/RichardAtCT/claude-code-telegram/pull/59) | F3 (complete), F5 (complete) | Deleted CLI subprocess backend (`integration.py`, `parser.py`), removed `use_sdk` flag, passed `disallowed_tools` to SDK, ~1,060 lines removed |
+| 2026-02-20 | [#56](https://github.com/overwirehq/claude-code-telegram/pull/56) | F1 (partial), F8, F9 | Migrated `query()` → `ClaudeSDKClient`, eliminated `temp_*` IDs and session swapping, uses `ResultMessage.result`, removed dead `active_sessions` state |
+| 2026-02-20 | [#59](https://github.com/overwirehq/claude-code-telegram/pull/59) | F3 (complete), F5 (complete) | Deleted CLI subprocess backend (`integration.py`, `parser.py`), removed `use_sdk` flag, passed `disallowed_tools` to SDK, ~1,060 lines removed |
 | 2026-02-20 | Phase 3 branch | F2 (complete), F6 (complete) | Replaced `ToolMonitor` with SDK's `can_use_tool` callback, removed bash pattern blocklist, removed facade interception + admin message helpers, removed `ClaudeToolValidationError`, ~350 lines removed |
 
 ### Next Steps
