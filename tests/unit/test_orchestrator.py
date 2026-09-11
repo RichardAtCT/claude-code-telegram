@@ -151,8 +151,8 @@ def test_agentic_registers_text_document_photo_handlers(agentic_settings, deps):
 
     # 5 message handlers (text, document, photo, voice, unknown commands passthrough)
     assert len(msg_handlers) == 5
-    # 2 callback handlers (stop: + cd:)
-    assert len(cb_handlers) == 2
+    # 3 callback handlers (stop: + tapv: + cd:)
+    assert len(cb_handlers) == 3
 
 
 async def test_agentic_bot_commands(agentic_settings, deps):
@@ -338,7 +338,7 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
         if isinstance(call[0][0], CallbackQueryHandler)
     ]
 
-    assert len(cb_handlers) == 2
+    assert len(cb_handlers) == 3
     # Find the cd: handler by pattern
     cd_handler = [h for h in cb_handlers if h.pattern and h.pattern.match("cd:x")]
     assert len(cd_handler) == 1
@@ -346,6 +346,11 @@ async def test_agentic_callback_scoped_to_cd_pattern(agentic_settings, deps):
     # Also has a stop: handler
     stop_handler = [h for h in cb_handlers if h.pattern and h.pattern.match("stop:1")]
     assert len(stop_handler) == 1
+    # Also has a tapv: handler
+    tapv_handler = [
+        h for h in cb_handlers if h.pattern and h.pattern.match("tapv:allow:x")
+    ]
+    assert len(tapv_handler) == 1
 
 
 async def test_agentic_document_rejects_large_files(agentic_settings, deps):
@@ -625,6 +630,51 @@ class TestRedactSecrets:
             "Read", {"file_path": "/home/user/.env"}
         )
         assert result == ".env"
+
+
+class TestSummarizeToolInputForApproval:
+    """_summarize_tool_input_for_approval shows full detail for security decisions."""
+
+    def test_write_shows_full_path_not_just_filename(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Write", {"file_path": "/home/user/project/settings.py"}
+        )
+        assert result == "/home/user/project/settings.py"
+
+    def test_edit_shows_full_path(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Edit", {"file_path": "/etc/secrets/config.yaml"}
+        )
+        assert result == "/etc/secrets/config.yaml"
+
+    def test_bash_short_command_not_truncated(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Bash", {"command": "echo hi"}
+        )
+        assert result == "echo hi"
+
+    def test_bash_long_command_truncated_at_1000_with_marker(
+        self, agentic_settings, deps
+    ):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        long_cmd = "echo " + ("a" * 2000)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Bash", {"command": long_cmd}
+        )
+        assert len(result) == 1001  # 1000 chars + the "…" marker
+        assert result.endswith("…")
+
+    def test_bash_redacts_secrets(self, agentic_settings, deps):
+        orchestrator = MessageOrchestrator(agentic_settings, deps)
+        result = orchestrator._summarize_tool_input_for_approval(
+            "Bash",
+            {"command": "curl --token=mysupersecrettoken123 https://api.example.com"},
+        )
+        assert "mysupersecrettoken123" not in result
+        assert "***" in result
 
 
 # --- Typing heartbeat tests ---

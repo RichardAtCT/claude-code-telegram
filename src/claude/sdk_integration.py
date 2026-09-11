@@ -4,7 +4,16 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    FrozenSet,
+    List,
+    Optional,
+)
 
 import structlog
 from claude_agent_sdk import (
@@ -211,11 +220,18 @@ def _make_can_use_tool_callback(
     security_validator: SecurityValidator,
     working_directory: Path,
     approved_directory: Path,
+    approval_callback: Optional[
+        Callable[[str, Dict[str, Any]], Awaitable[bool]]
+    ] = None,
+    approval_tool_names: FrozenSet[str] = frozenset(),
 ) -> Any:
     """Create a can_use_tool callback for SDK-level tool permission validation.
 
     The callback validates file path boundaries and bash directory boundaries
     *before* the SDK executes the tool, providing preventive security enforcement.
+    If `approval_callback` is set, tools in `approval_tool_names` additionally
+    require interactive human approval (e.g. via a Telegram Allow/Deny prompt)
+    after the static checks pass.
     """
 
     async def can_use_tool(
@@ -266,6 +282,16 @@ def _make_can_use_tool_callback(
                         message=error or "Bash directory boundary violation"
                     )
 
+        # Interactive human-in-the-loop approval for configured tools
+        if approval_callback is not None and tool_name in approval_tool_names:
+            approved = await approval_callback(tool_name, tool_input)
+            if not approved:
+                logger.info(
+                    "can_use_tool denied by interactive approval",
+                    tool_name=tool_name,
+                )
+                return PermissionResultDeny(message="Denied by user via Telegram")
+
         return PermissionResultAllow()
 
     return can_use_tool
@@ -310,6 +336,9 @@ class ClaudeSDKManager:
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        approval_callback: Optional[
+            Callable[[str, Dict[str, Any]], Awaitable[bool]]
+        ] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -369,16 +398,40 @@ class ClaudeSDKManager:
                 self.security_validator is not None
                 and not self.config.disable_tool_validation
             )
-            if boundary_checks_active and sdk_allowed_tools is not None:
-                gated = [t for t in sdk_allowed_tools if t in GUARDED_TOOLS]
+
+            # Interactive approval has the same requirement for its own gated
+            # tools: a tool left in allowed_tools is pre-approved by the CLI
+            # and never reaches can_use_tool, so the approval prompt (and the
+            # static checks above) would never fire for it. This can gate
+            # tools beyond GUARDED_TOOLS (INTERACTIVE_TOOL_APPROVAL_TOOLS is
+            # user-configured), so it is a separate, additive strip.
+            approval_tool_names_set: FrozenSet[str] = frozenset()
+            if self.config.interactive_tool_approval:
+                approval_tool_names_set = frozenset(
+                    self.config.interactive_tool_approval_tools or ()
+                )
+
+            tools_to_strip: FrozenSet[str] = approval_tool_names_set
+            if boundary_checks_active:
+                tools_to_strip = tools_to_strip | GUARDED_TOOLS
+
+            if sdk_allowed_tools is not None and tools_to_strip:
+                gated = [t for t in sdk_allowed_tools if t in tools_to_strip]
                 if gated:
                     sdk_allowed_tools = [
-                        tool for tool in sdk_allowed_tools if tool not in GUARDED_TOOLS
+                        tool for tool in sdk_allowed_tools if tool not in tools_to_strip
                     ]
                     logger.debug(
                         "Routing guarded tools through can_use_tool",
                         gated_tools=gated,
                     )
+
+            # The SDK auto-approves sandboxed Bash calls without ever invoking
+            # can_use_tool (see ClaudeAgentOptions sandbox settings). That is
+            # a second bypass of both the bash-boundary check and the
+            # interactive-approval prompt, so it must be disabled whenever
+            # either of those depends on Bash going through can_use_tool.
+            bash_needs_approval = "Bash" in approval_tool_names_set
 
             # Build Claude Agent options
             options = ClaudeAgentOptions(
@@ -393,9 +446,12 @@ class ClaudeSDKManager:
                 sandbox={
                     "enabled": self.config.sandbox_enabled,
                     # Auto-approving sandboxed bash is a second bypass of the
-                    # control request the bash boundary check depends on, so it
-                    # stays off whenever that check is meant to run (#219).
-                    "autoAllowBashIfSandboxed": not boundary_checks_active,
+                    # control request the bash boundary check (and, if Bash is
+                    # gated, the approval prompt) depends on, so it stays off
+                    # whenever either is meant to run (#219).
+                    "autoAllowBashIfSandboxed": not (
+                        boundary_checks_active or bash_needs_approval
+                    ),
                     "excludedCommands": self.config.sandbox_excluded_commands or [],
                 },
                 system_prompt=base_prompt,
@@ -417,6 +473,12 @@ class ClaudeSDKManager:
                     security_validator=self.security_validator,
                     working_directory=working_directory,
                     approved_directory=self.config.approved_directory,
+                    approval_callback=(
+                        approval_callback
+                        if self.config.interactive_tool_approval
+                        else None
+                    ),
+                    approval_tool_names=approval_tool_names_set,
                 )
 
             # Resume previous session if we have a session_id
