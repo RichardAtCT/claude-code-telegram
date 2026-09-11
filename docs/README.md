@@ -18,6 +18,7 @@ Quick links to every doc in this project. Start with the [README](../README.md) 
 |----------|-------------|
 | [Project Overview](project-overview.md) | Architecture, core objectives, request flow diagrams, and design decisions |
 | [SDK Duplication Review](SDK_DUPLICATION_REVIEW.md) | Audit of `src/claude/` against the Claude Agent SDK — what to simplify or remove |
+| [v2 Roadmap](ROADMAP-v2.md) | Plan for the 2.0 release: milestones, sizing, and what is deliberately left to open PRs |
 
 ## Repository-Level
 

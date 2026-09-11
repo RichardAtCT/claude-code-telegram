@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **v2 roadmap**: `docs/ROADMAP-v2.md` plans the 2.0 release (SDK 0.2, interactive permission and question UX, per-conversation concurrency, session browser, classic-mode removal, container distribution), scoped to work not already covered by open pull requests
+
 ## [1.6.1] - 2026-09-11
 
 ### Security
