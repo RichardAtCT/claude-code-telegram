@@ -21,6 +21,10 @@ The Claude Code Telegram Bot implements a defense-in-depth security model with m
 - **Approved Directory**: All operations confined to a pre-configured directory tree
 - **Path Validation**: Prevents directory traversal attacks (../../../etc/passwd)
 - **Permission Checks**: Validates file system permissions before operations
+- **Pre-execution Tool Checks**: Claude's own tool calls are validated before they run
+  via the SDK `can_use_tool` callback -- file paths for `Read`, `Write`, `Edit`,
+  `MultiEdit`, `NotebookEdit` and `NotebookRead`, and directory escapes for `Bash`.
+  Active by default; see *Tool Call Enforcement* below for exactly when it applies.
 
 ### 3. Input Validation
 - **Command Sanitization**: All user inputs sanitized to prevent injection attacks
@@ -58,6 +62,45 @@ The following are implemented and active:
 - Webhook signature verification (GitHub HMAC-SHA256, generic Bearer token)
 - Event security middleware for webhook and scheduled event validation
 - Configuration security via Pydantic validators and SecretStr
+- Pre-execution boundary checks on Claude's tool calls (`can_use_tool`)
+
+### Tool Call Enforcement
+
+The `can_use_tool` callback in `src/claude/sdk_integration.py` is what enforces the
+approved-directory boundary on tool calls **Claude itself initiates** -- the case
+where Claude is steered off course by content it reads mid-task, rather than by
+the user's message (user input is covered by layer 3).
+
+The callback is reactive: the SDK runs it only when the Claude CLI sends a
+`can_use_tool` control request, and the CLI resolves its allow rules before asking.
+A tool named in `CLAUDE_ALLOWED_TOOLS` is therefore pre-approved and never reaches
+the callback. To keep the checks live, `ClaudeSDKManager.execute_command` removes
+the guarded tools from the `allowed_tools` it hands the SDK and disables
+`autoAllowBashIfSandboxed` (a second bypass, which auto-approves sandboxed Bash
+without a control request). Before this was fixed the checks were wired up but
+never consulted on a default configuration
+([#219](https://github.com/RichardAtCT/claude-code-telegram/issues/219)).
+
+Routing a tool call through the callback costs one local stdio round trip to the
+CLI subprocess plus ~30-90 microseconds of validation -- negligible against the
+model latency of the tool call itself, so `Read` is gated along with the mutating
+tools.
+
+**When it is active:** whenever a `SecurityValidator` is wired (the default for the
+bot) and `DISABLE_TOOL_VALIDATION` is `false` (the default).
+
+**When it is not:**
+
+- `DISABLE_TOOL_VALIDATION=true` -- no allow/deny lists are sent to the SDK, guarded
+  tools are left pre-approved, and sandboxed Bash is auto-approved. This is the
+  documented escape hatch for trusted environments, and it turns these checks off.
+- Direct use of `ClaudeSDKManager` without a `SecurityValidator` (there is no
+  validator to consult).
+
+Note that `CLAUDE_ALLOWED_TOOLS` is not itself an enforcement boundary while the
+callback is wired: a tool left out of the list is not blocked, it is simply routed
+to the callback, which allows anything that passes the boundary checks. Use
+`CLAUDE_DISALLOWED_TOOLS` to actually block a tool.
 
 **Known gap:** token-based authentication is not usable end to end. The provider
 exists, but `src/main.py` still backs it with `InMemoryTokenStorage`, so issued
