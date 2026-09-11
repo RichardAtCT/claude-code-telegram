@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # The Claude Agent SDK moves fast (0.1.39 -> 0.2.152 in six months).
+  # Surface it on its own so the bump is never buried in a grouped PR.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "sdk"]
+    allow:
+      - dependency-name: claude-agent-sdk
+      - dependency-name: python-telegram-bot
+      - dependency-name: anthropic
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    ignore:
+      - dependency-name: claude-agent-sdk
+      - dependency-name: python-telegram-bot
+      - dependency-name: anthropic
+    groups:
+      python-minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "ci"

@@ -1,0 +1,24 @@
+name: Question or support
+description: Setup help, configuration questions, "is this possible?"
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/setup.md](https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/setup.md) and [docs/configuration.md](https://github.com/RichardAtCT/claude-code-telegram/blob/main/docs/configuration.md) first. If GitHub Discussions is enabled for this repository, questions are better asked there so other users can answer too.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have tried
+      description: Commands run, settings changed, docs read.
+  - type: input
+    id: version
+    attributes:
+      label: Bot version
+      placeholder: v1.6.1
