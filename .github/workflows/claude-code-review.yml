@@ -31,11 +31,6 @@ name: Claude Code Review
 # this input is set. Worst case is a prompt-injected review comment.
 
 on:
-  # TEMPORARY: `pull_request_target` loads this file from the default branch,
-  # so changes here cannot run until they are on main. This second trigger
-  # runs the file from the PR head once, as proof. Remove before merge.
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
   pull_request_target:
     types: [opened, synchronize, ready_for_review, reopened]
     paths-ignore:
